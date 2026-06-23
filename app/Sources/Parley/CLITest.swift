@@ -12,7 +12,6 @@ enum CLITest {
         }
         let profiles: [Profile] = profileName.flatMap { Profile(rawValue: $0) }.map { [$0] }
             ?? Profile.allCases
-        let sem = DispatchSemaphore(value: 0)
         var failures = 0
         Task {
             for profile in profiles {
@@ -38,10 +37,11 @@ enum CLITest {
                     print("   ✗ stream error: \(error.localizedDescription)"); failures += 1
                 }
             }
-            sem.signal()
+            print(failures == 0 ? "\nPIPE OK" : "\n\(failures) FAILURE(S)")
+            exit(failures == 0 ? 0 : 1)
         }
-        sem.wait()
-        print(failures == 0 ? "\nPIPE OK" : "\n\(failures) FAILURE(S)")
-        exit(failures == 0 ? 0 : 1)
+        // Park the main thread on the dispatch queue (no semaphore) so the async
+        // Task can freely hop to the main actor; it ends the process via exit().
+        dispatchMain()
     }
 }

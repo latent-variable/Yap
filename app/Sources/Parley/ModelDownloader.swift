@@ -1,7 +1,9 @@
 import Foundation
 
 /// Downloads the Kokoro ONNX model + voices into the models dir with progress.
-/// Published properties are mutated on the main queue for SwiftUI.
+/// The URLSession delivers its delegate callbacks on the main queue (see init),
+/// so `index` and the @Published state are only ever touched on main — no race
+/// between `start()`/`next()` and the download delegate methods.
 final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDelegate {
     @Published var progress: Double = 0
     @Published var statusText = ""
@@ -21,7 +23,9 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
     init(modelsDir: URL) {
         self.dir = modelsDir
         super.init()
-        session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        // delegateQueue = .main: keep delegate callbacks (which mutate `index`)
+        // on the same thread as start()/next(), eliminating the data race.
+        session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
     }
 
     private func ui(_ block: @escaping () -> Void) { DispatchQueue.main.async(execute: block) }

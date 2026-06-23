@@ -179,7 +179,7 @@ class ChatterboxTurboEngine:
             wav = self.model.generate(text)     # reuse cached conditioning
             # MPS ops are async; keep the GPU->CPU transfer inside the lock so it
             # can't read the tensor while another thread runs generate().
-            arr = wav.squeeze().detach().cpu().numpy().astype(np.float32)
+            arr = wav.squeeze(0).detach().cpu().numpy().astype(np.float32)
         return arr
 
     def status(self) -> dict:

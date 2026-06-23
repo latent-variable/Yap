@@ -6,7 +6,7 @@ import Carbon.HIToolbox
 final class HotKeyManager {
     private var ref: EventHotKeyRef?
     private var handler: EventHandlerRef?
-    private let id = EventHotKeyID(signature: OSType(0x4D524D52), id: 1) // 'MRMR'
+    private let id = EventHotKeyID(signature: OSType(0x50524C59), id: 1) // 'PRLY'
     var onFire: (() -> Void)?
 
     init() { installHandler() }
