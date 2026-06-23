@@ -34,6 +34,50 @@ def test_hd_voice_path_accepts_safe_id_and_stays_in_dir(tmp_path, monkeypatch):
     assert p is not None and p.parent == tmp_path.resolve()
     assert hd_voice_path("Missing") is None  # safe id, but no such file
 
+
+def _seg_texts(text):
+    return [s for s, _g in segment_text(text)]
+
+
+class TestSoftWrapReflow:
+    """A hard-wrapped sentence must read as one unit, not get sliced (with a
+    pause) at every newline."""
+
+    def test_wrapped_sentence_joins(self):
+        assert _seg_texts("I went to the store\nand bought some milk.") == \
+            ["I went to the store and bought some milk."]
+
+    def test_multiline_wrap_joins(self):
+        assert _seg_texts("This is a long sentence that\nwraps across\nthree lines.") == \
+            ["This is a long sentence that wraps across three lines."]
+
+    def test_sentence_end_at_linebreak_keeps_pause(self):
+        segs = segment_text("Buy milk.\nGo home.")
+        assert [s for s, _ in segs] == ["Buy milk.", "Go home."]
+        assert segs[0][1] == GAP_LINE   # real break, real pause
+
+    def test_list_items_stay_separate(self):
+        assert _seg_texts("- apples\n- oranges\n- pears") == \
+            ["- apples", "- oranges", "- pears"]
+
+    def test_wrapped_list_item_joins(self):
+        assert _seg_texts("- a long bullet that\ncontinues on") == \
+            ["- a long bullet that continues on"]
+
+    def test_heading_stays_separate_from_wrapped_body(self):
+        segs = segment_text("# Title\nbody text that\nwraps here.")
+        assert [s for s, _ in segs] == ["# Title", "body text that wraps here."]
+        assert segs[0][1] == GAP_LINE
+
+    def test_colon_lead_in_keeps_break(self):
+        assert _seg_texts("Here is the list:\nfirst thing") == \
+            ["Here is the list:", "first thing"]
+
+    def test_paragraph_gap_preserved(self):
+        segs = segment_text("First para.\n\nSecond para.")
+        assert [s for s, _ in segs] == ["First para.", "Second para."]
+        assert segs[0][1] == GAP_PARAGRAPH
+
 MODELS = Path.home() / "Library/Application Support/Parley/models"
 HAVE_MODEL = (MODELS / "kokoro-v1.0.onnx").exists() and (MODELS / "voices-v1.0.bin").exists()
 needs_model = pytest.mark.skipif(not HAVE_MODEL, reason="model files not installed")

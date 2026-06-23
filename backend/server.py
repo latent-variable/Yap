@@ -104,6 +104,58 @@ GAP_LINE = 0.28       # at a single line break (lists, headings, wrapped lines)
 GAP_PARAGRAPH = 0.5   # between paragraphs (blank line)
 
 
+# Structural-line detection, so a sentence that's merely hard-wrapped across
+# lines isn't read as two clipped fragments with a pause between them. Only a
+# line break that ends a sentence, or starts/ends a list item or heading, is a
+# real boundary; everything else is a soft wrap and gets rejoined.
+_LIST_RE = re.compile(r"^\s*([-*+•]|\d+[.)]|[A-Za-z][.)])\s+")
+_HEADING_RE = re.compile(r"^\s*#{1,6}\s+")
+_ENDS_SENTENCE_RE = re.compile(r"[.!?…][\"')\]]*$")
+
+
+def _is_soft_wrap(cur: str, nxt: str) -> bool:
+    """True if the break between `cur` and `nxt` is a mid-sentence wrap (join
+    them), not a structural boundary (keep the pause)."""
+    cur = cur.rstrip()
+    if not cur or not nxt.strip():
+        return False
+    # cur completes a sentence, or is a deliberate lead-in (colon) → real break.
+    if _ENDS_SENTENCE_RE.search(cur) or cur.endswith(":"):
+        return False
+    # cur is a heading, or nxt starts a new block (list item / heading) → real
+    # break. (A wrapped list item — cur is a bullet, nxt is plain text — still
+    # joins, so a long bullet reads as one line.)
+    if _HEADING_RE.match(cur):
+        return False
+    if _LIST_RE.match(nxt) or _HEADING_RE.match(nxt):
+        return False
+    # A wrapped sentence flows into a lowercase continuation. A line that starts
+    # with a capital (or digit/symbol) is its own unit — e.g. a bare list of
+    # capitalized items — so don't swallow it into the previous line.
+    if not nxt.strip()[0].islower():
+        return False
+    return True
+
+
+def _reflow_lines(raw_lines: list[str]) -> list[str]:
+    """Merge soft-wrapped continuation lines into logical lines (stripped,
+    non-empty), so each logical line is a real structural unit."""
+    out: list[str] = []
+    buf = ""
+    for ln in raw_lines:
+        if not ln.strip():
+            continue
+        if buf and _is_soft_wrap(buf, ln):
+            buf = buf.rstrip() + " " + ln.strip()
+        else:
+            if buf:
+                out.append(buf)
+            buf = ln.strip()
+    if buf:
+        out.append(buf)
+    return out
+
+
 def _hardwrap(sentence: str, max_chars: int) -> list[str]:
     if len(sentence) <= max_chars:
         return [sentence]
@@ -129,13 +181,11 @@ def segment_text(text: str, max_chars: int = 320) -> list[tuple[str, float]]:
         if not para.strip():
             continue
         last_para = pi == len(paragraphs) - 1
-        lines = [ln for ln in para.split("\n")]
-        nonempty_lines = [i for i, ln in enumerate(lines) if ln.strip()]
+        # Rejoin soft-wrapped lines first so a wrapped sentence stays one unit
+        # (no spurious GAP_LINE mid-sentence); real boundaries survive.
+        lines = _reflow_lines(para.split("\n"))
         for li, line in enumerate(lines):
-            line = line.strip()
-            if not line:
-                continue
-            last_line = li == (nonempty_lines[-1] if nonempty_lines else li)
+            last_line = li == len(lines) - 1
             sentences = split_sentences(line) or [line]
             for si, sent in enumerate(sentences):
                 last_sent = si == len(sentences) - 1
