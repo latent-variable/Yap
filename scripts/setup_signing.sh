@@ -74,7 +74,10 @@ INSEARCH=0; for k in "${KCS[@]}"; do [ "$k" = "$SIGN_KC" ] && INSEARCH=1; done
 [ "$INSEARCH" = 0 ] && security list-keychains -d user -s "${KCS[@]}" "$SIGN_KC" >/dev/null
 
 # Verify by test-signing a real binary (find-identity hides untrusted
-# self-signed certs, so it's not a usable check).
+# self-signed certs, so it's not a usable check). Re-unlock first — the
+# partition-list/search-list steps above can leave codesign unable to reach the
+# private key, which made this self-check fail even though signing works.
+security unlock-keychain -p "$KCPW" "$SIGN_KC" >/dev/null 2>&1
 VTMP="$(mktemp -d)"; cp /bin/echo "$VTMP/echo"
 echo
 if codesign --force --sign "$NAME" --keychain "$SIGN_KC" "$VTMP/echo" 2>/dev/null \
