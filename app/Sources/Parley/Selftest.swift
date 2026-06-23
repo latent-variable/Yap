@@ -45,6 +45,8 @@ enum Selftest {
 
         print("Clipboard — capture never permanently overwrites it")
         let pb = NSPasteboard.general
+        // Save the user's real clipboard so the test itself isn't destructive.
+        let userClipboard = pb.string(forType: .string)
         let sentinel = "parley-sentinel-\(UUID().uuidString)"
         pb.clearContents(); pb.setString(sentinel, forType: .string)
         // viaClipboard sends Cmd+C (no selection here), must restore sentinel.
@@ -52,6 +54,9 @@ enum Selftest {
         let after = pb.string(forType: .string) ?? ""
         if after == sentinel { print("  ✓ clipboard restored") }
         else { failures += 1; print("  ✗ clipboard NOT restored: got «\(after)»") }
+        // Restore the user's original clipboard contents.
+        pb.clearContents()
+        if let userClipboard { pb.setString(userClipboard, forType: .string) }
 
         print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILURE(S)")
         exit(failures == 0 ? 0 : 1)

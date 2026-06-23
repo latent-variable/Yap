@@ -222,9 +222,11 @@ final class BackendManager: ObservableObject {
 
     /// Restart the backend (e.g. after installing HD deps, to load the new env).
     func restart() async {
-        stop()
+        // stopAndWait (not stop + fixed sleep): wait for the old process to
+        // actually exit and release port 8765 before relaunching, else the new
+        // backend can fail to bind.
+        await stopAndWait()
         ready = false
-        try? await Task.sleep(nanoseconds: 500_000_000)
         await start()
     }
 }

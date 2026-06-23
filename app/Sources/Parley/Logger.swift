@@ -17,12 +17,17 @@ enum Log {
 
     static func write(_ msg: String) {
         let line = "\(fmt.string(from: Date())) \(msg)\n"
-        FileHandle.standardError.write(line.data(using: .utf8)!)
+        let data = Data(line.utf8)
+        try? FileHandle.standardError.write(contentsOf: data)
         queue.async {
+            // Throwing FileHandle APIs (seek/write/close were deprecated on
+            // macOS 10.15+); deployment target is macOS 14.
             if let h = try? FileHandle(forWritingTo: url) {
-                h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
+                defer { try? h.close() }
+                _ = try? h.seekToEnd()
+                try? h.write(contentsOf: data)
             } else {
-                try? line.data(using: .utf8)!.write(to: url)
+                try? data.write(to: url)
             }
         }
     }

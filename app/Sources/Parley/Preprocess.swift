@@ -120,10 +120,24 @@ enum Preprocess {
         return o
     }
 
-    private static func regexReplace(_ s: String, _ pattern: String, _ repl: String, _ ci: Bool) -> String {
+    // Compiling NSRegularExpression is expensive; cache by pattern (+ case flag)
+    // so repeated cleans of the same rules don't recompile every call.
+    private static let regexCacheLock = NSLock()
+    private static var regexCache: [String: NSRegularExpression] = [:]
+
+    private static func compiledRegex(_ pattern: String, _ ci: Bool) -> NSRegularExpression? {
+        let key = (ci ? "i\u{0}" : "s\u{0}") + pattern
+        regexCacheLock.lock(); defer { regexCacheLock.unlock() }
+        if let cached = regexCache[key] { return cached }
         var opts: NSRegularExpression.Options = []
         if ci { opts.insert(.caseInsensitive) }
-        guard let re = try? NSRegularExpression(pattern: pattern, options: opts) else { return s }
+        guard let re = try? NSRegularExpression(pattern: pattern, options: opts) else { return nil }
+        regexCache[key] = re
+        return re
+    }
+
+    private static func regexReplace(_ s: String, _ pattern: String, _ repl: String, _ ci: Bool) -> String {
+        guard let re = compiledRegex(pattern, ci) else { return s }
         let range = NSRange(s.startIndex..., in: s)
         return re.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: repl)
     }

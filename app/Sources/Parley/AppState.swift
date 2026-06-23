@@ -288,10 +288,15 @@ final class AppState: ObservableObject {
             }
             audio.flush()   // stream ended — play any sub-cushion remainder
             // drain
-            while gen == generation && audio.hasQueued && status == .reading {
+            // Include .paused: pausing flips status away from .reading, and if the
+            // loop exited there'd be no task left to move to .idle when the
+            // resumed playback finishes (state would stick in .reading/.paused).
+            while gen == generation && audio.hasQueued && (status == .reading || status == .paused) {
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
-            if gen == generation && status == .reading { status = .idle; playingText = ""; preparing = false }
+            if gen == generation && (status == .reading || status == .paused) {
+                status = .idle; playingText = ""; preparing = false
+            }
         } catch {
             if gen == generation { preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3) }
         }
@@ -507,11 +512,12 @@ final class AppState: ObservableObject {
             .trimmingCharacters(in: .whitespaces)
         guard !safe.isEmpty else { return }
         let dest = hdVoicesDir.appending(path: "\(safe).wav")
-        // Decode/convert off the main actor — large clips can take seconds.
-        // Start AND stop the security-scoped access inside the task so the whole
-        // access lifecycle lives in the context that actually reads the file.
+        // Begin security-scoped access synchronously here — same turn as the file
+        // importer's callback — so the sandbox extension is held before the
+        // detached task runs. Only this cheap call is on the main actor; the
+        // heavy decode/convert still happens off it. Balanced in the task's defer.
+        let scoped = src.startAccessingSecurityScopedResource()
         Task.detached(priority: .userInitiated) {
-            let scoped = src.startAccessingSecurityScopedResource()
             defer { if scoped { src.stopAccessingSecurityScopedResource() } }
             do {
                 try AudioImport.toReferenceWAV(src: src, dest: dest, maxSeconds: 20)

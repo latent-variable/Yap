@@ -465,11 +465,21 @@ def install_chatterbox():
         for cmd in steps:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, bufsize=1)
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                yield line.encode()
-            proc.wait()
-            rc = proc.returncode
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    yield line.encode()
+                proc.wait()
+                rc = proc.returncode
+            finally:
+                # If the client disconnects, GeneratorExit fires at the yield;
+                # don't leave an orphaned pip running in the background.
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:  # noqa: BLE001
+                        proc.kill()
             if rc != 0:
                 break
         ok = rc == 0 and cb_engine.available()
@@ -566,6 +576,7 @@ def fetch_starter_voices():
             w.setframerate(params.framerate); w.writeframes(frames)
 
     def gen() -> Iterator[bytes]:
+        import shutil
         import tempfile
         for vid, spk, desc in voices:
             out = dest / f"{vid}.wav"
@@ -584,6 +595,8 @@ def fetch_starter_voices():
                 yield f"  installed {vid}\n".encode()
             except Exception as e:  # noqa: BLE001
                 yield f"  failed {vid}: {e}\n".encode()
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
         yield b"[done]\n"
 
     return StreamingResponse(gen(), media_type="text/plain")

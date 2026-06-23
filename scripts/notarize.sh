@@ -24,8 +24,10 @@ bash "$ROOT/scripts/build_app.sh" release >/dev/null
 echo "[notarize] signing with hardened runtime: $IDENTITY"
 # Sign nested code first (Python dylibs/binaries), then the app, with the
 # hardened runtime + a timestamp — both required for notarization.
+# Don't suppress codesign errors — a silent signing failure here surfaces much
+# later as an opaque notarization rejection.
 find "$APP/Contents/Resources/python" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -111 \) \
-  -exec codesign --force --timestamp --options runtime --sign "$IDENTITY" {} + 2>/dev/null || true
+  -exec codesign --force --timestamp --options runtime --sign "$IDENTITY" {} +
 codesign --force --deep --timestamp --options runtime --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP" && echo "[notarize] signature OK"
 

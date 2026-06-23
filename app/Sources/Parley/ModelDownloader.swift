@@ -60,7 +60,15 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
                     didFinishDownloadingTo location: URL) {
         let dest = dir.appending(path: files[index].name)
         try? FileManager.default.removeItem(at: dest)
-        try? FileManager.default.moveItem(at: location, to: dest)
+        do {
+            try FileManager.default.moveItem(at: location, to: dest)
+        } catch {
+            // Surface the failure instead of swallowing it — a missed move
+            // leaves an incomplete model that silently fails to load later.
+            let name = files[index].name
+            ui { self.error = "Failed to save \(name): \(error.localizedDescription)"; self.downloading = false }
+            return
+        }
         index += 1
         next()
     }
