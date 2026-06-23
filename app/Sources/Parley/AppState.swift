@@ -508,9 +508,10 @@ final class AppState: ObservableObject {
         guard !safe.isEmpty else { return }
         let dest = hdVoicesDir.appending(path: "\(safe).wav")
         // Decode/convert off the main actor — large clips can take seconds.
-        // The picked URL may be security-scoped; balance access across the hop.
-        let scoped = src.startAccessingSecurityScopedResource()
+        // Start AND stop the security-scoped access inside the task so the whole
+        // access lifecycle lives in the context that actually reads the file.
         Task.detached(priority: .userInitiated) {
+            let scoped = src.startAccessingSecurityScopedResource()
             defer { if scoped { src.stopAccessingSecurityScopedResource() } }
             do {
                 try AudioImport.toReferenceWAV(src: src, dest: dest, maxSeconds: 20)

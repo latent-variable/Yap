@@ -34,14 +34,14 @@ enum AudioImport {
         var written: AVAudioFramePosition = 0
 
         while !done && written < maxFrames {
-            let inBuf = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: chunk)!
+            guard let inBuf = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: chunk) else { throw Err.convert }
             try inFile.read(into: inBuf, frameCount: chunk)
             if inBuf.frameLength == 0 { break }
             written += AVAudioFramePosition(inBuf.frameLength)
 
             let ratio = writeFormat.sampleRate / inFormat.sampleRate
             let cap = AVAudioFrameCount(Double(inBuf.frameLength) * ratio) + 1024
-            let outBuf = AVAudioPCMBuffer(pcmFormat: writeFormat, frameCapacity: cap)!
+            guard let outBuf = AVAudioPCMBuffer(pcmFormat: writeFormat, frameCapacity: cap) else { throw Err.convert }
             var fed = false
             var err: NSError?
             converter.convert(to: outBuf, error: &err) { _, status in
