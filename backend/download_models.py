@@ -25,7 +25,7 @@ def emit(**kw):
 
 def download(url: str, dest: Path) -> None:
     tmp = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url) as r:
+    with urllib.request.urlopen(url, timeout=30) as r:
         total = int(r.headers.get("Content-Length", 0))
         done = 0
         with open(tmp, "wb") as f:

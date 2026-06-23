@@ -292,7 +292,9 @@ final class AppState: ObservableObject {
             // loop exited there'd be no task left to move to .idle when the
             // resumed playback finishes (state would stick in .reading/.paused).
             while gen == generation && audio.hasQueued && (status == .reading || status == .paused) {
-                try? await Task.sleep(nanoseconds: 150_000_000)
+                // do/catch (not try?) so a cancellation breaks the drain instead
+                // of being swallowed and spinning to the generation check.
+                do { try await Task.sleep(nanoseconds: 150_000_000) } catch { break }
             }
             if gen == generation && (status == .reading || status == .paused) {
                 status = .idle; playingText = ""; preparing = false
@@ -365,7 +367,9 @@ final class AppState: ObservableObject {
                 Task { @MainActor in if self.preparing { self.preparing = false } }
             }
             audio.flush()
-            while gen == generation && audio.hasQueued { try? await Task.sleep(nanoseconds: 150_000_000) }
+            while gen == generation && audio.hasQueued {
+                do { try await Task.sleep(nanoseconds: 150_000_000) } catch { break }
+            }
             if gen == generation { preparing = false; status = .idle }
         }
     }
