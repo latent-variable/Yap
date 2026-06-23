@@ -98,7 +98,8 @@ final class AudioPlayer {
         q.async {
             var bytes = data
             if let lo = self.leftoverByte {
-                bytes.insert(lo, at: 0)
+                // Prepend via a fresh buffer; Data.insert(at: 0) is O(N).
+                bytes = Data([lo]) + data
                 self.leftoverByte = nil
             }
             if bytes.count % 2 == 1 {

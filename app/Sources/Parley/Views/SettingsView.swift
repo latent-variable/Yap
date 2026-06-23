@@ -137,9 +137,10 @@ private struct EngineTab: View {
         .onAppear { state.refreshHD() }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio]) { result in
             if case .success(let url) = result {
-                let ok = url.startAccessingSecurityScopedResource()
+                // addHDVoice owns the security-scoped access lifecycle (it reads
+                // the file on a detached task). Starting/stopping it here would
+                // revoke the sandbox extension before that task runs.
                 state.addHDVoice(from: url, name: newName)
-                if ok { url.stopAccessingSecurityScopedResource() }
                 newName = ""
             }
         }

@@ -107,16 +107,19 @@ struct BackendClient {
             throw NSError(domain: "Parley", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "backend HTTP \(http.statusCode)"])
         }
-        var buf = Data()
+        // Collect into a contiguous [UInt8] (amortized O(1) append, no Data
+        // copy-on-write churn) and flush ~0.2s chunks. AsyncBytes already
+        // buffers at the transport layer, so this doesn't suspend per byte.
+        var buf = [UInt8]()
         buf.reserveCapacity(16384)
         for try await b in bytes {
             buf.append(b)
             if buf.count >= 9600 { // ~0.2s of audio
-                onChunk(buf)
+                onChunk(Data(buf))
                 buf.removeAll(keepingCapacity: true)
             }
         }
-        if !buf.isEmpty { onChunk(buf) }
+        if !buf.isEmpty { onChunk(Data(buf)) }
     }
 
     /// Fetch a complete WAV (for export).
