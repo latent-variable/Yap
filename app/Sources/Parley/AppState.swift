@@ -512,15 +512,26 @@ final class AppState: ObservableObject {
             .trimmingCharacters(in: .whitespaces)
         guard !safe.isEmpty else { return }
         let dest = hdVoicesDir.appending(path: "\(safe).wav")
-        // Begin security-scoped access synchronously here — same turn as the file
-        // importer's callback — so the sandbox extension is held before the
-        // detached task runs. Only this cheap call is on the main actor; the
-        // heavy decode/convert still happens off it. Balanced in the task's defer.
+        // Security-scoped access has thread affinity: start AND stop must be on
+        // the same thread, else the sandbox token leaks. So hold the scope only
+        // here on the main actor — copy the picked file to a temp path (fast),
+        // release the scope on this same thread — then do the heavy decode off
+        // the main actor from the temp copy, which needs no scope.
         let scoped = src.startAccessingSecurityScopedResource()
+        let tmp = FileManager.default.temporaryDirectory
+            .appending(path: "parley-import-\(UUID().uuidString).bin")
+        do {
+            try FileManager.default.copyItem(at: src, to: tmp)
+        } catch {
+            if scoped { src.stopAccessingSecurityScopedResource() }
+            status = .error("Voice import failed")
+            return
+        }
+        if scoped { src.stopAccessingSecurityScopedResource() }
         Task.detached(priority: .userInitiated) {
-            defer { if scoped { src.stopAccessingSecurityScopedResource() } }
+            defer { try? FileManager.default.removeItem(at: tmp) }
             do {
-                try AudioImport.toReferenceWAV(src: src, dest: dest, maxSeconds: 20)
+                try AudioImport.toReferenceWAV(src: tmp, dest: dest, maxSeconds: 20)
                 await MainActor.run {
                     AppState.shared.refreshHD()
                     AppState.shared.prefs.hdVoice = safe

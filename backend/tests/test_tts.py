@@ -12,8 +12,27 @@ import numpy as np
 import pytest
 
 from server import (chunk_text, split_sentences, segment_text, Engine, SAMPLE_RATE,
-                    resolve_provider, GAP_SENTENCE, GAP_LINE, GAP_PARAGRAPH)
+                    resolve_provider, GAP_SENTENCE, GAP_LINE, GAP_PARAGRAPH,
+                    hd_voice_path)
 from pathlib import Path
+
+
+@pytest.mark.parametrize("bad", [
+    "../../../etc/passwd", "..%2f..", "a/b", "foo bar", "../secret",
+    "x;y", "..", ".", "name.with.dots", "voice/../../x",
+])
+def test_hd_voice_path_rejects_traversal_and_unsafe_ids(bad):
+    # voice_id flows in from the synth request; only bare [A-Za-z0-9_-] ids may
+    # resolve, and only inside hd_voices_dir — never an arbitrary file.
+    assert hd_voice_path(bad) is None
+
+
+def test_hd_voice_path_accepts_safe_id_and_stays_in_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("PARLEY_HD_VOICES", str(tmp_path))
+    (tmp_path / "Ben.wav").write_bytes(b"RIFF")
+    p = hd_voice_path("Ben")
+    assert p is not None and p.parent == tmp_path.resolve()
+    assert hd_voice_path("Missing") is None  # safe id, but no such file
 
 MODELS = Path.home() / "Library/Application Support/Parley/models"
 HAVE_MODEL = (MODELS / "kokoro-v1.0.onnx").exists() and (MODELS / "voices-v1.0.bin").exists()

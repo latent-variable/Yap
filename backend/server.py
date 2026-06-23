@@ -399,7 +399,15 @@ def hd_voices_dir() -> Path:
 
 
 def hd_voice_path(voice_id: str) -> Optional[Path]:
-    p = hd_voices_dir() / f"{voice_id}.wav"
+    # voice_id comes straight from the synth request — reject anything but a
+    # bare safe id and confirm the resolved path stays inside hd_voices_dir, so
+    # a crafted "../" can't read arbitrary .wav files off disk.
+    if not re.match(r"^[A-Za-z0-9_-]+$", voice_id):
+        return None
+    base = hd_voices_dir().resolve()
+    p = (base / f"{voice_id}.wav").resolve()
+    if p.parent != base:
+        return None
     return p if p.exists() else None
 
 

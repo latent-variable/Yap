@@ -12,7 +12,15 @@ final class VoiceRecorder: NSObject, ObservableObject {
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
 
-    deinit { timer?.invalidate() }
+    // Timer.invalidate must run on the thread that scheduled it (main); deinit
+    // can fire on any thread, so hop to main. Timer isn't Sendable, but handing
+    // this one reference to the main queue and invalidating it there is safe.
+    deinit {
+        if let t = timer {
+            nonisolated(unsafe) let timerRef = t
+            DispatchQueue.main.async { timerRef.invalidate() }
+        }
+    }
     private(set) var outputURL: URL?
 
     func toggle(_ onFinish: @escaping (URL?) -> Void) {
