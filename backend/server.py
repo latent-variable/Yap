@@ -653,7 +653,7 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--port", type=int, default=8766)
     default_models = os.environ.get("PARLEY_MODELS_DIR") or str(
         Path.home() / "Library/Application Support/Parley/models")
     p.add_argument("--models-dir", default=default_models)

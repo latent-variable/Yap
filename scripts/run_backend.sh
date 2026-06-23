@@ -7,7 +7,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$HERE/backend"
 SUPPORT="$HOME/Library/Application Support/Parley"
 VENV="${PARLEY_VENV:-$SUPPORT/venv}"
-PORT="${PARLEY_PORT:-8765}"
+PORT="${PARLEY_PORT:-8766}"
 MODELS_DIR="${PARLEY_MODELS_DIR:-$SUPPORT/models}"
 mkdir -p "$SUPPORT"
 

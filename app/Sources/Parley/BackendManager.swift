@@ -13,7 +13,7 @@ final class BackendManager: ObservableObject {
 
     private var process: Process?
     let client = BackendClient()
-    let port = 8765
+    let port = 8766
 
     var modelsDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -223,7 +223,7 @@ final class BackendManager: ObservableObject {
     /// Restart the backend (e.g. after installing HD deps, to load the new env).
     func restart() async {
         // stopAndWait (not stop + fixed sleep): wait for the old process to
-        // actually exit and release port 8765 before relaunching, else the new
+        // actually exit and release port 8766 before relaunching, else the new
         // backend can fail to bind.
         await stopAndWait()
         ready = false

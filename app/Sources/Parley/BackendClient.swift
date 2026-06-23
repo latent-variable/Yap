@@ -21,7 +21,7 @@ struct HealthInfo: Decodable {
 
 /// Thin HTTP client for the local Kokoro backend.
 struct BackendClient {
-    var base = URL(string: "http://127.0.0.1:8765")!
+    var base = URL(string: "http://127.0.0.1:8766")!
     // One reused session — a computed property would spin up (and leak) a fresh
     // URLSession, with its own connection pool + delegate thread, on every call.
     private let session: URLSession = {
