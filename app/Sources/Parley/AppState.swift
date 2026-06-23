@@ -143,7 +143,9 @@ final class AppState: ObservableObject {
         }
         // Keep the published trust flag fresh (granting happens out of process).
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.axTrusted = Permissions.axTrusted }
+            // Timer fires on the main run loop; assert that isolation instead of
+            // spinning up a fresh Task every 2s.
+            MainActor.assumeIsolated { self?.axTrusted = Permissions.axTrusted }
         }
         Task {
             status = .loadingModel
@@ -505,12 +507,20 @@ final class AppState: ObservableObject {
             .trimmingCharacters(in: .whitespaces)
         guard !safe.isEmpty else { return }
         let dest = hdVoicesDir.appending(path: "\(safe).wav")
-        do {
-            try AudioImport.toReferenceWAV(src: src, dest: dest, maxSeconds: 20)
-            refreshHD()
-            prefs.hdVoice = safe
-        } catch {
-            status = .error("Voice import failed")
+        // Decode/convert off the main actor — large clips can take seconds.
+        // The picked URL may be security-scoped; balance access across the hop.
+        let scoped = src.startAccessingSecurityScopedResource()
+        Task.detached(priority: .userInitiated) {
+            defer { if scoped { src.stopAccessingSecurityScopedResource() } }
+            do {
+                try AudioImport.toReferenceWAV(src: src, dest: dest, maxSeconds: 20)
+                await MainActor.run {
+                    AppState.shared.refreshHD()
+                    AppState.shared.prefs.hdVoice = safe
+                }
+            } catch {
+                await MainActor.run { AppState.shared.status = .error("Voice import failed") }
+            }
         }
     }
 

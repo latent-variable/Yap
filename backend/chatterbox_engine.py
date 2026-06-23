@@ -137,7 +137,9 @@ class ChatterboxTurboEngine:
         """First generate compiles the graph (~8s). Warm it with any reference
         clip so the user's first real request is fast (~RTF 0.7)."""
         try:
-            refs = sorted((Path.home() / "Library/Application Support/Parley/hd-voices").glob("*.wav"))
+            hd_voices = os.environ.get("PARLEY_HD_VOICES") or (
+                Path.home() / "Library/Application Support/Parley/hd-voices")
+            refs = sorted(Path(hd_voices).glob("*.wav"))
             if not refs or self.model is None:
                 return
             self.model.generate("Ready.", audio_prompt_path=str(refs[0]))

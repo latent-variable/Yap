@@ -81,7 +81,7 @@ final class BackendManager: ObservableObject {
             // launch/spin waiting for a model that was deleted.
             if !h.files_present && !hdInstalledOnDisk { return }
         }
-        launchProcess()
+        await launchProcess()
         await waitForHealth()
     }
 
@@ -94,18 +94,22 @@ final class BackendManager: ObservableObject {
 
     /// Strip the download-quarantine flag from our own bundle so the nested
     /// Python binaries can be spawned. Safe no-op if not quarantined.
-    private func stripQuarantine() {
+    private func stripQuarantine() async {
         let bundle = Bundle.main.bundleURL.path
         guard bundle.hasSuffix(".app") else { return }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
-        p.arguments = ["-dr", "com.apple.quarantine", bundle]
-        try? p.run(); p.waitUntilExit()
+        // xattr -dr walks the whole bundle (thousands of files) — run it off the
+        // main actor so app launch stays responsive.
+        await Task.detached(priority: .userInitiated) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+            p.arguments = ["-dr", "com.apple.quarantine", bundle]
+            try? p.run(); p.waitUntilExit()
+        }.value
     }
 
-    private func launchProcess() {
+    private func launchProcess() async {
         guard process == nil else { return }
-        if bundledPython != nil { stripQuarantine() }
+        if bundledPython != nil { await stripQuarantine() }
         let p = Process()
         var env = ProcessInfo.processInfo.environment
         env["PARLEY_MODELS_DIR"] = modelsDir.path
@@ -158,12 +162,16 @@ final class BackendManager: ObservableObject {
 
         let logURL = FileManager.default.temporaryDirectory.appending(path: "parley_backend.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        if let fh = try? FileHandle(forWritingTo: logURL) {
+        let fh = try? FileHandle(forWritingTo: logURL)
+        if let fh {
             p.standardOutput = fh
             p.standardError = fh
         }
         do { try p.run(); process = p; ownsProcess = true }
         catch { lastError = "Failed to launch backend: \(error.localizedDescription)" }
+        // The child dup'd the log fd at run(); close the parent's copy so we
+        // don't leak a descriptor on every launch.
+        try? fh?.close()
     }
 
     private func waitForHealth() async {

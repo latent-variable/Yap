@@ -25,7 +25,7 @@ from typing import Iterator, Optional
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s parley %(levelname)s %(message)s")
 log = logging.getLogger("parley")
@@ -384,9 +384,9 @@ cb_engine = ChatterboxTurboEngine()  # optional HD engine; lazy, no torch import
 class SynthReq(BaseModel):
     text: str
     voice: str = "am_puck"      # kokoro voice id, OR chatterbox reference-clip id
-    speed: float = 1.0
+    speed: float = Field(1.0, ge=0.25, le=4.0)
     lang: Optional[str] = None
-    pause_scale: float = 1.0    # multiplies the gaps between sentences/lines/paragraphs
+    pause_scale: float = Field(1.0, ge=0.0, le=10.0)    # multiplies the gaps between sentences/lines/paragraphs
     engine: str = "kokoro"      # "kokoro" | "chatterbox"
 
 

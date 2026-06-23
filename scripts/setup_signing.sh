@@ -54,9 +54,15 @@ CNF
 echo "[sign] generating self-signed code-signing certificate"
 openssl req -x509 -newkey rsa:2048 -keyout "$TMP/key.pem" -out "$TMP/cert.pem" \
   -days 3650 -nodes -config "$TMP/cfg" >/dev/null 2>&1
+# The -legacy/PBE flags are OpenSSL 3.x-only; macOS's stock LibreSSL rejects
+# them. Apply them only when the active openssl is OpenSSL 3.x.
+if openssl version | grep -q "OpenSSL 3"; then
+  LEGACY_ARGS=(-legacy -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1)
+else
+  LEGACY_ARGS=()
+fi
 openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -out "$TMP/id.p12" \
-  -passout pass:parley -name "$NAME" \
-  -legacy -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 >/dev/null 2>&1
+  -passout pass:parley -name "$NAME" "${LEGACY_ARGS[@]}" >/dev/null 2>&1
 
 echo "[sign] importing + authorizing codesign (non-interactive)"
 security import "$TMP/id.p12" -k "$SIGN_KC" -P parley -T /usr/bin/codesign -A >/dev/null
