@@ -103,7 +103,9 @@ final class BackendManager: ObservableObject {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
             p.arguments = ["-dr", "com.apple.quarantine", bundle]
-            try? p.run(); p.waitUntilExit()
+            // Only wait if the launch actually succeeded — waitUntilExit() on a
+            // process that never ran raises an Obj-C exception.
+            do { try p.run(); p.waitUntilExit() } catch { }
         }.value
     }
 

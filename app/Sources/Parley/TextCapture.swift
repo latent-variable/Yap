@@ -70,7 +70,10 @@ enum TextCapture {
         // Some elements expose selection via range + value.
         var rangeVal: CFTypeRef?
         if AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute as CFString, &rangeVal) == .success,
-           let rv = rangeVal {
+           let rv = rangeVal, CFGetTypeID(rv) == AXValueGetTypeID() {
+            // CFGetTypeID guard above: a buggy app could hand back a String or
+            // number for this attribute; force-casting that would crash. Verified
+            // it's an AXValue, so the cast is safe.
             var range = CFRange()
             if AXValueGetValue(rv as! AXValue, .cfRange, &range), range.length > 0 {
                 var sub: CFTypeRef?

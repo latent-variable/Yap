@@ -11,6 +11,8 @@ final class VoiceRecorder: NSObject, ObservableObject {
     let maxSeconds: Double = 20
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
+
+    deinit { timer?.invalidate() }
     private(set) var outputURL: URL?
 
     func toggle(_ onFinish: @escaping (URL?) -> Void) {

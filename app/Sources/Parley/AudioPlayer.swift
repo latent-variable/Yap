@@ -112,9 +112,12 @@ final class AudioPlayer {
             buffer.frameLength = AVAudioFrameCount(sampleCount)
             let dst = buffer.floatChannelData![0]
             bytes.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                let src = raw.bindMemory(to: Int16.self)
+                // loadUnaligned, not bindMemory: Data's backing bytes aren't
+                // guaranteed 2-byte aligned, and binding Int16 to misaligned
+                // memory is UB / can crash.
                 for i in 0..<sampleCount {
-                    dst[i] = Float(Int16(littleEndian: src[i])) / 32768.0
+                    let v = raw.loadUnaligned(fromByteOffset: i * 2, as: Int16.self)
+                    dst[i] = Float(Int16(littleEndian: v)) / 32768.0
                 }
             }
             let frames = buffer.frameLength
