@@ -1,0 +1,23 @@
+# Swift / SPM
+app/.build/
+app/.swiftpm/
+*.xcodeproj
+dist/
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Models (downloaded at runtime, hundreds of MB)
+backend/models/
+*.onnx
+*.bin
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+.agents/
+.claude/
