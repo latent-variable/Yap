@@ -1,0 +1,12 @@
+kokoro-onnx>=0.4.9
+soundfile>=0.12
+numpy>=1.26
+fastapi>=0.110
+uvicorn[standard]>=0.29
+# csvw (pulled in by kokoro-onnx -> segments) needs these, but pip skips them
+# when building the bundle if they already exist in the user's ~/.local. Pin
+# them explicitly so the bundled runtime is self-contained (the app runs with
+# PYTHONNOUSERSITE=1 and can't fall back to ~/.local).
+uritemplate>=4.1
+colorama>=0.4
+jsonschema>=4.0

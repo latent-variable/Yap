@@ -100,7 +100,7 @@ models, the venv, `.build/`, or `dist/`.
 ## Build, run, validate
 
 ```bash
-# backend alone (auto-builds venv first run, then serves on :8765)
+# backend alone (auto-builds venv first run, then serves on :8766)
 bash scripts/run_backend.sh
 
 # build the app bundle and launch it
@@ -128,7 +128,7 @@ What "validated" means here, in order of confidence:
 
 1. `swift build` (and `-c release`) compiles clean — no warnings.
 2. `--selftest` prints `ALL PASS` (covers the cleanup pipeline + profiles).
-3. Backend endpoints answer: `curl localhost:8765/health` reports
+3. Backend endpoints answer: `curl localhost:8766/health` reports
    `model_loaded: true`; `/synthesize` streams non-empty PCM; `?format=wav`
    produces a playable file (`ffprobe` the duration).
 4. The bundled app cold-starts: wipe the venv, launch `/Applications/Parley.app`,
