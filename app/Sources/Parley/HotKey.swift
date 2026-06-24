@@ -46,13 +46,14 @@ final class HotKeyManager {
     func register(_ combo: HotKeyCombo) -> Bool {
         // Tear down whichever path was active before re-binding.
         if let ref { UnregisterEventHotKey(ref); self.ref = nil }
-        chordModifiers = 0
-        armed = true
+        // chordModifiers/armed are read by the shared handleFlags; mutate them
+        // under the same lock so register (UI thread) and the monitor never race.
+        Self.lock.lock(); chordModifiers = 0; armed = true; Self.lock.unlock()
 
         // Modifier-only chord: no base key, two or more modifiers held together.
         // (One modifier alone would fire on every routine ⌘/⌥ press — disallow.)
         if combo.isModifierOnly {
-            chordModifiers = combo.modifiers
+            Self.lock.lock(); chordModifiers = combo.modifiers; armed = true; Self.lock.unlock()
             Self.installChordMonitorOnce()
             return true
         }
@@ -90,22 +91,23 @@ final class HotKeyManager {
 
     /// On every modifier change, fire any chord manager whose exact modifier set
     /// just became active (rising edge), and re-arm one whose chord was released.
+    /// NSEvent monitors deliver on the main thread, but we read/write the per-
+    /// manager chord state under `lock` anyway so this is race-free regardless of
+    /// the delivery thread; the matched `onFire`s run on main, outside the lock.
     private static func handleFlags(_ ev: NSEvent) {
         let current = KeyName.carbonModifiers(ev.modifierFlags)
+        var toFire: [() -> Void] = []
         lock.lock()
-        let chordManagers = managers.values.compactMap { $0.value }.filter { $0.chordModifiers != 0 }
-        lock.unlock()
-        for mgr in chordManagers {
+        for wm in managers.values {
+            guard let mgr = wm.value, mgr.chordModifiers != 0 else { continue }
             if current == mgr.chordModifiers {
-                if mgr.armed {
-                    mgr.armed = false
-                    let fire = mgr.onFire
-                    DispatchQueue.main.async { fire?() }
-                }
+                if mgr.armed { mgr.armed = false; if let f = mgr.onFire { toFire.append(f) } }
             } else {
                 mgr.armed = true
             }
         }
+        lock.unlock()
+        for f in toFire { DispatchQueue.main.async { f() } }
     }
 
     private static func installSharedHandlerOnce() {
