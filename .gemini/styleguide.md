@@ -22,3 +22,18 @@ should NOT be flagged.
 - **CPU-only `auto` provider for Kokoro.** Selecting CPU over CoreML in `auto`
   is deliberate and benchmarked (Kokoro is 82M params; CoreML offloads most ops
   back to CPU and adds conversion overhead). Not a missed GPU optimization.
+
+- **Process-lifetime static event monitors / handlers in `HotKey.swift`.** The
+  shared Carbon `sharedHandler` and the `flagsChanged` chord monitor are
+  installed once and live for the whole app run. Both hotkey managers (read +
+  dictation) persist for the process lifetime, so there is no point at which to
+  remove them. This is intentional shared infrastructure, not a leak.
+
+- **`kill(pid, ...)` on an adopted backend PID.** `adoptedPID` always comes from
+  `lsof` (a real listener PID), and every call site guards `pid > 1`. Signaling
+  the adopted orphan is how Parley reclaims a backend it owns but has no
+  `Process` handle for.
+
+- **`MainActor.assumeIsolated` in main-thread-only callbacks.** Used only where
+  the callback is documented to be delivered on the main thread (NSWorkspace app
+  activation, willTerminate). Not an unchecked assumption.
