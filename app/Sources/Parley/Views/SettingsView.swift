@@ -559,7 +559,7 @@ private struct ModelsTab: View {
                         }.buttonStyle(.borderedProminent)
                     }
                 }
-                Text("English uses Parakeet v2; Multilingual uses Parakeet v3 (25 languages). Same model family and speed. Downloaded on first use.")
+                Text("English uses Parakeet Flash (real-time streaming); Multilingual uses Nemotron streaming (25 languages). Downloaded on first use.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
