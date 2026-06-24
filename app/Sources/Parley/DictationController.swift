@@ -16,14 +16,14 @@ final class DictationController: ObservableObject {
     private let hotkey = HotKeyManager(slot: 2)
     private var panel: NSPanel?
 
-    /// Default dictation shortcut: ⌘⇧D.
-    static let defaultCombo = HotKeyCombo(keyCode: UInt32(kVK_ANSI_D),
-                                          modifiers: UInt32(cmdKey | shiftKey))
-
     func bootstrap() {
+        dictation.engineChoice = Dictation.EngineChoice(rawValue: Prefs.shared.dictationEngine) ?? .english
         hotkey.onFire = { [weak self] in self?.toggle() }
-        hotkey.register(Self.defaultCombo)
+        hotkey.register(Prefs.shared.dictationHotKey)
     }
+
+    /// Re-register after the user changes the dictation shortcut in Settings.
+    func reapplyHotKey() { hotkey.register(Prefs.shared.dictationHotKey) }
 
     /// Push-to-talk toggle.
     func toggle() {

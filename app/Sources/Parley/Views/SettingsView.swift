@@ -362,12 +362,24 @@ private struct ShortcutTab: View {
         Form {
             Section("Global read shortcut") {
                 HStack {
-                    Text("Current"); Spacer()
+                    Text("Read selection"); Spacer()
                     HotKeyRecorder(combo: $prefs.hotKey) { state.reapplyHotKey() }
                 }
-                Text("Click the field, then press a modifier + key combination (e.g. ⌘⇧R).")
+                Text("Reads the selected text aloud (text → speech).")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Global dictation shortcut") {
+                HStack {
+                    Text("Dictate"); Spacer()
+                    HotKeyRecorder(combo: $prefs.dictationHotKey) {
+                        DictationController.shared.reapplyHotKey()
+                    }
+                }
+                Text("Press to start dictating, press again to insert (speech → text).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Click a field, then press a modifier + key combination (e.g. ⌘⇧R).")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
     }
@@ -425,6 +437,10 @@ private struct ModelsTab: View {
     @State private var kokoroSize: String?
     @State private var hdSize: String?
     @State private var sizeTask: Task<Void, Never>?
+    @ObservedObject private var dictation = DictationController.shared.dictation
+    @State private var parakeetSize: String?
+    @State private var parakeetPresent = false
+    @State private var confirmDeleteParakeet = false
 
     private static let sizeFmt: ByteCountFormatter = {
         let f = ByteCountFormatter(); f.allowedUnits = [.useMB, .useGB]; f.countStyle = .file
@@ -437,13 +453,18 @@ private struct ModelsTab: View {
         let kdir = state.backend.modelsDir, hdir = state.hdPackagesDir
         let kPresent = state.modelsPresent, hdPresent = state.hdInstalled
         sizeTask?.cancel()   // supersede any in-flight walk; avoid redundant disk I/O
+        let pdir = Dictation.modelsDirOnDisk
+        let pPresent = Dictation.modelsPresentOnDisk
         sizeTask = Task {
             // static dirSizeBytes — no @MainActor state captured into this task.
             let kb = kPresent ? await Task.detached { AppState.dirSizeBytes(kdir) }.value : 0
             let hb = hdPresent ? await Task.detached { AppState.dirSizeBytes(hdir) }.value : 0
+            let pb = pPresent ? await Task.detached { AppState.dirSizeBytes(pdir) }.value : 0
             if Task.isCancelled { return }
             kokoroSize = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil
             hdSize = hb > 0 ? Self.sizeFmt.string(fromByteCount: hb) : nil
+            parakeetPresent = pPresent
+            parakeetSize = pb > 0 ? Self.sizeFmt.string(fromByteCount: pb) : nil
         }
     }
 
@@ -508,6 +529,39 @@ private struct ModelsTab: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+
+            Section("Dictation model (Parakeet)") {
+                Picker("Engine", selection: Binding(
+                    get: { dictation.engineChoice },
+                    set: { c in Task { await dictation.loadModel(c) } }
+                )) {
+                    ForEach(Dictation.EngineChoice.allCases) { Text($0.label).tag($0) }
+                }
+                .disabled(dictation.state == .listening || dictation.state == .loadingModel)
+
+                LabeledContent("Status", value: parakeetStatus)
+                if let s = parakeetSize { LabeledContent("Size on disk", value: s) }
+                LabeledContent("Location", value: Dictation.modelsDirOnDisk.path).font(.caption)
+
+                switch dictation.state {
+                case .loadingModel:
+                    HStack { ProgressView().controlSize(.small)
+                        Text("Downloading / loading…").font(.caption) }
+                case .error(let m):
+                    Text(m).font(.caption).foregroundStyle(.red)
+                    Button("Retry") { Task { await dictation.loadModel(dictation.engineChoice) } }
+                default:
+                    if parakeetPresent {
+                        Button("Delete models", role: .destructive) { confirmDeleteParakeet = true }
+                    } else {
+                        Button("Download model") {
+                            Task { await dictation.loadModel(dictation.engineChoice) }
+                        }.buttonStyle(.borderedProminent)
+                    }
+                }
+                Text("English uses Parakeet (low latency); Multilingual uses Nemotron (25 languages). Downloaded on first use.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear { state.refreshHD(); refreshSizes() }
@@ -529,6 +583,20 @@ private struct ModelsTab: View {
         } message: {
             Text("Frees ~1.3 GB. Your cloned voices are kept; you can reinstall HD any time.")
         }
+        .onChange(of: dictation.state) { _, _ in refreshSizes() }
+        .confirmationDialog("Delete the dictation models?", isPresented: $confirmDeleteParakeet, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                parakeetSize = nil; parakeetPresent = false; dictation.deleteModelsFromDisk()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Removes the downloaded Parakeet/Nemotron models. Dictation re-downloads them on next use.")
+        }
+    }
+
+    private var parakeetStatus: String {
+        if dictation.modelReady { return "Loaded (\(dictation.engineChoice.label))" }
+        return parakeetPresent ? "Downloaded" : "Not downloaded"
     }
 }
 

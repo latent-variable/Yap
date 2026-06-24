@@ -44,6 +44,19 @@ final class AudioPlayer {
         engine.attach(pitchUnit)
         engine.connect(player, to: pitchUnit, format: inFormat)
         engine.connect(pitchUnit, to: engine.mainMixerNode, format: inFormat)
+        // A hardware/route change — e.g. the dictation mic engine starting or
+        // stopping — stops this engine AND can tear down its connections. Without
+        // recovery the voice goes permanently silent until relaunch. Rebuild the
+        // graph and restart on every configuration change.
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in self?.recoverFromConfigChange() }
+    }
+
+    private func recoverFromConfigChange() {
+        engine.connect(player, to: pitchUnit, format: inFormat)
+        engine.connect(pitchUnit, to: engine.mainMixerNode, format: inFormat)
+        if !engine.isRunning { try? engine.start() }
     }
 
     func set(volume: Float, pitchCents: Float) {

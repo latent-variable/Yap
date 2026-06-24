@@ -48,6 +48,7 @@ final class Dictation: ObservableObject {
         if modelReady, engineChoice == choice, manager != nil { return }
         state = .loadingModel
         engineChoice = choice
+        Prefs.shared.dictationEngine = choice.rawValue
         do {
             let mgr = choice.variant.createManager()
             try await mgr.loadModels()
@@ -105,6 +106,27 @@ final class Dictation: ObservableObject {
     }
 
     func clearError() { if case .error = state { state = .idle } }
+
+    // MARK: - on-disk model management (for the Models settings tab)
+
+    /// Where FluidAudio caches downloaded ASR models.
+    nonisolated static var modelsDirOnDisk: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("FluidAudio", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+    }
+
+    nonisolated static var modelsPresentOnDisk: Bool {
+        (try? FileManager.default.contentsOfDirectory(atPath: modelsDirOnDisk.path))?.isEmpty == false
+    }
+
+    /// Remove the on-disk models and unload — next dictation re-downloads.
+    func deleteModelsFromDisk() {
+        try? FileManager.default.removeItem(at: Self.modelsDirOnDisk)
+        manager = nil
+        modelReady = false
+        if case .error = state {} else { state = .idle }
+    }
 
     // MARK: - capture
 
