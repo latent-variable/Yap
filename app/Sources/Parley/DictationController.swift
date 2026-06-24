@@ -65,7 +65,7 @@ final class DictationController: ObservableObject {
 
     private func showHUD() {
         if panel == nil {
-            let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 168),
+            let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 84),
                             styleMask: [.nonactivatingPanel, .borderless],
                             backing: .buffered, defer: false)
             p.level = .floating
@@ -95,6 +95,29 @@ final class DictationController: ObservableObject {
         let y = v.minY + 120
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
+
+    /// Resize the panel to fit the HUD's natural height — keeping the bottom edge
+    /// fixed so the box grows *upward* as more lines appear.
+    func resizeHUD(height: CGFloat) {
+        guard let panel else { return }
+        let h = max(72, min(height, 320)).rounded()
+        let f = panel.frame
+        guard abs(f.height - h) > 0.5 else { return }
+        panel.setFrame(NSRect(x: f.minX, y: f.minY, width: f.width, height: h),
+                       display: true, animate: false)
+    }
+}
+
+/// Natural height of the transcript text (drives the in-box grow-then-scroll).
+private struct TextHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// Natural height of the whole HUD (drives the panel resize).
+private struct HUDHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// The live transcript box: recording state, the words as they're recognized,
@@ -107,6 +130,11 @@ struct DictationHUD: View {
         self.controller = controller
         self.dictation = controller.dictation
     }
+
+    // Transcript area grows line-by-line up to ~4 lines, then scrolls.
+    @State private var textHeight: CGFloat = 24
+    private let oneLine: CGFloat = 24
+    private let maxTextHeight: CGFloat = 104   // ~4 lines at 15pt
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -124,20 +152,40 @@ struct DictationHUD: View {
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
-            Text(transcriptText)
-                .font(.system(size: 15))
-                .foregroundStyle(dictation.partial.isEmpty ? .secondary : .primary)
-                .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
-                .lineLimit(4, reservesSpace: true)
-                // Head-truncate so the *latest* spoken words stay visible as the
-                // transcript grows — a live caption, not a frozen opening line.
-                .truncationMode(.head)
-                .animation(.easeOut(duration: 0.12), value: dictation.partial)
+            transcript
         }
         .padding(14)
         .frame(width: 460, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.08)))
+        // Report the box's natural height so the panel can grow/shrink to fit.
+        .background(GeometryReader { g in
+            Color.clear.preference(key: HUDHeightKey.self, value: g.size.height)
+        })
+        .onPreferenceChange(HUDHeightKey.self) { controller.resizeHUD(height: $0) }
+    }
+
+    /// Bottom-pinned scroll of the FULL transcript: the whole text slides up so
+    /// the last lines stay visible (not just the tail of one line). The frame
+    /// hugs the text up to maxTextHeight, then scrolls.
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                Text(transcriptText)
+                    .font(.system(size: 15))
+                    .foregroundStyle(dictation.partial.isEmpty ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: TextHeightKey.self, value: g.size.height)
+                    })
+                Color.clear.frame(height: 1).id("bottom")
+            }
+            .frame(height: min(max(textHeight, oneLine), maxTextHeight))
+            .onPreferenceChange(TextHeightKey.self) { textHeight = $0 }
+            .onChange(of: dictation.partial) {
+                withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+        }
     }
 
     @ViewBuilder private var statusDot: some View {
