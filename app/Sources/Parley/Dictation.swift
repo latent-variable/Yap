@@ -58,6 +58,7 @@ final class Dictation: ObservableObject {
     private var captureFormat: AVAudioFormat?
     private var finalASR: AsrManager?
     private var finalVersionLoaded: AsrModelVersion?
+    private var finalTask: Task<Void, Never>?   // tracked final-pass (v2/v3) warm-up
 
     var isListening: Bool { state == .listening }
 
@@ -111,9 +112,11 @@ final class Dictation: ObservableObject {
             modelReady = true
             state = .idle
             // Warm the high-accuracy final-pass model in the background so it's
-            // ready by the time you stop talking. Best-effort.
+            // ready by the time you stop talking. Best-effort, and tracked so a
+            // later engine switch or a model delete can cancel it.
             let fv = choice.finalVersion
-            Task { await self.loadFinalModel(fv) }
+            finalTask?.cancel()
+            finalTask = Task { [weak self] in await self?.loadFinalModel(fv) }
         } catch is CancellationError {
             return   // superseded by a newer switch — not a real failure
         } catch {
@@ -135,9 +138,9 @@ final class Dictation: ObservableObject {
             let models = try await AsrModels.downloadAndLoad(version: version)
             let mgr = AsrManager(config: .default)
             try await mgr.loadModels(models)
-            // The user may have switched engines while this loaded — don't
-            // install a now-stale model over the current selection.
-            guard engineChoice.finalVersion == version else { return }
+            // The user may have switched engines (or this task was cancelled by a
+            // delete) while it loaded — don't install a now-stale model.
+            guard !Task.isCancelled, engineChoice.finalVersion == version else { return }
             finalASR = mgr
             finalVersionLoaded = version
         } catch {
@@ -240,10 +243,12 @@ final class Dictation: ObservableObject {
 
     /// Remove the on-disk models and unload — next dictation re-downloads.
     func deleteModelsFromDisk() {
-        // Cancel any in-flight load first, or it could finish and re-create the
-        // models right after we delete them (or stamp a stale state).
+        // Cancel any in-flight loads first (streaming + final-pass), or one could
+        // finish and re-create the models right after we delete them.
         loadTask?.cancel()
         loadTask = nil
+        finalTask?.cancel()
+        finalTask = nil
         manager = nil
         finalASR = nil
         finalVersionLoaded = nil

@@ -290,8 +290,15 @@ final class BackendManager: NSObject, ObservableObject {
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return "" }
+        // Watchdog: lsof/ps return in milliseconds; if one wedges (e.g. lsof on a
+        // stuck network mount), terminate it so this never blocks indefinitely.
+        let timer = DispatchSource.makeTimerSource(queue: .global())
+        timer.schedule(deadline: .now() + 3)
+        timer.setEventHandler { if p.isRunning { p.terminate() } }
+        timer.resume()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
+        timer.cancel()
         return String(data: data, encoding: .utf8) ?? ""
     }
 
