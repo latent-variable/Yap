@@ -18,10 +18,14 @@ final class BackendManager: ObservableObject {
     let client = BackendClient()
     let port = 8766
 
+    /// Token for the willTerminate observer, removed in deinit so the block isn't
+    /// leaked by NotificationCenter (block-based observers aren't auto-removed).
+    private var terminateObserver: Any?
+
     init() {
         // Kill our own backend when the app quits so it doesn't linger as an
         // orphan (reparented to launchd) that the next launch can't cleanly own.
-        NotificationCenter.default.addObserver(
+        terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             // queue: .main → already on the main actor; assume isolation to touch
@@ -32,6 +36,10 @@ final class BackendManager: ObservableObject {
                 if let pid = self.adoptedPID { kill(pid, SIGTERM) }
             }
         }
+    }
+
+    deinit {
+        if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
     }
 
     var modelsDir: URL {
