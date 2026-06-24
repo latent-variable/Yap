@@ -2,25 +2,33 @@ import AVFoundation
 import Foundation
 import FluidAudio
 
-/// The "ears": native streaming Parakeet ASR on the Apple Neural Engine via
-/// FluidAudio. Push-to-talk → live partial transcript (for the HUD) → final
-/// text the caller inserts at the cursor.
+/// The "ears": native Parakeet ASR on the Apple Neural Engine via FluidAudio.
+/// Push-to-talk → live partial transcript (for the HUD) → final text the caller
+/// inserts at the cursor.
 ///
-/// Streaming (not record-then-transcribe) so text appears *as you speak*:
-/// FluidAudio emits partial-transcript updates through a callback while audio
-/// is fed in chunks.
+/// Uses `SlidingWindowAsrManager` with the real Parakeet TDT models —
+/// **v2 (English)** and **v3 (multilingual, 25 languages)**, the same family
+/// FluidVoice uses. Overlapping windows give pseudo-streaming: partial updates
+/// arrive *while you speak*, and `finish()` returns the authoritative transcript
+/// built from all accumulated tokens (so the inserted text is correct even if a
+/// mid-stream partial looked rough).
+///
+/// The weights download once per version and are cached; a manager is single-use
+/// (its input stream can't be reopened after `finish()`), so each push-to-talk
+/// session spins a fresh manager over the already-loaded models — cheap.
 @MainActor
 final class Dictation: ObservableObject {
 
-    /// User-facing engine choice → concrete streaming model.
+    /// User-facing engine choice → concrete Parakeet model version.
     enum EngineChoice: String, CaseIterable, Identifiable {
-        case english      // Parakeet EOU 120M, low latency
-        case multilingual // Nemotron 0.6B, 25 languages
+        case english      // Parakeet TDT 0.6B v2 — English
+        case multilingual // Parakeet TDT 0.6B v3 — 25 languages
         var id: String { rawValue }
-        // Same model family, same speed. English is more accurate for English;
-        // multilingual trades a little English precision for 25 languages.
+        // Same model family, same speed. English (v2) is more accurate for
+        // English; multilingual (v3) trades a little English precision for 25
+        // languages.
         var label: String { self == .english ? "English" : "Multilingual" }
-        var variant: StreamingModelVariant { self == .english ? .parakeetEou320ms : .nemotron1120ms }
+        var version: AsrModelVersion { self == .english ? .v2 : .v3 }
     }
 
     enum State: Equatable {
@@ -35,7 +43,13 @@ final class Dictation: ObservableObject {
     @Published private(set) var partial = ""
     @Published private(set) var lastFinal = ""
 
-    private var manager: (any StreamingAsrManager)?
+    // Downloaded weights, kept across sessions (re-downloaded only on engine
+    // switch). The per-session manager is built from these.
+    private var models: AsrModels?
+    private var loadedVersion: AsrModelVersion?
+    private var manager: SlidingWindowAsrManager?
+    private var updatesTask: Task<Void, Never>?
+
     private let audio = AVAudioEngine()
     private var pump: Task<Void, Never>?
     // Render-thread → actor handoff. nonisolated so the mic tap (any thread)
@@ -44,20 +58,17 @@ final class Dictation: ObservableObject {
 
     var isListening: Bool { state == .listening }
 
-    /// Download (first time) + load the streaming model for the chosen engine.
+    /// Download (first time) + cache the Parakeet weights for the chosen engine.
     func loadModel(_ choice: EngineChoice) async {
         if case .loadingModel = state { return }
-        if modelReady, engineChoice == choice, manager != nil { return }
+        if modelReady, engineChoice == choice, models != nil { return }
         state = .loadingModel
         engineChoice = choice
         Prefs.shared.dictationEngine = choice.rawValue
         do {
-            let mgr = choice.variant.createManager()
-            try await mgr.loadModels()
-            await mgr.setPartialTranscriptCallback { [weak self] text in
-                Task { @MainActor in self?.partial = text }
-            }
-            manager = mgr
+            let m = try await AsrModels.downloadAndLoad(version: choice.version)
+            models = m
+            loadedVersion = choice.version
             modelReady = true
             state = .idle
         } catch {
@@ -68,14 +79,25 @@ final class Dictation: ObservableObject {
 
     /// Start mic capture and live streaming (asks Microphone permission once).
     func startListening() {
-        guard modelReady, state == .idle, let manager else { return }
+        guard modelReady, state == .idle, let models else { return }
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             Task { @MainActor in
                 guard granted else { self.state = .error("Microphone access denied"); return }
                 do {
-                    try await manager.reset()
+                    // Fresh single-use manager over the already-loaded weights.
+                    let mgr = SlidingWindowAsrManager()
+                    try await mgr.loadModels(models)
+                    self.manager = mgr
                     self.partial = ""
-                    try self.beginCapture(into: manager)
+                    // Consume live partials (access the stream ONCE — it stores a
+                    // single continuation).
+                    self.updatesTask = Task { [weak self] in
+                        for await update in await mgr.transcriptionUpdates {
+                            await MainActor.run { self?.partial = update.text }
+                        }
+                    }
+                    try await mgr.startStreaming(source: .microphone)
+                    self.beginCapture(into: mgr)
                     self.state = .listening
                 } catch {
                     self.state = .error("Mic start failed: \(error.localizedDescription)")
@@ -93,15 +115,20 @@ final class Dictation: ObservableObject {
         pump?.cancel(); pump = nil
         state = .transcribing
         do {
-            // Feed anything still queued, then finish.
-            for b in pending.drain() { try? await manager.appendAudio(b) }
-            try? await manager.processBufferedAudio()
+            // Feed anything still queued, then finish (finish() closes the input
+            // stream and drains the recognizer).
+            for b in pending.drain() { await manager.streamAudio(b) }
             let text = try await manager.finish().trimmingCharacters(in: .whitespacesAndNewlines)
+            updatesTask?.cancel(); updatesTask = nil
+            self.manager = nil
             lastFinal = text
             partial = ""
             state = .idle
             return text.isEmpty ? nil : text
         } catch {
+            updatesTask?.cancel(); updatesTask = nil
+            await manager.cancel()
+            self.manager = nil
             state = .error("Transcription failed: \(error.localizedDescription)")
             return nil
         }
@@ -126,13 +153,15 @@ final class Dictation: ObservableObject {
     func deleteModelsFromDisk() {
         try? FileManager.default.removeItem(at: Self.modelsDirOnDisk)
         manager = nil
+        models = nil
+        loadedVersion = nil
         modelReady = false
         if case .error = state {} else { state = .idle }
     }
 
     // MARK: - capture
 
-    private func beginCapture(into manager: any StreamingAsrManager) throws {
+    private func beginCapture(into manager: SlidingWindowAsrManager) {
         let input = audio.inputNode
         let format = input.inputFormat(forBus: 0)
         let queue = pending
@@ -141,15 +170,16 @@ final class Dictation: ObservableObject {
             if let copy = BufferQueue.copy(buf) { queue.push(copy) }
         }
         audio.prepare()
-        try audio.start()
-        // Pump loop: drain copied buffers into the actor and process chunks so
-        // partials keep flowing. appendAudio accepts any format (resamples to
-        // 16 kHz internally).
+        do { try audio.start() } catch {
+            state = .error("Mic start failed: \(error.localizedDescription)")
+            return
+        }
+        // Pump loop: drain copied buffers into the actor. The manager's recognizer
+        // task converts to 16 kHz and processes windows on its own, emitting
+        // partials through transcriptionUpdates.
         pump = Task.detached {
             while !Task.isCancelled {
-                let bufs = queue.drain()
-                for b in bufs { try? await manager.appendAudio(b) }
-                if !bufs.isEmpty { try? await manager.processBufferedAudio() }
+                for b in queue.drain() { await manager.streamAudio(b) }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
         }

@@ -192,6 +192,7 @@ struct MenuContent: View {
 struct DictationRow: View {
     @ObservedObject private var controller = DictationController.shared
     @ObservedObject private var dictation = DictationController.shared.dictation
+    @ObservedObject private var prefs = Prefs.shared
 
     var body: some View {
         VStack(spacing: 6) {
@@ -202,7 +203,7 @@ struct DictationRow: View {
                 .buttonStyle(.borderless)
                 .help("Dictate — press, speak, press again to insert")
                 Spacer()
-                Text("⌘⇧D")
+                Text(KeyName.describe(prefs.dictationHotKey))
                     .font(.caption.monospaced())
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
@@ -222,7 +223,35 @@ struct DictationRow: View {
                 .frame(width: 150)
                 .disabled(dictation.state == .listening)
             }
+
+            if !dictation.lastFinal.isEmpty {
+                lastDictation
+            }
         }
+    }
+
+    /// Quick retrieval of the most recent dictation — for when a paste landed in
+    /// the wrong place (or didn't). Copy it, or re-insert at the current cursor.
+    private var lastDictation: some View {
+        DisclosureGroup("Last dictation") {
+            ScrollView {
+                Text(dictation.lastFinal)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 70)
+            HStack {
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(dictation.lastFinal, forType: .string)
+                }.controlSize(.mini)
+                Button("Insert") { TextInsert.insertAtCursor(dictation.lastFinal) }
+                    .controlSize(.mini)
+            }
+        }
+        .font(.caption)
     }
 
     private var buttonLabel: String {

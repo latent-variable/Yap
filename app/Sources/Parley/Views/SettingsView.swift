@@ -559,7 +559,7 @@ private struct ModelsTab: View {
                         }.buttonStyle(.borderedProminent)
                     }
                 }
-                Text("English uses Parakeet (low latency); Multilingual uses Nemotron (25 languages). Downloaded on first use.")
+                Text("English uses Parakeet v2; Multilingual uses Parakeet v3 (25 languages). Same model family and speed. Downloaded on first use.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -590,7 +590,7 @@ private struct ModelsTab: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Removes the downloaded Parakeet/Nemotron models. Dictation re-downloads them on next use.")
+            Text("Removes the downloaded Parakeet models. Dictation re-downloads them on next use.")
         }
     }
 
