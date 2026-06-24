@@ -12,8 +12,27 @@ final class BackendManager: ObservableObject {
     @Published var lastError: String?
 
     private var process: Process?
+    /// PID of an orphaned Parley backend we've adopted (we have no Process handle
+    /// to it — it outlived its spawner — so we manage it by PID/signal instead).
+    private var adoptedPID: pid_t?
     let client = BackendClient()
     let port = 8766
+
+    init() {
+        // Kill our own backend when the app quits so it doesn't linger as an
+        // orphan (reparented to launchd) that the next launch can't cleanly own.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // queue: .main → already on the main actor; assume isolation to touch
+            // main-actor state without a hop (termination handlers must be sync).
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.process?.terminate()
+                if let pid = self.adoptedPID { kill(pid, SIGTERM) }
+            }
+        }
+    }
 
     var modelsDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -76,6 +95,14 @@ final class BackendManager: ObservableObject {
     func start() async {
         if let h = await client.health() {
             apply(h)
+            // Reusing a live backend. If it's an orphaned Parley backend (its
+            // spawner died → reparented to launchd), adopt it so model management
+            // isn't blocked. A backend started by hand in a terminal (ppid != 1)
+            // is left external on purpose.
+            if process == nil, adoptedPID == nil, let pid = await Self.orphanBackendPID(port: port) {
+                adoptedPID = pid
+                ownsProcess = true
+            }
             if ready { return }
             // Responsive but nothing installable (no Kokoro files, no HD) — don't
             // launch/spin waiting for a model that was deleted.
@@ -198,25 +225,82 @@ final class BackendManager: ObservableObject {
 
     func stop() {
         process?.terminate()
+        if let pid = adoptedPID { kill(pid, SIGTERM) }
         process = nil
+        adoptedPID = nil
         ownsProcess = false
+    }
+
+    // MARK: Orphan detection (lsof + ps, off the main actor)
+
+    /// PID of an orphaned Parley backend listening on `port`: the process must be
+    /// running `server.py` AND have been reparented to launchd (ppid == 1), the
+    /// signature of a backend whose spawning Parley quit or crashed.
+    private nonisolated static func orphanBackendPID(port: Int) async -> pid_t? {
+        await Task.detached {
+            guard let pid = listenerPID(port: port) else { return nil }
+            let info = psInfo(pid)
+            guard let info, info.ppid == 1, info.command.contains("server.py") else { return nil }
+            return pid
+        }.value
+    }
+
+    /// PID holding the listen socket on `port` (first match), via `lsof`.
+    private nonisolated static func listenerPID(port: Int) -> pid_t? {
+        let out = runTool("/usr/sbin/lsof", ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t", "-Fp"])
+        // -Fp prints lines like "p12345"; take the first.
+        for line in out.split(separator: "\n") where line.hasPrefix("p") {
+            if let v = Int32(line.dropFirst()) { return v }
+        }
+        return nil
+    }
+
+    /// (ppid, full command) for `pid`, via `ps`.
+    private nonisolated static func psInfo(_ pid: pid_t) -> (ppid: pid_t, command: String)? {
+        let out = runTool("/bin/ps", ["-o", "ppid=,command=", "-p", String(pid)])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !out.isEmpty else { return nil }
+        let parts = out.split(separator: " ", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let ppid = Int32(parts[0]) else { return nil }
+        return (ppid, parts[1])
+    }
+
+    private nonisolated static func runTool(_ path: String, _ args: [String]) -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     /// Terminate the backend process and WAIT for it to exit, so its file handles
     /// are released before a caller deletes model files. (stop() returns before
     /// the process has actually exited — a fixed sleep would race the unlink.)
     func stopAndWait() async {
-        guard let p = process else { ownsProcess = false; return }
-        p.terminate()
-        // Wait up to ~5s for exit; never hang the UI if the process ignores
-        // SIGTERM (the unlink that follows works on still-open files anyway).
         let deadline = Date().addingTimeInterval(5)
-        while p.isRunning && Date() < deadline {
-            // do/catch (not try?) so cancellation breaks instead of busy-spinning:
-            // try? would swallow CancellationError and burn CPU until the deadline.
-            do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
+        if let p = process {
+            p.terminate()
+            // Wait up to ~5s for exit; never hang the UI if the process ignores
+            // SIGTERM (the unlink that follows works on still-open files anyway).
+            while p.isRunning && Date() < deadline {
+                // do/catch (not try?) so cancellation breaks instead of busy-spinning:
+                // try? would swallow CancellationError and burn CPU until the deadline.
+                do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
+            }
+        } else if let pid = adoptedPID {
+            // Adopted orphan: no Process handle, signal it and poll with kill(,0).
+            kill(pid, SIGTERM)
+            while kill(pid, 0) == 0 && Date() < deadline {
+                do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
+            }
         }
         process = nil
+        adoptedPID = nil
         ownsProcess = false
     }
 
