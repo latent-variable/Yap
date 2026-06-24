@@ -14,7 +14,10 @@ final class HotKeyManager {
     // the matching handler never runs. With two hot keys (read + dictation) the
     // last-installed handler ate every event — the read shortcut silently died.
     // A single handler keyed by id has no ordering hazard.
-    private static var managers: [UInt32: HotKeyManager] = [:]
+    // Weak so registering in the static map doesn't keep the manager alive
+    // forever — otherwise deinit (which unregisters the system hot key) never runs.
+    private struct WeakManager { weak var value: HotKeyManager? }
+    private static var managers: [UInt32: WeakManager] = [:]
     private static var sharedHandler: EventHandlerRef?
     private static let lock = NSLock()
 
@@ -22,7 +25,7 @@ final class HotKeyManager {
     /// 2 = dictation). Same 'PRLY' signature, different id.
     init(slot: UInt32 = 1) {
         id = EventHotKeyID(signature: OSType(0x50524C59), id: slot)
-        Self.lock.lock(); Self.managers[slot] = self; Self.lock.unlock()
+        Self.lock.lock(); Self.managers[slot] = WeakManager(value: self); Self.lock.unlock()
         Self.installSharedHandlerOnce()
     }
 
@@ -51,7 +54,7 @@ final class HotKeyManager {
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hkID)
             HotKeyManager.lock.lock()
-            let mgr = HotKeyManager.managers[hkID.id]
+            let mgr = HotKeyManager.managers[hkID.id]?.value
             HotKeyManager.lock.unlock()
             guard let mgr else { return OSStatus(eventNotHandledErr) }
             DispatchQueue.main.async { mgr.onFire?() }

@@ -56,8 +56,13 @@ final class DictationController: ObservableObject {
                 hideHUD()
                 if let text { TextInsert.insertAtCursor(text) }
             }
-        case .loadingModel, .transcribing, .error:
+        case .loadingModel, .transcribing:
             break   // mid-flight — ignore re-trigger
+        case .error:
+            // Pressing the shortcut again clears a stuck error + dismisses the
+            // HUD, instead of locking the app in the error state.
+            dictation.clearError()
+            hideHUD()
         }
     }
 

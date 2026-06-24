@@ -246,6 +246,7 @@ private final class BufferQueue: @unchecked Sendable {
         let channels = Int(format.channelCount)
         var offset = 0
         for b in bufs {
+            guard b.format == format else { return nil }   // mismatched layout → bail, don't OOB
             let n = Int(b.frameLength)
             if let s = b.floatChannelData, let d = dst.floatChannelData {
                 for ch in 0..<channels { memcpy(d[ch] + offset, s[ch], n * MemoryLayout<Float>.size) }
