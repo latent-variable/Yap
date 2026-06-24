@@ -6,10 +6,15 @@ import Carbon.HIToolbox
 final class HotKeyManager {
     private var ref: EventHotKeyRef?
     private var handler: EventHandlerRef?
-    private let id = EventHotKeyID(signature: OSType(0x50524C59), id: 1) // 'PRLY'
+    private let id: EventHotKeyID
     var onFire: (() -> Void)?
 
-    init() { installHandler() }
+    /// `slot` distinguishes multiple hot keys in the same app (1 = read aloud,
+    /// 2 = dictation). Same 'PRLY' signature, different id.
+    init(slot: UInt32 = 1) {
+        id = EventHotKeyID(signature: OSType(0x50524C59), id: slot)
+        installHandler()
+    }
 
     deinit {
         if let ref { UnregisterEventHotKey(ref) }

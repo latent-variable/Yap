@@ -73,6 +73,10 @@ struct MenuContent: View {
 
             Divider()
 
+            DictationRow()
+
+            Divider()
+
             HStack {
                 Button { showSettings() } label: {
                     Label("Settings", systemImage: "gearshape")
@@ -182,4 +186,58 @@ struct MenuContent: View {
         }
     }
 
+}
+
+/// Dictation ("ears") controls in the menu: toggle, live state, engine picker.
+struct DictationRow: View {
+    @ObservedObject private var controller = DictationController.shared
+    @ObservedObject private var dictation = DictationController.shared.dictation
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 10) {
+                Button { controller.toggle() } label: {
+                    Label(buttonLabel, systemImage: buttonIcon)
+                }
+                .buttonStyle(.borderless)
+                .help("Dictate — press, speak, press again to insert")
+                Spacer()
+                Text("⌘⇧D")
+                    .font(.caption.monospaced())
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            }
+            HStack {
+                Text("Dictation engine").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { dictation.engineChoice },
+                    set: { choice in Task { await dictation.loadModel(choice) } }
+                )) {
+                    ForEach(Dictation.EngineChoice.allCases) { c in
+                        Text(c.label).tag(c)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 150)
+                .disabled(dictation.state == .listening)
+            }
+        }
+    }
+
+    private var buttonLabel: String {
+        switch dictation.state {
+        case .listening:    return "Stop & Insert"
+        case .loadingModel: return "Loading model…"
+        case .transcribing: return "Transcribing…"
+        default:            return "Dictate"
+        }
+    }
+
+    private var buttonIcon: String {
+        switch dictation.state {
+        case .listening: return "stop.circle.fill"
+        default:         return "mic.fill"
+        }
+    }
 }
