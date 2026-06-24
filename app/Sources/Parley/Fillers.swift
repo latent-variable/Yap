@@ -17,6 +17,9 @@ enum Fillers {
         // Tidy up the gaps the removals leave behind.
         out = out.replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
         out = out.replacingOccurrences(of: #"\s+([,.!?;:])"#, with: "$1", options: .regularExpression)
+        // A filler removed from between commas leaves ", ," — collapse to one.
+        out = out.replacingOccurrences(of: #"([,;:])(\s*[,;:])+"#, with: "$1", options: .regularExpression)
+        out = out.replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
         out = out.replacingOccurrences(of: #"^[\s,]+"#, with: "", options: .regularExpression)
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
