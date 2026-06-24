@@ -438,6 +438,7 @@ private struct ModelsTab: View {
     @State private var hdSize: String?
     @State private var sizeTask: Task<Void, Never>?
     @ObservedObject private var dictation = DictationController.shared.dictation
+    @ObservedObject private var prefs = Prefs.shared
     @State private var parakeetSize: String?
     @State private var parakeetPresent = false
     @State private var confirmDeleteParakeet = false
@@ -560,6 +561,13 @@ private struct ModelsTab: View {
                     }
                 }
                 Text("English uses Parakeet Flash (real-time streaming); Multilingual uses Nemotron streaming (25 languages). Downloaded on first use.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Dictation behavior") {
+                Toggle("Play start/stop chime", isOn: $prefs.dictationChime)
+                Toggle("Remove filler words (um, uh)", isOn: $prefs.removeFillers)
+                Text("The chime cues recording on/off. Filler removal strips clear disfluencies from the inserted text (never meaningful words).")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

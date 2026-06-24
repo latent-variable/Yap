@@ -82,6 +82,8 @@ final class Prefs: ObservableObject {
     @Published var hotKey: HotKeyCombo { didSet { saveHotKey() } }
     @Published var dictationHotKey: HotKeyCombo { didSet { saveDictationHotKey() } }
     @Published var dictationEngine: String { didSet { d.set(dictationEngine, forKey: "dictationEngine") } }  // "english" | "multilingual"
+    @Published var dictationChime: Bool { didSet { d.set(dictationChime, forKey: "dictationChime") } }       // play a start/stop sound
+    @Published var removeFillers: Bool { didSet { d.set(removeFillers, forKey: "removeFillers") } }           // strip "um"/"uh" from dictation
 
     private init() {
         engine = d.string(forKey: "engine") ?? "kokoro"
@@ -99,6 +101,8 @@ final class Prefs: ObservableObject {
         autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
         providerMode = d.string(forKey: "providerMode") ?? "auto"
         dictationEngine = d.string(forKey: "dictationEngine") ?? "english"
+        dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true
+        removeFillers = d.object(forKey: "removeFillers") as? Bool ?? true
         showMiniPlayer = d.object(forKey: "showMiniPlayer") as? Bool ?? true
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false
         if let data = d.data(forKey: "customRules"),

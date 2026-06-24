@@ -141,7 +141,8 @@ final class Dictation: ObservableObject {
             // Accurate final pass over the whole utterance; fall back to the live
             // transcript if the batch model isn't ready or fails.
             let accurate = await runFinalPass(recorder.drain())
-            let text = (accurate?.isEmpty == false) ? accurate! : liveText
+            var text = (accurate?.isEmpty == false) ? accurate! : liveText
+            if Prefs.shared.removeFillers { text = Fillers.clean(text) }
             lastFinal = text
             partial = ""
             state = .idle

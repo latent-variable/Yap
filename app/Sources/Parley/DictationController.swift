@@ -28,18 +28,27 @@ final class DictationController: ObservableObject {
     /// Re-register after the user changes the dictation shortcut in Settings.
     func reapplyHotKey() { hotkey.register(Prefs.shared.dictationHotKey) }
 
+    /// Short start/stop cue so you know recording began/ended without watching
+    /// the screen (FluidVoice does this). Uses built-in macOS sounds.
+    private func playChime(start: Bool) {
+        guard Prefs.shared.dictationChime else { return }
+        NSSound(named: start ? "Tink" : "Bottle")?.play()
+    }
+
     /// Push-to-talk toggle.
     func toggle() {
         switch dictation.state {
         case .idle:
             captureTarget()
             showHUD()
+            playChime(start: true)   // immediate "now recording" feedback
             Task {
                 if !dictation.modelReady { await dictation.loadModel(dictation.engineChoice) }
                 guard dictation.modelReady else { return }   // load failed; HUD shows error
                 dictation.startListening()
             }
         case .listening:
+            playChime(start: false)
             Task {
                 let text = await dictation.stopAndTranscribe()
                 hideHUD()
@@ -181,12 +190,23 @@ struct DictationHUD: View {
                 Color.clear.frame(height: 1).id("bottom")
             }
             .frame(height: min(max(textHeight, oneLine), maxTextHeight))
+            // When the transcript overflows, fade the top edge so the partially-
+            // scrolled line softens out instead of being chopped mid-letter.
+            .mask(
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: overflowing ? 18 : 0)
+                    Color.black
+                }
+            )
             .onPreferenceChange(TextHeightKey.self) { textHeight = $0 }
             .onChange(of: dictation.partial) {
                 withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
     }
+
+    private var overflowing: Bool { textHeight > maxTextHeight + 1 }
 
     @ViewBuilder private var statusDot: some View {
         switch dictation.state {
