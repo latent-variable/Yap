@@ -17,7 +17,9 @@ final class Dictation: ObservableObject {
         case english      // Parakeet EOU 120M, low latency
         case multilingual // Nemotron 0.6B, 25 languages
         var id: String { rawValue }
-        var label: String { self == .english ? "English (fast)" : "Multilingual" }
+        // Same model family, same speed. English is more accurate for English;
+        // multilingual trades a little English precision for 25 languages.
+        var label: String { self == .english ? "English" : "Multilingual" }
         var variant: StreamingModelVariant { self == .english ? .parakeetEou320ms : .nemotron1120ms }
     }
 

@@ -5,20 +5,30 @@ import Carbon.HIToolbox
 /// (still the most reliable route for a global shortcut on macOS).
 final class HotKeyManager {
     private var ref: EventHotKeyRef?
-    private var handler: EventHandlerRef?
     private let id: EventHotKeyID
     var onFire: (() -> Void)?
+
+    // One process-wide Carbon handler dispatches EVERY hot key to the right
+    // manager by id. Per-instance handlers are broken: each handler must return a
+    // status, and a non-matching handler returning noErr *consumes* the event so
+    // the matching handler never runs. With two hot keys (read + dictation) the
+    // last-installed handler ate every event — the read shortcut silently died.
+    // A single handler keyed by id has no ordering hazard.
+    private static var managers: [UInt32: HotKeyManager] = [:]
+    private static var sharedHandler: EventHandlerRef?
+    private static let lock = NSLock()
 
     /// `slot` distinguishes multiple hot keys in the same app (1 = read aloud,
     /// 2 = dictation). Same 'PRLY' signature, different id.
     init(slot: UInt32 = 1) {
         id = EventHotKeyID(signature: OSType(0x50524C59), id: slot)
-        installHandler()
+        Self.lock.lock(); Self.managers[slot] = self; Self.lock.unlock()
+        Self.installSharedHandlerOnce()
     }
 
     deinit {
         if let ref { UnregisterEventHotKey(ref) }
-        if let handler { RemoveEventHandler(handler) }
+        Self.lock.lock(); Self.managers[id.id] = nil; Self.lock.unlock()
     }
 
     func register(_ combo: HotKeyCombo) {
@@ -29,22 +39,24 @@ final class HotKeyManager {
         if status == noErr { ref = newRef }
     }
 
-    private func installHandler() {
+    private static func installSharedHandlerOnce() {
+        lock.lock(); defer { lock.unlock() }
+        guard sharedHandler == nil else { return }
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                  eventKind: UInt32(kEventHotKeyPressed))
-        let ptr = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
-            guard let userData, let event else { return noErr }
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+            guard let event else { return OSStatus(eventNotHandledErr) }
             var hkID = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject),
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hkID)
-            let mgr = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-            if hkID.id == mgr.id.id {
-                DispatchQueue.main.async { mgr.onFire?() }
-            }
+            HotKeyManager.lock.lock()
+            let mgr = HotKeyManager.managers[hkID.id]
+            HotKeyManager.lock.unlock()
+            guard let mgr else { return OSStatus(eventNotHandledErr) }
+            DispatchQueue.main.async { mgr.onFire?() }
             return noErr
-        }, 1, &spec, ptr, &handler)
+        }, 1, &spec, nil, &sharedHandler)
     }
 }
 
