@@ -3,7 +3,7 @@ import AppKit
 
 /// Spawns and supervises the local Python Kokoro backend.
 @MainActor
-final class BackendManager: ObservableObject {
+final class BackendManager: NSObject, ObservableObject {
     @Published var ready = false
     /// True only when THIS app spawned the backend process (vs reusing an
     /// already-running one). Model deletion is unsafe against a backend we don't
@@ -18,31 +18,23 @@ final class BackendManager: ObservableObject {
     let client = BackendClient()
     let port = 8766
 
-    /// Token for the willTerminate observer, removed in deinit so the block isn't
-    /// leaked by NotificationCenter (block-based observers aren't auto-removed).
-    private var terminateObserver: Any?
-
-    init() {
+    override init() {
+        super.init()
         // Kill our own backend when the app quits so it doesn't linger as an
         // orphan (reparented to launchd) that the next launch can't cleanly own.
-        terminateObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: nil
-        ) { [weak self] _ in
-            // queue: nil → the block runs SYNCHRONOUSLY on the posting thread
-            // (willTerminate is posted on main), so the backend is actually killed
-            // before the app exits. queue: .main would enqueue it async and the
-            // process could exit first, leaving an orphan. assumeIsolated is valid
-            // since we're on the main thread here.
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.process?.terminate()
-                if let pid = self.adoptedPID { kill(pid, SIGTERM) }
-            }
-        }
+        // Selector-based observer: auto-removed on dealloc (since 10.11), so no
+        // token to store and no deinit-isolation problem under strict concurrency.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appWillTerminate),
+            name: NSApplication.willTerminateNotification, object: nil)
     }
 
-    deinit {
-        if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
+    /// willTerminate is always posted on the main thread, so this @MainActor
+    /// handler runs synchronously there — the backend is killed before the app
+    /// exits (no async hop that the process could race past).
+    @objc private func appWillTerminate() {
+        process?.terminate()
+        if let pid = adoptedPID, pid > 1 { kill(pid, SIGTERM) }
     }
 
     var modelsDir: URL {
@@ -236,7 +228,10 @@ final class BackendManager: ObservableObject {
 
     func stop() {
         process?.terminate()
-        if let pid = adoptedPID { kill(pid, SIGTERM) }
+        // pid > 1: never signal pid 0 / -1 / 1 (process group, every process, or
+        // launchd). adoptedPID always comes from lsof so it's a real PID, but the
+        // guard makes a bad parse harmless.
+        if let pid = adoptedPID, pid > 1 { kill(pid, SIGTERM) }
         process = nil
         adoptedPID = nil
         ownsProcess = false
@@ -303,8 +298,9 @@ final class BackendManager: ObservableObject {
                 // try? would swallow CancellationError and burn CPU until the deadline.
                 do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
             }
-        } else if let pid = adoptedPID {
+        } else if let pid = adoptedPID, pid > 1 {
             // Adopted orphan: no Process handle, signal it and poll with kill(,0).
+            // pid > 1 guard: never signal a process group / launchd on a bad parse.
             kill(pid, SIGTERM)
             while kill(pid, 0) == 0 && Date() < deadline {
                 do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }

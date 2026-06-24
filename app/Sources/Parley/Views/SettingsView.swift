@@ -457,9 +457,7 @@ private struct HotKeyRecorder: View {
         stopMonitor()
     }
 
-    private func popcount(_ m: UInt32) -> Int {
-        HotKeyCombo(keyCode: 0, modifiers: m).modifierCount
-    }
+    private func popcount(_ m: UInt32) -> Int { m.nonzeroBitCount }
 
     private func stopMonitor() {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }

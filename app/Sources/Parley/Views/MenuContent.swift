@@ -257,6 +257,9 @@ func menuSectionLabel(_ title: String, _ icon: String) -> some View {
 // MARK: - Ears (dictation)
 
 /// Dictation controls: toggle, live state, engine picker, one-click last result.
+/// @MainActor so its @ObservedObject main-actor singletons initialize cleanly
+/// under strict concurrency.
+@MainActor
 struct EarsSection: View {
     @ObservedObject private var controller = DictationController.shared
     @ObservedObject private var dictation = DictationController.shared.dictation
