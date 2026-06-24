@@ -33,7 +33,9 @@ final class DictationController: ObservableObject {
     /// the screen (FluidVoice does this). Uses built-in macOS sounds.
     private func playChime(start: Bool) {
         guard Prefs.shared.dictationChime else { return }
-        NSSound(named: start ? "Tink" : "Bottle")?.play()
+        // Start: a bright "Tink" to cue recording. Stop: a soft "Pop" on insert —
+        // unobtrusive, distinct from the start cue ("Bottle" was too heavy).
+        NSSound(named: start ? "Tink" : "Pop")?.play()
     }
 
     /// Push-to-talk toggle.
@@ -213,25 +215,32 @@ struct DictationHUD: View {
                 Color.clear.frame(height: 1).id("bottom")
             }
             .frame(height: min(max(textHeight, oneLine), maxTextHeight))
-            // When the transcript overflows, fade the top edge so the partially-
-            // scrolled line softens out instead of being chopped mid-letter.
+            // Fade the top edge as soon as the transcript passes the first line —
+            // not only once it fully overflows. While the box is still growing,
+            // the bottom-pinned scroll would otherwise hard-chop the top line mid-
+            // letter; the gradient softens that the whole way up, so growth looks
+            // as clean as the settled (expanded) state.
             .mask {
                 VStack(spacing: 0) {
-                    // Fade a full line-height so a partially-scrolled top line
-                    // disappears smoothly instead of showing a hard half-line.
                     LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: overflowing ? 30 : 0)
+                        .frame(height: faded ? 30 : 0)
                     Color.black
                 }
             }
-            .onPreferenceChange(TextHeightKey.self) { textHeight = $0 }
+            .onPreferenceChange(TextHeightKey.self) { h in
+                // Animate the grow/shrink so added lines ease in instead of
+                // snapping (which read as the "wonky" jump while it expanded).
+                withAnimation(.easeOut(duration: 0.12)) { textHeight = h }
+            }
             .onChange(of: dictation.partial) {
                 withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
     }
 
-    private var overflowing: Bool { textHeight > maxTextHeight + 1 }
+    /// True once the transcript is taller than a single line — the point past
+    /// which the top edge needs softening (during growth and at full size alike).
+    private var faded: Bool { textHeight > oneLine + 8 }
 
     @ViewBuilder private var statusDot: some View {
         switch dictation.state {

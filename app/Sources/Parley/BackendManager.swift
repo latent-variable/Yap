@@ -245,12 +245,12 @@ final class BackendManager: ObservableObject {
         }.value
     }
 
-    /// PID holding the listen socket on `port` (first match), via `lsof`.
+    /// PID holding the listen socket on `port` (first match), via `lsof -t`
+    /// (terse: one bare PID per line).
     private nonisolated static func listenerPID(port: Int) -> pid_t? {
-        let out = runTool("/usr/sbin/lsof", ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t", "-Fp"])
-        // -Fp prints lines like "p12345"; take the first.
-        for line in out.split(separator: "\n") where line.hasPrefix("p") {
-            if let v = Int32(line.dropFirst()) { return v }
+        let out = runTool("/usr/sbin/lsof", ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"])
+        for line in out.split(whereSeparator: \.isNewline) {
+            if let v = Int32(line.trimmingCharacters(in: .whitespaces)) { return v }
         }
         return nil
     }
