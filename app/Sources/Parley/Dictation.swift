@@ -69,11 +69,23 @@ final class Dictation: ObservableObject {
         loadTask = Task { [weak self] in await self?.loadModel(choice) }
     }
 
+    /// Like `requestLoad` but awaits completion — for callers that must wait
+    /// (bootstrap warm-up, toggle's lazy load). Still tracked in `loadTask`, so a
+    /// model delete can cancel it.
+    func loadModelAwaiting(_ choice: EngineChoice) async {
+        loadTask?.cancel()
+        let task: Task<Void, Never> = Task { [weak self] in await self?.loadModel(choice) }
+        loadTask = task
+        await task.value
+    }
+
     /// Download (first time) + load the streaming model for the chosen engine.
     /// Loaded once and reused — startListening only reset()s it. Concurrent calls
     /// for different engines are safe: `engineChoice` records the latest request,
     /// and a load only commits if it still matches it (else it's stale, discarded).
-    func loadModel(_ choice: EngineChoice) async {
+    /// Private: external callers use `requestLoad` (fire-and-forget) or
+    /// `loadModelAwaiting` (tracked + awaited) so every load lands in `loadTask`.
+    private func loadModel(_ choice: EngineChoice) async {
         // Already loading this same engine — don't kick off a duplicate concurrent
         // load (e.g. startListening fires while a load is mid-flight). A switch to a
         // *different* engine still proceeds (engineChoice differs).
@@ -232,12 +244,15 @@ final class Dictation: ObservableObject {
         // models right after we delete them (or stamp a stale state).
         loadTask?.cancel()
         loadTask = nil
-        try? FileManager.default.removeItem(at: Self.modelsDirOnDisk)
         manager = nil
         finalASR = nil
         finalVersionLoaded = nil
         modelReady = false
         if case .error = state {} else { state = .idle }
+        // The models are hundreds of MB — remove them off the main thread so the
+        // UI doesn't freeze. In-memory refs are already released above.
+        let dir = Self.modelsDirOnDisk
+        Task.detached { try? FileManager.default.removeItem(at: dir) }
     }
 
     // MARK: - capture

@@ -23,7 +23,7 @@ final class DictationController: ObservableObject {
         hotkey.register(Prefs.shared.dictationHotKey)
         // Warm the model at launch (cached → fast; first ever launch downloads in
         // the background) so the first dictation isn't a cold load.
-        Task { await dictation.loadModel(dictation.engineChoice) }
+        Task { await dictation.loadModelAwaiting(dictation.engineChoice) }
     }
 
     /// Re-register after the user changes the dictation shortcut in Settings.
@@ -47,7 +47,7 @@ final class DictationController: ObservableObject {
             showHUD()
             playChime(start: true)   // immediate "now recording" feedback
             Task {
-                if !dictation.modelReady { await dictation.loadModel(dictation.engineChoice) }
+                if !dictation.modelReady { await dictation.loadModelAwaiting(dictation.engineChoice) }
                 guard dictation.modelReady else { return }   // load failed; HUD shows error
                 dictation.startListening()
             }
@@ -227,9 +227,11 @@ struct DictationHUD: View {
                 }
             }
             .onPreferenceChange(TextHeightKey.self) { h in
-                // Animate the grow/shrink so added lines ease in instead of
-                // snapping (which read as the "wonky" jump while it expanded).
-                withAnimation(.easeOut(duration: 0.12)) { textHeight = h }
+                // Snap (don't animate) the height: animating drove a native NSPanel
+                // resize every frame (heavy on the window server). The box grows a
+                // discrete line at a time and stays top-aligned while it fits, so
+                // there's no clip to smooth over anyway.
+                textHeight = h
             }
             .onChange(of: dictation.partial) {
                 // Keep the latest words visible only when scrolling (overflow); while
