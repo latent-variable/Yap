@@ -131,7 +131,11 @@ final class Dictation: ObservableObject {
         guard state == .listening, let manager else { return nil }
         audio.inputNode.removeTap(onBus: 0)
         audio.stop()
-        pump?.cancel(); pump = nil
+        // Await the pump's actual termination — cancel() alone doesn't wait, and
+        // a still-running append/process would race finish() on the same actor.
+        pump?.cancel()
+        await pump?.value
+        pump = nil
         state = .transcribing
         do {
             // Feed anything still queued, then finish the live stream.
@@ -244,18 +248,23 @@ private final class BufferQueue: @unchecked Sendable {
         let total = bufs.reduce(AVAudioFrameCount(0)) { $0 + $1.frameLength }
         guard total > 0, let dst = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: total) else { return nil }
         let channels = Int(format.channelCount)
-        var offset = 0
+        // Interleaved formats expose a single plane holding frames*channels
+        // samples; non-interleaved expose one plane per channel. Copy per plane
+        // so we never index a channel pointer that doesn't exist.
+        let interleaved = format.isInterleaved
+        let planes = interleaved ? 1 : channels
+        var offset = 0   // per-plane sample offset
         for b in bufs {
             guard b.format == format else { return nil }   // mismatched layout → bail, don't OOB
-            let n = Int(b.frameLength)
+            let perPlane = interleaved ? Int(b.frameLength) * channels : Int(b.frameLength)
             if let s = b.floatChannelData, let d = dst.floatChannelData {
-                for ch in 0..<channels { memcpy(d[ch] + offset, s[ch], n * MemoryLayout<Float>.size) }
+                for p in 0..<planes { memcpy(d[p] + offset, s[p], perPlane * MemoryLayout<Float>.size) }
             } else if let s = b.int16ChannelData, let d = dst.int16ChannelData {
-                for ch in 0..<channels { memcpy(d[ch] + offset, s[ch], n * MemoryLayout<Int16>.size) }
+                for p in 0..<planes { memcpy(d[p] + offset, s[p], perPlane * MemoryLayout<Int16>.size) }
             } else {
                 return nil
             }
-            offset += n
+            offset += perPlane
         }
         dst.frameLength = total
         return dst
@@ -267,10 +276,14 @@ private final class BufferQueue: @unchecked Sendable {
         dst.frameLength = src.frameLength
         let frames = Int(src.frameLength)
         let channels = Int(src.format.channelCount)
+        // See concat: one plane (interleaved) vs one per channel.
+        let interleaved = src.format.isInterleaved
+        let planes = interleaved ? 1 : channels
+        let perPlane = interleaved ? frames * channels : frames
         if let s = src.floatChannelData, let d = dst.floatChannelData {
-            for ch in 0..<channels { memcpy(d[ch], s[ch], frames * MemoryLayout<Float>.size) }
+            for p in 0..<planes { memcpy(d[p], s[p], perPlane * MemoryLayout<Float>.size) }
         } else if let s = src.int16ChannelData, let d = dst.int16ChannelData {
-            for ch in 0..<channels { memcpy(d[ch], s[ch], frames * MemoryLayout<Int16>.size) }
+            for p in 0..<planes { memcpy(d[p], s[p], perPlane * MemoryLayout<Int16>.size) }
         } else {
             return nil
         }

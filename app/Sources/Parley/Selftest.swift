@@ -50,6 +50,8 @@ enum Selftest {
         check("tidy punctuation", Fillers.clean("wait , um, now"), contains: ["wait, now"], absent: ["um"])
         check("recapitalize after leading filler", Fillers.clean("Um, we should go"),
               contains: ["We should go"], absent: ["we should go"])
+        check("recapitalize past leading space", Fillers.clean(" Um, we should go"),
+              contains: ["We should go"])
 
         print("Clipboard — capture never permanently overwrites it")
         let pb = NSPasteboard.general

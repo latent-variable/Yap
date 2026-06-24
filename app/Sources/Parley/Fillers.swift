@@ -13,7 +13,7 @@ enum Fillers {
 
     static func clean(_ text: String) -> String {
         let range = NSRange(text.startIndex..., in: text)
-        let wasCapitalized = text.first?.isUppercase ?? false
+        let wasCapitalized = text.first(where: { !$0.isWhitespace })?.isUppercase ?? false
         var out = pattern.stringByReplacingMatches(in: text, range: range, withTemplate: "")
         // Tidy up the gaps the removals leave behind.
         out = out.replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)

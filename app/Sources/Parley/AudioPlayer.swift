@@ -48,8 +48,10 @@ final class AudioPlayer {
         // stopping — stops this engine AND can tear down its connections. Without
         // recovery the voice goes permanently silent until relaunch. Rebuild the
         // graph and restart on every configuration change.
+        // queue: .main so the graph rebuild/restart runs on a consistent thread
+        // (the notification can fire on an arbitrary background thread).
         NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in self?.recoverFromConfigChange() }
     }
 
