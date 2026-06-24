@@ -41,6 +41,20 @@ struct HotKeyCombo: Codable, Equatable {
     var keyCode: UInt32
     var modifiers: UInt32   // Carbon modifier mask
 
+    /// A pure modifier chord — no base key, two or more modifiers held together
+    /// (e.g. ⌥⌘, the "Alt+Win" press FluidVoice users expect). One modifier
+    /// alone is rejected: it would fire on every routine ⌘/⌥ keystroke.
+    var isModifierOnly: Bool {
+        keyCode == 0 && modifierCount >= 2
+    }
+
+    /// Number of modifier keys in the mask (popcount of the four modifier bits).
+    var modifierCount: Int {
+        var n = 0
+        for bit in [cmdKey, shiftKey, optionKey, controlKey] where Int(modifiers) & bit != 0 { n += 1 }
+        return n
+    }
+
     static let defaultCombo = HotKeyCombo(
         keyCode: UInt32(kVK_ANSI_R),
         modifiers: UInt32(cmdKey | shiftKey)

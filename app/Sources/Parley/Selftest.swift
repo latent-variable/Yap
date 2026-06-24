@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Carbon.HIToolbox
 
 /// Headless validation of the pure logic (preprocessing). Run with `--selftest`.
 enum Selftest {
@@ -52,6 +53,27 @@ enum Selftest {
               contains: ["We should go"], absent: ["we should go"])
         check("recapitalize past leading space", Fillers.clean(" Um, we should go"),
               contains: ["We should go"])
+
+        print("HotKeyCombo — modifier-only chord classification")
+        func checkBool(_ name: String, _ got: Bool, _ want: Bool) {
+            if got == want { print("  ✓ \(name)") }
+            else { failures += 1; print("  ✗ \(name): got \(got) want \(want)") }
+        }
+        // ⌥⌘ (two modifiers, no key) is a valid modifier-only chord.
+        checkBool("two-mod chord valid",
+                  HotKeyCombo(keyCode: 0, modifiers: UInt32(optionKey | cmdKey)).isModifierOnly, true)
+        // A single modifier alone must NOT qualify (would fire on every ⌘ press).
+        checkBool("single mod rejected",
+                  HotKeyCombo(keyCode: 0, modifiers: UInt32(cmdKey)).isModifierOnly, false)
+        // A normal key chord (⌘⇧R) is not modifier-only.
+        checkBool("key chord not modifier-only",
+                  HotKeyCombo.defaultCombo.isModifierOnly, false)
+        // Three modifiers also valid.
+        checkBool("three-mod chord valid",
+                  HotKeyCombo(keyCode: 0, modifiers: UInt32(controlKey | optionKey | cmdKey)).isModifierOnly, true)
+        check("describe modifier-only", KeyName.describe(HotKeyCombo(keyCode: 0, modifiers: UInt32(optionKey | cmdKey))),
+              contains: ["⌥", "⌘"])
+        check("describe unset", KeyName.describe(HotKeyCombo(keyCode: 0, modifiers: 0)), contains: ["Unset"])
 
         print("Clipboard — capture never permanently overwrites it")
         let pb = NSPasteboard.general

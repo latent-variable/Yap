@@ -8,6 +8,12 @@ final class HotKeyManager {
     private let id: EventHotKeyID
     var onFire: (() -> Void)?
 
+    // Modifier-only chord state (e.g. ⌥⌘ with no letter — "Alt+Win" on a PC
+    // keyboard). Carbon's RegisterEventHotKey CANNOT bind a pure modifier combo,
+    // so those route through a shared flagsChanged monitor instead.
+    private var chordModifiers: UInt32 = 0   // non-zero => this manager is a modifier-only chord
+    private var armed = true                  // rising-edge debounce so a held chord fires once
+
     // One process-wide Carbon handler dispatches EVERY hot key to the right
     // manager by id. Per-instance handlers are broken: each handler must return a
     // status, and a non-matching handler returning noErr *consumes* the event so
@@ -38,12 +44,63 @@ final class HotKeyManager {
     /// already taken) — the hot key is then inactive.
     @discardableResult
     func register(_ combo: HotKeyCombo) -> Bool {
+        // Tear down whichever path was active before re-binding.
         if let ref { UnregisterEventHotKey(ref); self.ref = nil }
+        chordModifiers = 0
+        armed = true
+
+        // Modifier-only chord: no base key, two or more modifiers held together.
+        // (One modifier alone would fire on every routine ⌘/⌥ press — disallow.)
+        if combo.isModifierOnly {
+            chordModifiers = combo.modifiers
+            Self.installChordMonitorOnce()
+            return true
+        }
+
         var newRef: EventHotKeyRef?
         let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, id,
                                          GetApplicationEventTarget(), 0, &newRef)
         if status == noErr { ref = newRef; return true }
         return false
+    }
+
+    // MARK: Modifier-only chords (flagsChanged monitor)
+
+    private static var chordMonitorGlobal: Any?
+    private static var chordMonitorLocal: Any?
+
+    /// Install the process-wide modifier monitor once. Global catches the chord
+    /// while other apps are focused (needs Accessibility, which Parley has);
+    /// local catches it while a Parley window is key.
+    private static func installChordMonitorOnce() {
+        lock.lock(); defer { lock.unlock() }
+        guard chordMonitorGlobal == nil else { return }
+        chordMonitorGlobal = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { ev in
+            Self.handleFlags(ev)
+        }
+        chordMonitorLocal = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { ev in
+            Self.handleFlags(ev); return ev   // don't consume — modifiers stay live for the OS
+        }
+    }
+
+    /// On every modifier change, fire any chord manager whose exact modifier set
+    /// just became active (rising edge), and re-arm one whose chord was released.
+    private static func handleFlags(_ ev: NSEvent) {
+        let current = KeyName.carbonModifiers(ev.modifierFlags)
+        lock.lock()
+        let chordManagers = managers.values.compactMap { $0.value }.filter { $0.chordModifiers != 0 }
+        lock.unlock()
+        for mgr in chordManagers {
+            if current == mgr.chordModifiers {
+                if mgr.armed {
+                    mgr.armed = false
+                    let fire = mgr.onFire
+                    DispatchQueue.main.async { fire?() }
+                }
+            } else {
+                mgr.armed = true
+            }
+        }
     }
 
     private static func installSharedHandlerOnce() {
@@ -79,8 +136,9 @@ enum KeyName {
         if m & optionKey != 0 { s += "⌥" }
         if m & shiftKey != 0 { s += "⇧" }
         if m & cmdKey != 0 { s += "⌘" }
-        s += keyLabel(c.keyCode)
-        return s
+        // keyCode 0 = a modifier-only chord (no base key); show just the glyphs.
+        if c.keyCode != 0 { s += keyLabel(c.keyCode) }
+        return s.isEmpty ? "Unset" : s
     }
 
     static func keyLabel(_ code: UInt32) -> String {

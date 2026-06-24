@@ -380,7 +380,7 @@ private struct ShortcutTab: View {
                 Text("Press to start dictating, press again to insert (speech → text).")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text("Click a field, then press a modifier + key combination (e.g. ⌘⇧R).")
+            Text("Click a field, then press a modifier + key (e.g. ⌘⇧R) — or hold two or more modifiers together and release for a modifier-only chord (e.g. ⌥⌘, the “Alt+Win” press).")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
@@ -397,6 +397,7 @@ private struct HotKeyRecorder: View {
     @State private var recording = false
     @State private var conflicted = false
     @State private var monitor: Any?
+    @State private var peakMods: UInt32 = 0   // largest modifier set held this recording
 
     var body: some View {
         Button {
@@ -417,27 +418,52 @@ private struct HotKeyRecorder: View {
 
     private func startMonitor() {
         conflicted = false
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
+        peakMods = 0
+        // Two recording paths share one monitor:
+        //  • keyDown  → a normal modifier+key chord (e.g. ⌘⇧R).
+        //  • flagsChanged → a modifier-only chord (e.g. ⌥⌘). We watch the
+        //    modifiers build up, then commit when they're all released.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { ev in
+            if ev.type == .flagsChanged {
+                let mods = KeyName.carbonModifiers(ev.modifierFlags)
+                if mods == 0 {
+                    // All modifiers released — commit if a ≥2-modifier chord was held.
+                    let chord = HotKeyCombo(keyCode: 0, modifiers: peakMods)
+                    if chord.isModifierOnly { commit(chord) }
+                    peakMods = 0
+                } else if popcount(mods) >= popcount(peakMods) {
+                    peakMods = mods   // track the richest set held so far
+                }
+                return ev
+            }
+            // keyDown path
             let mods = KeyName.carbonModifiers(ev.modifierFlags)
             guard mods != 0 else { return ev } // require a modifier
-            let new = HotKeyCombo(keyCode: UInt32(ev.keyCode), modifiers: mods)
-            // Reject a chord already bound to the other action — Carbon would
-            // reject the duplicate registration and leave this shortcut dead.
-            if new == conflictsWith {
-                conflicted = true
-                recording = false
-                stopMonitor()
-                return nil
-            }
-            combo = new
-            onChange()
-            recording = false
-            stopMonitor()
+            commit(HotKeyCombo(keyCode: UInt32(ev.keyCode), modifiers: mods))
             return nil
         }
     }
+
+    /// Apply a recorded combo, rejecting a duplicate of the other action's chord
+    /// (Carbon would reject the dup and silently disable this shortcut).
+    private func commit(_ new: HotKeyCombo) {
+        if new == conflictsWith {
+            conflicted = true
+        } else {
+            combo = new
+            onChange()
+        }
+        recording = false
+        stopMonitor()
+    }
+
+    private func popcount(_ m: UInt32) -> Int {
+        HotKeyCombo(keyCode: 0, modifiers: m).modifierCount
+    }
+
     private func stopMonitor() {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+        peakMods = 0
     }
 }
 
