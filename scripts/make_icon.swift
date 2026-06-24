@@ -49,19 +49,38 @@ func render(_ px: Int) -> Data {
     sheen.draw(in: NSRect(x: rect.minX, y: rect.midY, width: rect.width, height: rect.height / 2), angle: -90)
 
     // Waveform: rounded vertical bars, symmetric, centered.
-    let heights: [CGFloat] = [0.30, 0.52, 0.78, 1.00, 0.78, 0.52, 0.30]
+    // Parley mark: a voice waveform (center) wrapped by sound arcs radiating
+    // out BOTH sides — speaking and listening, the two-way "parley". Distinct
+    // from a plain waveform.
+    let cx = rect.midX, cy = rect.midY
+
+    let heights: [CGFloat] = [0.42, 0.72, 1.00, 0.72, 0.42]
     let n = CGFloat(heights.count)
-    let span = rect.width * 0.62
-    let barW = span / (n * 1.9)
+    let span = rect.width * 0.30
+    let barW = span / (n * 1.8)
     let gap = (span - barW * n) / (n - 1)
-    let maxH = rect.height * 0.52
-    var x = rect.midX - span / 2
+    let maxH = rect.height * 0.46
+    var x = cx - span / 2
     NSColor.white.setFill()
     for h in heights {
         let bh = max(barW, maxH * h)
-        let bar = NSRect(x: x, y: rect.midY - bh / 2, width: barW, height: bh)
+        let bar = NSRect(x: x, y: cy - bh / 2, width: barW, height: bh)
         NSBezierPath(roundedRect: bar, xRadius: barW / 2, yRadius: barW / 2).fill()
         x += barW + gap
+    }
+
+    // Flanking arcs — sound radiating to/from each side.
+    let lw = barW
+    let baseR = span * 0.92
+    for i in 0..<2 {
+        let r = baseR + CGFloat(i) * barW * 2.1
+        NSColor(white: 1, alpha: i == 0 ? 1.0 : 0.55).setStroke()
+        let right = NSBezierPath()
+        right.appendArc(withCenter: NSPoint(x: cx, y: cy), radius: r, startAngle: -40, endAngle: 40)
+        right.lineWidth = lw; right.lineCapStyle = .round; right.stroke()
+        let left = NSBezierPath()
+        left.appendArc(withCenter: NSPoint(x: cx, y: cy), radius: r, startAngle: 140, endAngle: 220)
+        left.lineWidth = lw; left.lineCapStyle = .round; left.stroke()
     }
     cg.restoreGState()
 

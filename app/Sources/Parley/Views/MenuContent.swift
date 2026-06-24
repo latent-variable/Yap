@@ -33,6 +33,8 @@ struct MenuContent: View {
 
             Divider()
 
+            sectionLabel("Voice", "speaker.wave.2.fill")
+
             HStack(spacing: 10) {
                 VoiceMenuButton(voices: state.combinedVoices, selectionId: state.currentVoiceId) {
                     state.selectVoice($0)
@@ -73,6 +75,7 @@ struct MenuContent: View {
 
             Divider()
 
+            sectionLabel("Ears", "waveform.badge.mic")
             DictationRow()
 
             Divider()
@@ -184,6 +187,16 @@ struct MenuContent: View {
         case .loadingModel: return .blue
         default: return .secondary
         }
+    }
+
+    /// Small header that separates the Voice (TTS) and Ears (dictation) halves.
+    private func sectionLabel(_ title: String, _ icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.caption2)
+            Text(title.uppercased()).font(.caption2.weight(.semibold)).tracking(0.5)
+            Spacer()
+        }
+        .foregroundStyle(.secondary)
     }
 
 }

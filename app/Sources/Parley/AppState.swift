@@ -17,7 +17,7 @@ enum Status: Equatable {
     }
     var symbol: String {
         switch self {
-        case .idle: return "waveform"
+        case .idle: return "waveform.badge.mic"
         case .loadingModel: return "arrow.down.circle"
         case .capturing: return "text.viewfinder"
         case .reading: return "waveform.circle.fill"

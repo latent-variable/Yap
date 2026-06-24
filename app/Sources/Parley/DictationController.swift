@@ -15,6 +15,7 @@ final class DictationController: ObservableObject {
 
     private let hotkey = HotKeyManager(slot: 2)
     private var panel: NSPanel?
+    private var targetPoll: Timer?
 
     func bootstrap() {
         dictation.engineChoice = Dictation.EngineChoice(rawValue: Prefs.shared.dictationEngine) ?? .english
@@ -40,6 +41,7 @@ final class DictationController: ObservableObject {
         switch dictation.state {
         case .idle:
             captureTarget()
+            startTargetPolling()     // keep target live if you switch apps
             showHUD()
             playChime(start: true)   // immediate "now recording" feedback
             Task {
@@ -59,16 +61,25 @@ final class DictationController: ObservableObject {
         }
     }
 
-    /// Remember the frontmost app *before* we show the (non-activating) HUD, so
-    /// the HUD can show where the text will land.
+    /// Track the frontmost app — where the text will land. Polled while listening
+    /// so switching apps mid-dictation updates the HUD *and* the paste target
+    /// (⌘V always goes to the current frontmost app, so they stay in sync).
+    /// Ignores Parley itself so our own HUD/menu never becomes the "target".
     private func captureTarget() {
-        if let app = NSWorkspace.shared.frontmostApplication {
-            targetName = app.localizedName ?? ""
-            targetIcon = app.icon
-        } else {
-            targetName = ""; targetIcon = nil
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        targetName = app.localizedName ?? ""
+        targetIcon = app.icon
+    }
+
+    private func startTargetPolling() {
+        targetPoll?.invalidate()
+        targetPoll = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.captureTarget() }
         }
     }
+
+    private func stopTargetPolling() { targetPoll?.invalidate(); targetPoll = nil }
 
     // MARK: - HUD panel
 
@@ -93,7 +104,7 @@ final class DictationController: ObservableObject {
         panel?.orderFrontRegardless()
     }
 
-    private func hideHUD() { panel?.orderOut(nil) }
+    private func hideHUD() { stopTargetPolling(); panel?.orderOut(nil) }
 
     private func positionHUD() {
         guard let panel, let screen = NSScreen.main else { return }
@@ -194,8 +205,10 @@ struct DictationHUD: View {
             // scrolled line softens out instead of being chopped mid-letter.
             .mask(
                 VStack(spacing: 0) {
+                    // Fade a full line-height so a partially-scrolled top line
+                    // disappears smoothly instead of showing a hard half-line.
                     LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: overflowing ? 18 : 0)
+                        .frame(height: overflowing ? 30 : 0)
                     Color.black
                 }
             )
