@@ -109,10 +109,17 @@ final class Dictation: ObservableObject {
     }
 
     /// Start mic capture and live streaming (asks Microphone permission once).
+    private var starting = false
+
     func startListening() {
-        guard modelReady, state == .idle, let manager else { return }
+        // `starting` blocks a second press during the async permission window —
+        // state stays .idle until the callback, so without this two quick presses
+        // would each begin capture and orphan a pump.
+        guard !starting, modelReady, state == .idle, let manager else { return }
+        starting = true
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             Task { @MainActor in
+                defer { self.starting = false }
                 guard granted else { self.state = .error("Microphone access denied"); return }
                 do {
                     try await manager.reset()
@@ -227,6 +234,7 @@ final class Dictation: ObservableObject {
         }
         audio.prepare()
         try audio.start()
+        pump?.cancel()   // never leave a prior pump running on a new capture
         // Pump loop: drain copied buffers into the actor and process chunks so
         // partials keep flowing. appendAudio accepts any format (resamples to
         // 16 kHz internally).

@@ -363,7 +363,9 @@ private struct ShortcutTab: View {
             Section("Global read shortcut") {
                 HStack {
                     Text("Read selection"); Spacer()
-                    HotKeyRecorder(combo: $prefs.hotKey) { state.reapplyHotKey() }
+                    HotKeyRecorder(combo: $prefs.hotKey, conflictsWith: prefs.dictationHotKey) {
+                        state.reapplyHotKey()
+                    }
                 }
                 Text("Reads the selected text aloud (text → speech).")
                     .font(.caption).foregroundStyle(.secondary)
@@ -371,7 +373,7 @@ private struct ShortcutTab: View {
             Section("Global dictation shortcut") {
                 HStack {
                     Text("Dictate"); Spacer()
-                    HotKeyRecorder(combo: $prefs.dictationHotKey) {
+                    HotKeyRecorder(combo: $prefs.dictationHotKey, conflictsWith: prefs.hotKey) {
                         DictationController.shared.reapplyHotKey()
                     }
                 }
@@ -388,8 +390,12 @@ private struct ShortcutTab: View {
 /// Records the next modifier+key chord into a HotKeyCombo.
 private struct HotKeyRecorder: View {
     @Binding var combo: HotKeyCombo
+    /// The OTHER action's chord — recording the same one is rejected (it would
+    /// fail to register and silently disable this shortcut).
+    var conflictsWith: HotKeyCombo? = nil
     var onChange: () -> Void
     @State private var recording = false
+    @State private var conflicted = false
     @State private var monitor: Any?
 
     var body: some View {
@@ -397,9 +403,10 @@ private struct HotKeyRecorder: View {
             recording.toggle()
             recording ? startMonitor() : stopMonitor()
         } label: {
-            Text(recording ? "Press keys…" : KeyName.describe(combo))
+            Text(recording ? "Press keys…" : (conflicted ? "Already in use" : KeyName.describe(combo)))
                 .font(.body.monospaced())
                 .frame(minWidth: 110)
+                .foregroundStyle(conflicted ? Color.orange : Color.primary)
                 .padding(.horizontal, 10).padding(.vertical, 4)
                 .background(recording ? Color.accentColor.opacity(0.2) : Color(.quaternaryLabelColor),
                             in: RoundedRectangle(cornerRadius: 6))
@@ -409,10 +416,20 @@ private struct HotKeyRecorder: View {
     }
 
     private func startMonitor() {
+        conflicted = false
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
             let mods = KeyName.carbonModifiers(ev.modifierFlags)
             guard mods != 0 else { return ev } // require a modifier
-            combo = HotKeyCombo(keyCode: UInt32(ev.keyCode), modifiers: mods)
+            let new = HotKeyCombo(keyCode: UInt32(ev.keyCode), modifiers: mods)
+            // Reject a chord already bound to the other action — Carbon would
+            // reject the duplicate registration and leave this shortcut dead.
+            if new == conflictsWith {
+                conflicted = true
+                recording = false
+                stopMonitor()
+                return nil
+            }
+            combo = new
             onChange()
             recording = false
             stopMonitor()

@@ -34,12 +34,16 @@ final class HotKeyManager {
         Self.lock.lock(); Self.managers[id.id] = nil; Self.lock.unlock()
     }
 
-    func register(_ combo: HotKeyCombo) {
+    /// Returns false if the OS rejected the registration (e.g. the chord is
+    /// already taken) — the hot key is then inactive.
+    @discardableResult
+    func register(_ combo: HotKeyCombo) -> Bool {
         if let ref { UnregisterEventHotKey(ref); self.ref = nil }
         var newRef: EventHotKeyRef?
         let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, id,
                                          GetApplicationEventTarget(), 0, &newRef)
-        if status == noErr { ref = newRef }
+        if status == noErr { ref = newRef; return true }
+        return false
     }
 
     private static func installSharedHandlerOnce() {
