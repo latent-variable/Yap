@@ -38,6 +38,7 @@ final class AudioPlayer {
     private var epoch: UInt64 = 0
 
     var onFinished: (() -> Void)?
+    private var configObserver: NSObjectProtocol?
 
     init() {
         engine.attach(player)
@@ -50,9 +51,13 @@ final class AudioPlayer {
         // graph and restart on every configuration change.
         // queue: .main so the graph rebuild/restart runs on a consistent thread
         // (the notification can fire on an arbitrary background thread).
-        NotificationCenter.default.addObserver(
+        configObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in self?.recoverFromConfigChange() }
+    }
+
+    deinit {
+        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
     }
 
     private func recoverFromConfigChange() {

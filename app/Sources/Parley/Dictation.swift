@@ -98,11 +98,13 @@ final class Dictation: ObservableObject {
             let models = try await AsrModels.downloadAndLoad(version: version)
             let mgr = AsrManager(config: .default)
             try await mgr.loadModels(models)
+            // The user may have switched engines while this loaded — don't
+            // install a now-stale model over the current selection.
+            guard engineChoice.finalVersion == version else { return }
             finalASR = mgr
             finalVersionLoaded = version
         } catch {
-            finalASR = nil
-            finalVersionLoaded = nil
+            if finalVersionLoaded == version { finalASR = nil; finalVersionLoaded = nil }
         }
     }
 
@@ -143,8 +145,11 @@ final class Dictation: ObservableObject {
             try? await manager.processBufferedAudio()
             let liveText = try await manager.finish().trimmingCharacters(in: .whitespacesAndNewlines)
             // Accurate final pass over the whole utterance; fall back to the live
-            // transcript if the batch model isn't ready or fails.
-            let accurate = await runFinalPass(recorder.drain())
+            // transcript if the batch model isn't ready, fails, or the recording
+            // exceeded the memory budget (very long hold).
+            let overflowed = recorder.overflowed
+            let recorded = recorder.drain()
+            let accurate = overflowed ? nil : await runFinalPass(recorded)
             var text = (accurate?.isEmpty == false) ? accurate! : liveText
             if Prefs.shared.removeFillers { text = Fillers.clean(text) }
             lastFinal = text
@@ -161,7 +166,10 @@ final class Dictation: ObservableObject {
     /// Returns nil (→ caller keeps the live text) if the model isn't loaded, the
     /// audio is empty, or anything throws.
     private func runFinalPass(_ buffers: [AVAudioPCMBuffer]) async -> String? {
-        guard let finalASR, let combined = BufferQueue.concat(buffers) else { return nil }
+        // Only trust the batch model if it matches the currently-selected engine
+        // (a language switch may have left a stale model loaded).
+        guard let finalASR, finalVersionLoaded == engineChoice.finalVersion,
+              let combined = BufferQueue.concat(buffers) else { return nil }
         do {
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
             let result = try await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
@@ -207,11 +215,15 @@ final class Dictation: ObservableObject {
         captureFormat = format
         let queue = pending
         let rec = recorder
+        // Cap the kept-for-final-pass audio at ~3 minutes so an accidental long
+        // hold can't exhaust memory. Past the cap the live transcript still works;
+        // only the optional accurate re-pass is skipped.
+        let maxRecFrames = Int(format.sampleRate * 180)
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { buf, _ in
             // Copy once: the tap's buffer is only valid for this callback. The
             // same copy feeds the live stream (drained continuously) and the
-            // recorder (kept whole for the final pass) — both read-only.
-            if let copy = BufferQueue.copy(buf) { queue.push(copy); rec.push(copy) }
+            // recorder (kept whole, bounded, for the final pass) — both read-only.
+            if let copy = BufferQueue.copy(buf) { queue.push(copy); rec.pushCapped(copy, maxFrames: maxRecFrames) }
         }
         audio.prepare()
         try audio.start()
@@ -236,10 +248,28 @@ final class Dictation: ObservableObject {
 private final class BufferQueue: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [AVAudioPCMBuffer] = []
+    private var frames = 0
+    private var overflowedFlag = false
 
     func push(_ b: AVAudioPCMBuffer) { lock.lock(); items.append(b); lock.unlock() }
+
+    /// Push only while under a frame budget. Past it, set the overflow flag and
+    /// stop accumulating — bounds memory for the (optional) final pass on a very
+    /// long hold; the live transcript is unaffected.
+    func pushCapped(_ b: AVAudioPCMBuffer, maxFrames: Int) {
+        lock.lock()
+        if frames >= maxFrames { overflowedFlag = true }
+        else { items.append(b); frames += Int(b.frameLength) }
+        lock.unlock()
+    }
+
+    var overflowed: Bool { lock.lock(); defer { lock.unlock() }; return overflowedFlag }
+
     func drain() -> [AVAudioPCMBuffer] {
-        lock.lock(); let out = items; items.removeAll(keepingCapacity: true); lock.unlock()
+        lock.lock()
+        let out = items; items.removeAll(keepingCapacity: true)
+        frames = 0; overflowedFlag = false
+        lock.unlock()
         return out
     }
 

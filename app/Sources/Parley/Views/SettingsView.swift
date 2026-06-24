@@ -554,6 +554,9 @@ private struct ModelsTab: View {
                 default:
                     if parakeetPresent {
                         Button("Delete models", role: .destructive) { confirmDeleteParakeet = true }
+                            // Tearing out the model mid-session would orphan the
+                            // mic engine + pump; only allow it when idle.
+                            .disabled(dictation.isListening || dictation.state == .transcribing)
                     } else {
                         Button("Download model") {
                             Task { await dictation.loadModel(dictation.engineChoice) }

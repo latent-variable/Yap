@@ -53,6 +53,9 @@ final class HotKeyManager {
             GetEventParameter(event, EventParamName(kEventParamDirectObject),
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+            // Only handle our own ('PRLY') hot keys — another component could use
+            // the same numeric id under a different signature.
+            guard hkID.signature == OSType(0x50524C59) else { return OSStatus(eventNotHandledErr) }
             HotKeyManager.lock.lock()
             let mgr = HotKeyManager.managers[hkID.id]?.value
             HotKeyManager.lock.unlock()
