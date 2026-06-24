@@ -74,6 +74,10 @@ final class Dictation: ObservableObject {
     /// for different engines are safe: `engineChoice` records the latest request,
     /// and a load only commits if it still matches it (else it's stale, discarded).
     func loadModel(_ choice: EngineChoice) async {
+        // Already loading this same engine — don't kick off a duplicate concurrent
+        // load (e.g. startListening fires while a load is mid-flight). A switch to a
+        // *different* engine still proceeds (engineChoice differs).
+        if state == .loadingModel, engineChoice == choice { return }
         if modelReady, engineChoice == choice, manager != nil { return }
         // Record the latest request up front so a superseding switch is detectable
         // after each await; the picker also reflects the new selection immediately.

@@ -100,8 +100,16 @@ final class HotKeyManager {
         lock.lock()
         for wm in managers.values {
             guard let mgr = wm.value, mgr.chordModifiers != 0 else { continue }
-            if current == mgr.chordModifiers {
-                if mgr.armed { mgr.armed = false; if let f = mgr.onFire { toFire.append(f) } }
+            // Re-arm only when a *required* modifier is released (current no longer
+            // contains the full chord). Holding the chord and adding an extra
+            // modifier (e.g. ⌥⌘ then +⇧) must NOT re-arm — otherwise releasing the
+            // extra would re-match and fire a second time (double-fire).
+            let hasAllRequired = (current & mgr.chordModifiers) == mgr.chordModifiers
+            if hasAllRequired {
+                if current == mgr.chordModifiers, mgr.armed {
+                    mgr.armed = false
+                    if let f = mgr.onFire { toFire.append(f) }
+                }
             } else {
                 mgr.armed = true
             }

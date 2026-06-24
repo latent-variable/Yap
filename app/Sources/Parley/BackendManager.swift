@@ -243,12 +243,18 @@ final class BackendManager: NSObject, ObservableObject {
     /// running `server.py` AND have been reparented to launchd (ppid == 1), the
     /// signature of a backend whose spawning Parley quit or crashed.
     private nonisolated static func orphanBackendPID(port: Int) async -> pid_t? {
-        await Task.detached {
-            guard let pid = listenerPID(port: port) else { return nil }
-            let info = psInfo(pid)
-            guard let info, info.ppid == 1, info.command.contains("server.py") else { return nil }
-            return pid
-        }.value
+        // lsof/ps block until the child exits; run them on a background queue (not
+        // the cooperative pool that Task.detached uses) so a hung tool can't starve
+        // the async runtime.
+        await withCheckedContinuation { (cont: CheckedContinuation<pid_t?, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let pid = listenerPID(port: port),
+                      let info = psInfo(pid),
+                      info.ppid == 1, info.command.contains("server.py")
+                else { cont.resume(returning: nil); return }
+                cont.resume(returning: pid)
+            }
+        }
     }
 
     /// PID holding the listen socket on `port` (first match), via `lsof -t`
