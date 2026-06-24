@@ -207,7 +207,7 @@ struct DictationHUD: View {
             ScrollView(.vertical, showsIndicators: false) {
                 Text(transcriptText)
                     .font(.system(size: 15))
-                    .foregroundStyle(dictation.partial.isEmpty ? .secondary : .primary)
+                    .foregroundStyle(displayText.isEmpty ? .secondary : .primary)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .background(GeometryReader { g in
                         Color.clear.preference(key: TextHeightKey.self, value: g.size.height)
@@ -233,7 +233,7 @@ struct DictationHUD: View {
                 // there's no clip to smooth over anyway.
                 textHeight = h
             }
-            .onChange(of: dictation.partial) {
+            .onChange(of: displayText) {
                 // Keep the latest words visible only when scrolling (overflow); while
                 // it still fits, top-alignment already shows everything.
                 guard overflowing else { return }
@@ -266,11 +266,18 @@ struct DictationHUD: View {
         }
     }
 
+    /// What the box shows: the accurate rolling preview once it's available, else
+    /// the instant streaming partial (covers the first ~1s before the first
+    /// accurate pass, and the case where the batch model isn't loaded yet).
+    private var displayText: String {
+        dictation.refined.isEmpty ? dictation.partial : dictation.refined
+    }
+
     private var transcriptText: String {
         if case .error(let m) = dictation.state { return m }
-        if dictation.partial.isEmpty {
+        if displayText.isEmpty {
             return dictation.state == .listening ? "Speak now…" : " "
         }
-        return dictation.partial
+        return displayText
     }
 }

@@ -42,6 +42,12 @@ final class Dictation: ObservableObject {
     /// Live transcript while listening — drives the HUD. Full running transcript,
     /// self-correcting, not a per-chunk fragment.
     @Published private(set) var partial = ""
+    /// Rolling high-accuracy preview: the batch model (same one used for the final
+    /// pass) re-transcribed over everything captured so far, refreshed ~1/sec while
+    /// you talk. The fast streaming `partial` cuts/misses words; this reads at
+    /// final-pass quality, so the preview converges to exactly the inserted text.
+    /// The HUD prefers this when present, falling back to `partial` otherwise.
+    @Published private(set) var refined = ""
     @Published private(set) var lastFinal = ""
 
     private var manager: (any StreamingAsrManager)?
@@ -59,6 +65,7 @@ final class Dictation: ObservableObject {
     private var finalASR: AsrManager?
     private var finalVersionLoaded: AsrModelVersion?
     private var finalTask: Task<Void, Never>?   // tracked final-pass (v2/v3) warm-up
+    private var refineTask: Task<Void, Never>?  // rolling accurate-preview loop
 
     var isListening: Bool { state == .listening }
 
@@ -167,9 +174,11 @@ final class Dictation: ObservableObject {
                 do {
                     try await manager.reset()
                     self.partial = ""
+                    self.refined = ""
                     _ = self.recorder.drain()   // clear last session's audio
                     try self.beginCapture(into: manager)
                     self.state = .listening
+                    self.startRefineLoop()      // accurate preview, layered over streaming
                 } catch {
                     self.state = .error("Mic start failed: \(error.localizedDescription)")
                 }
@@ -188,6 +197,10 @@ final class Dictation: ObservableObject {
         pump?.cancel()
         await pump?.value
         pump = nil
+        // Stop the accurate-preview loop. No await: its state guard (== .listening)
+        // already blocks a late write, and we want stop to stay snappy.
+        refineTask?.cancel()
+        refineTask = nil
         state = .transcribing
         do {
             // Feed anything still queued, then finish the live stream.
@@ -204,6 +217,7 @@ final class Dictation: ObservableObject {
             if Prefs.shared.removeFillers { text = Fillers.clean(text) }
             lastFinal = text
             partial = ""
+            refined = ""
             state = .idle
             return text.isEmpty ? nil : text
         } catch {
@@ -226,6 +240,48 @@ final class Dictation: ObservableObject {
             return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             return nil
+        }
+    }
+
+    // MARK: - rolling accurate preview
+
+    /// Start the loop that publishes `refined` while listening. Cancelled on stop.
+    private func startRefineLoop() {
+        refineTask?.cancel()
+        refineTask = Task { [weak self] in await self?.refineLoop() }
+    }
+
+    /// Periodically re-transcribe everything captured so far with the high-accuracy
+    /// batch model and publish it as `refined`, so the HUD reads at final-pass
+    /// quality instead of the lossy streaming `partial`. Sequential — each pass
+    /// awaits the previous, so it self-throttles: short utterances refresh ~1/sec,
+    /// longer ones as fast as the decode allows (no overlap, no pile-up).
+    private func refineLoop() async {
+        var lastFrames = 0
+        while !Task.isCancelled {
+            do { try await Task.sleep(nanoseconds: 800_000_000) } catch { break }
+            guard state == .listening else { break }
+            // Need the accurate model, matching the live engine, and audio under the
+            // memory cap. Otherwise leave the streaming `partial` to drive the HUD.
+            guard let finalASR, finalVersionLoaded == engineChoice.finalVersion,
+                  !recorder.overflowed else { continue }
+            let snap = recorder.snapshot()
+            let sr = captureFormat?.sampleRate ?? 16_000
+            let secs = Double(snap.frames) / sr
+            // Skip until there's a sentence's worth, and stop refreshing past 45s so
+            // a long hold can't make each O(n) decode dominate. The final pass on
+            // stop still covers the whole utterance (up to the 180s recorder cap).
+            guard secs >= 0.8, secs <= 45, snap.frames > lastFrames else { continue }
+            lastFrames = snap.frames
+            guard let combined = BufferQueue.concat(snap.buffers) else { continue }
+            var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
+            guard let result = try? await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
+            else { continue }
+            // A stop / engine switch may have landed during the decode — don't stamp
+            // a stale preview over the cleared state.
+            guard !Task.isCancelled, state == .listening else { break }
+            let txt = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !txt.isEmpty { refined = txt }
         }
     }
 
@@ -252,6 +308,8 @@ final class Dictation: ObservableObject {
         loadTask = nil
         finalTask?.cancel()
         finalTask = nil
+        refineTask?.cancel()
+        refineTask = nil
         manager = nil
         finalASR = nil
         finalVersionLoaded = nil
@@ -324,6 +382,14 @@ private final class BufferQueue: @unchecked Sendable {
     }
 
     var overflowed: Bool { lock.lock(); defer { lock.unlock() }; return overflowedFlag }
+
+    /// Copy the current buffers + frame count WITHOUT draining — for the rolling
+    /// accurate preview, which re-reads the growing audio while capture keeps
+    /// appending. Buffers are already immutable deep-copies, so sharing refs is safe.
+    func snapshot() -> (buffers: [AVAudioPCMBuffer], frames: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (items, frames)
+    }
 
     func drain() -> [AVAudioPCMBuffer] {
         lock.lock()
