@@ -17,12 +17,18 @@ enum TextInsert {
         pb.clearContents()
         pb.setString(trimmed, forType: .string)
 
-        sendCmdV()
-
-        // Restore the user's clipboard after the paste has been delivered.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            pb.clearContents()
-            if let saved { pb.setString(saved, forType: .string) }
+        // Let the pasteboard write propagate before synthesizing the paste — some
+        // apps read a stale pasteboard if ⌘V fires the same instant we set it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            sendCmdV()
+            // Restore the user's clipboard only AFTER the paste is delivered.
+            // Too-early restore clobbers our text mid-paste, so a slow app pastes
+            // the old clipboard (or nothing) and the user has to retry. 0.6s is a
+            // safe margin across slow/Electron targets.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                pb.clearContents()
+                if let saved { pb.setString(saved, forType: .string) }
+            }
         }
         return true
     }

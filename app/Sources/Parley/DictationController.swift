@@ -20,6 +20,9 @@ final class DictationController: ObservableObject {
         dictation.engineChoice = Dictation.EngineChoice(rawValue: Prefs.shared.dictationEngine) ?? .english
         hotkey.onFire = { [weak self] in self?.toggle() }
         hotkey.register(Prefs.shared.dictationHotKey)
+        // Warm the model at launch (cached → fast; first ever launch downloads in
+        // the background) so the first dictation isn't a cold load.
+        Task { await dictation.loadModel(dictation.engineChoice) }
     }
 
     /// Re-register after the user changes the dictation shortcut in Settings.
