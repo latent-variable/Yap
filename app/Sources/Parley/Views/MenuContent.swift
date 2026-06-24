@@ -63,10 +63,7 @@ struct MenuContent: View {
                 Text("Read shortcut")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text(KeyName.describe(prefs.hotKey))
-                    .font(.caption.monospaced())
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+                ShortcutChip(combo: prefs.hotKey)
             }
 
             if !state.lastCleaned.isEmpty {
@@ -96,15 +93,13 @@ struct MenuContent: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: state.status.symbol)
-                .font(.title3)
-                .foregroundStyle(statusColor)
-                .symbolEffect(.pulse, isActive: state.status == .reading)
+        HStack(spacing: 10) {
+            brandMark
             VStack(alignment: .leading, spacing: 1) {
                 Text("Parley").font(.headline)
                 Text(state.preparing ? state.preparingDetail : state.status.label)
                     .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer()
             if state.preparing {
@@ -114,6 +109,24 @@ struct MenuContent: View {
                     .help("Models not installed — open Settings ▸ Models")
             }
         }
+    }
+
+    /// App glyph in a tinted rounded badge — echoes the indigo gradient of the
+    /// app/menu-bar icon so the popover reads as the same product.
+    private var brandMark: some View {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(LinearGradient(
+                colors: [Color(red: 0.44, green: 0.49, blue: 1.0),
+                         Color(red: 0.29, green: 0.24, blue: 0.84)],
+                startPoint: .top, endPoint: .bottom))
+            .frame(width: 34, height: 34)
+            .overlay(
+                Image(systemName: state.status.symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .symbolEffect(.pulse, isActive: state.status == .reading)
+            )
+            .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
     }
 
     private var permissionBanner: some View {
@@ -179,16 +192,6 @@ struct MenuContent: View {
         .font(.caption)
     }
 
-    private var statusColor: Color {
-        switch state.status {
-        case .reading: return .accentColor
-        case .paused: return .orange
-        case .error: return .red
-        case .loadingModel: return .blue
-        default: return .secondary
-        }
-    }
-
     /// Small header that separates the Voice (TTS) and Ears (dictation) halves.
     private func sectionLabel(_ title: String, _ icon: String) -> some View {
         HStack(spacing: 5) {
@@ -199,6 +202,17 @@ struct MenuContent: View {
         .foregroundStyle(.secondary)
     }
 
+}
+
+/// Monospaced key-combo pill used wherever a shortcut is shown in the menu.
+struct ShortcutChip: View {
+    let combo: HotKeyCombo
+    var body: some View {
+        Text(KeyName.describe(combo))
+            .font(.caption.monospaced())
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+    }
 }
 
 /// Dictation ("ears") controls in the menu: toggle, live state, engine picker.
@@ -216,10 +230,7 @@ struct DictationRow: View {
                 .buttonStyle(.borderless)
                 .help("Dictate — press, speak, press again to insert")
                 Spacer()
-                Text(KeyName.describe(prefs.dictationHotKey))
-                    .font(.caption.monospaced())
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+                ShortcutChip(combo: prefs.dictationHotKey)
             }
             HStack {
                 Text("Dictation engine").font(.caption).foregroundStyle(.secondary)
