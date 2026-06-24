@@ -45,6 +45,12 @@ struct HotKeyCombo: Codable, Equatable {
         keyCode: UInt32(kVK_ANSI_R),
         modifiers: UInt32(cmdKey | shiftKey)
     )
+
+    /// Default dictation ("ears") shortcut: ⌘⇧D.
+    static let dictationDefault = HotKeyCombo(
+        keyCode: UInt32(kVK_ANSI_D),
+        modifiers: UInt32(cmdKey | shiftKey)
+    )
 }
 
 /// App-wide preferences, UserDefaults backed, observable for SwiftUI.
@@ -74,6 +80,10 @@ final class Prefs: ObservableObject {
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin") } }
     @Published var customRules: [CleanRule] { didSet { saveRules() } }
     @Published var hotKey: HotKeyCombo { didSet { saveHotKey() } }
+    @Published var dictationHotKey: HotKeyCombo { didSet { saveDictationHotKey() } }
+    @Published var dictationEngine: String { didSet { d.set(dictationEngine, forKey: "dictationEngine") } }  // "english" | "multilingual"
+    @Published var dictationChime: Bool { didSet { d.set(dictationChime, forKey: "dictationChime") } }       // play a start/stop sound
+    @Published var removeFillers: Bool { didSet { d.set(removeFillers, forKey: "removeFillers") } }           // strip "um"/"uh" from dictation
 
     private init() {
         engine = d.string(forKey: "engine") ?? "kokoro"
@@ -90,6 +100,9 @@ final class Prefs: ObservableObject {
         keepWarm = d.object(forKey: "keepWarm") as? Bool ?? true
         autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
         providerMode = d.string(forKey: "providerMode") ?? "auto"
+        dictationEngine = d.string(forKey: "dictationEngine") ?? "english"
+        dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true
+        removeFillers = d.object(forKey: "removeFillers") as? Bool ?? true
         showMiniPlayer = d.object(forKey: "showMiniPlayer") as? Bool ?? true
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false
         if let data = d.data(forKey: "customRules"),
@@ -104,6 +117,12 @@ final class Prefs: ObservableObject {
         } else {
             hotKey = .defaultCombo
         }
+        if let data = d.data(forKey: "dictationHotKey"),
+           let h = try? JSONDecoder().decode(HotKeyCombo.self, from: data) {
+            dictationHotKey = h
+        } else {
+            dictationHotKey = .dictationDefault
+        }
     }
 
     private func saveRules() {
@@ -111,5 +130,8 @@ final class Prefs: ObservableObject {
     }
     private func saveHotKey() {
         if let data = try? JSONEncoder().encode(hotKey) { d.set(data, forKey: "hotKey") }
+    }
+    private func saveDictationHotKey() {
+        if let data = try? JSONEncoder().encode(dictationHotKey) { d.set(data, forKey: "dictationHotKey") }
     }
 }

@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // in Info.plist). Strong ref kept so it isn't deallocated.
         NSApp.servicesProvider = serviceProvider
         AppState.shared.bootstrap()
+        DictationController.shared.bootstrap()   // the "ears": ⌘⇧D dictation
     }
     func applicationWillTerminate(_ notification: Notification) {
         AppState.shared.backend.stop()

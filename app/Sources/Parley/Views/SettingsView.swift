@@ -362,12 +362,26 @@ private struct ShortcutTab: View {
         Form {
             Section("Global read shortcut") {
                 HStack {
-                    Text("Current"); Spacer()
-                    HotKeyRecorder(combo: $prefs.hotKey) { state.reapplyHotKey() }
+                    Text("Read selection"); Spacer()
+                    HotKeyRecorder(combo: $prefs.hotKey, conflictsWith: prefs.dictationHotKey) {
+                        state.reapplyHotKey()
+                    }
                 }
-                Text("Click the field, then press a modifier + key combination (e.g. ⌘⇧R).")
+                Text("Reads the selected text aloud (text → speech).")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Global dictation shortcut") {
+                HStack {
+                    Text("Dictate"); Spacer()
+                    HotKeyRecorder(combo: $prefs.dictationHotKey, conflictsWith: prefs.hotKey) {
+                        DictationController.shared.reapplyHotKey()
+                    }
+                }
+                Text("Press to start dictating, press again to insert (speech → text).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Click a field, then press a modifier + key combination (e.g. ⌘⇧R).")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
     }
@@ -376,8 +390,12 @@ private struct ShortcutTab: View {
 /// Records the next modifier+key chord into a HotKeyCombo.
 private struct HotKeyRecorder: View {
     @Binding var combo: HotKeyCombo
+    /// The OTHER action's chord — recording the same one is rejected (it would
+    /// fail to register and silently disable this shortcut).
+    var conflictsWith: HotKeyCombo? = nil
     var onChange: () -> Void
     @State private var recording = false
+    @State private var conflicted = false
     @State private var monitor: Any?
 
     var body: some View {
@@ -385,9 +403,10 @@ private struct HotKeyRecorder: View {
             recording.toggle()
             recording ? startMonitor() : stopMonitor()
         } label: {
-            Text(recording ? "Press keys…" : KeyName.describe(combo))
+            Text(recording ? "Press keys…" : (conflicted ? "Already in use" : KeyName.describe(combo)))
                 .font(.body.monospaced())
                 .frame(minWidth: 110)
+                .foregroundStyle(conflicted ? Color.orange : Color.primary)
                 .padding(.horizontal, 10).padding(.vertical, 4)
                 .background(recording ? Color.accentColor.opacity(0.2) : Color(.quaternaryLabelColor),
                             in: RoundedRectangle(cornerRadius: 6))
@@ -397,10 +416,20 @@ private struct HotKeyRecorder: View {
     }
 
     private func startMonitor() {
+        conflicted = false
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
             let mods = KeyName.carbonModifiers(ev.modifierFlags)
             guard mods != 0 else { return ev } // require a modifier
-            combo = HotKeyCombo(keyCode: UInt32(ev.keyCode), modifiers: mods)
+            let new = HotKeyCombo(keyCode: UInt32(ev.keyCode), modifiers: mods)
+            // Reject a chord already bound to the other action — Carbon would
+            // reject the duplicate registration and leave this shortcut dead.
+            if new == conflictsWith {
+                conflicted = true
+                recording = false
+                stopMonitor()
+                return nil
+            }
+            combo = new
             onChange()
             recording = false
             stopMonitor()
@@ -425,6 +454,11 @@ private struct ModelsTab: View {
     @State private var kokoroSize: String?
     @State private var hdSize: String?
     @State private var sizeTask: Task<Void, Never>?
+    @ObservedObject private var dictation = DictationController.shared.dictation
+    @ObservedObject private var prefs = Prefs.shared
+    @State private var parakeetSize: String?
+    @State private var parakeetPresent = false
+    @State private var confirmDeleteParakeet = false
 
     private static let sizeFmt: ByteCountFormatter = {
         let f = ByteCountFormatter(); f.allowedUnits = [.useMB, .useGB]; f.countStyle = .file
@@ -437,13 +471,18 @@ private struct ModelsTab: View {
         let kdir = state.backend.modelsDir, hdir = state.hdPackagesDir
         let kPresent = state.modelsPresent, hdPresent = state.hdInstalled
         sizeTask?.cancel()   // supersede any in-flight walk; avoid redundant disk I/O
+        let pdir = Dictation.modelsDirOnDisk
+        let pPresent = Dictation.modelsPresentOnDisk
         sizeTask = Task {
             // static dirSizeBytes — no @MainActor state captured into this task.
             let kb = kPresent ? await Task.detached { AppState.dirSizeBytes(kdir) }.value : 0
             let hb = hdPresent ? await Task.detached { AppState.dirSizeBytes(hdir) }.value : 0
+            let pb = pPresent ? await Task.detached { AppState.dirSizeBytes(pdir) }.value : 0
             if Task.isCancelled { return }
             kokoroSize = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil
             hdSize = hb > 0 ? Self.sizeFmt.string(fromByteCount: hb) : nil
+            parakeetPresent = pPresent
+            parakeetSize = pb > 0 ? Self.sizeFmt.string(fromByteCount: pb) : nil
         }
     }
 
@@ -508,6 +547,49 @@ private struct ModelsTab: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+
+            Section("Dictation model (Parakeet)") {
+                Picker("Engine", selection: Binding(
+                    get: { dictation.engineChoice },
+                    set: { c in Task { await dictation.loadModel(c) } }
+                )) {
+                    ForEach(Dictation.EngineChoice.allCases) { Text($0.label).tag($0) }
+                }
+                .disabled(dictation.state == .listening || dictation.state == .loadingModel)
+
+                LabeledContent("Status", value: parakeetStatus)
+                if let s = parakeetSize { LabeledContent("Size on disk", value: s) }
+                LabeledContent("Location", value: Dictation.modelsDirOnDisk.path).font(.caption)
+
+                switch dictation.state {
+                case .loadingModel:
+                    HStack { ProgressView().controlSize(.small)
+                        Text("Downloading / loading…").font(.caption) }
+                case .error(let m):
+                    Text(m).font(.caption).foregroundStyle(.red)
+                    Button("Retry") { Task { await dictation.loadModel(dictation.engineChoice) } }
+                default:
+                    if parakeetPresent {
+                        Button("Delete models", role: .destructive) { confirmDeleteParakeet = true }
+                            // Tearing out the model mid-session would orphan the
+                            // mic engine + pump; only allow it when idle.
+                            .disabled(dictation.isListening || dictation.state == .transcribing)
+                    } else {
+                        Button("Download model") {
+                            Task { await dictation.loadModel(dictation.engineChoice) }
+                        }.buttonStyle(.borderedProminent)
+                    }
+                }
+                Text("English uses Parakeet Flash (real-time streaming); Multilingual uses Nemotron streaming (25 languages). Downloaded on first use.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Dictation behavior") {
+                Toggle("Play start/stop chime", isOn: $prefs.dictationChime)
+                Toggle("Remove filler words (um, uh)", isOn: $prefs.removeFillers)
+                Text("The chime cues recording on/off. Filler removal strips clear disfluencies from the inserted text (never meaningful words).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear { state.refreshHD(); refreshSizes() }
@@ -529,6 +611,20 @@ private struct ModelsTab: View {
         } message: {
             Text("Frees ~1.3 GB. Your cloned voices are kept; you can reinstall HD any time.")
         }
+        .onChange(of: dictation.state) { _, _ in refreshSizes() }
+        .confirmationDialog("Delete the dictation models?", isPresented: $confirmDeleteParakeet, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                parakeetSize = nil; parakeetPresent = false; dictation.deleteModelsFromDisk()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Removes the downloaded Parakeet models. Dictation re-downloads them on next use.")
+        }
+    }
+
+    private var parakeetStatus: String {
+        if dictation.modelReady { return "Loaded (\(dictation.engineChoice.label))" }
+        return parakeetPresent ? "Downloaded" : "Not downloaded"
     }
 }
 

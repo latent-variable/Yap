@@ -33,6 +33,8 @@ struct MenuContent: View {
 
             Divider()
 
+            sectionLabel("Voice", "speaker.wave.2.fill")
+
             HStack(spacing: 10) {
                 VoiceMenuButton(voices: state.combinedVoices, selectionId: state.currentVoiceId) {
                     state.selectVoice($0)
@@ -70,6 +72,11 @@ struct MenuContent: View {
             if !state.lastCleaned.isEmpty {
                 preview
             }
+
+            Divider()
+
+            sectionLabel("Ears", "waveform.badge.mic")
+            DictationRow()
 
             Divider()
 
@@ -182,4 +189,97 @@ struct MenuContent: View {
         }
     }
 
+    /// Small header that separates the Voice (TTS) and Ears (dictation) halves.
+    private func sectionLabel(_ title: String, _ icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.caption2)
+            Text(title.uppercased()).font(.caption2.weight(.semibold)).tracking(0.5)
+            Spacer()
+        }
+        .foregroundStyle(.secondary)
+    }
+
+}
+
+/// Dictation ("ears") controls in the menu: toggle, live state, engine picker.
+struct DictationRow: View {
+    @ObservedObject private var controller = DictationController.shared
+    @ObservedObject private var dictation = DictationController.shared.dictation
+    @ObservedObject private var prefs = Prefs.shared
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 10) {
+                Button { controller.toggle() } label: {
+                    Label(buttonLabel, systemImage: buttonIcon)
+                }
+                .buttonStyle(.borderless)
+                .help("Dictate — press, speak, press again to insert")
+                Spacer()
+                Text(KeyName.describe(prefs.dictationHotKey))
+                    .font(.caption.monospaced())
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            }
+            HStack {
+                Text("Dictation engine").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { dictation.engineChoice },
+                    set: { choice in Task { await dictation.loadModel(choice) } }
+                )) {
+                    ForEach(Dictation.EngineChoice.allCases) { c in
+                        Text(c.label).tag(c)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 150)
+                .disabled(dictation.state == .listening || dictation.state == .loadingModel)
+            }
+
+            if !dictation.lastFinal.isEmpty {
+                lastDictation
+            }
+        }
+    }
+
+    /// Quick retrieval of the most recent dictation — for when a paste landed in
+    /// the wrong place (or didn't). Copy it, or re-insert at the current cursor.
+    private var lastDictation: some View {
+        DisclosureGroup("Last dictation") {
+            ScrollView {
+                Text(dictation.lastFinal)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 70)
+            HStack {
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(dictation.lastFinal, forType: .string)
+                }.controlSize(.mini)
+                Button("Insert") { TextInsert.insertAtCursor(dictation.lastFinal) }
+                    .controlSize(.mini)
+            }
+        }
+        .font(.caption)
+    }
+
+    private var buttonLabel: String {
+        switch dictation.state {
+        case .listening:    return "Stop & Insert"
+        case .loadingModel: return "Loading model…"
+        case .transcribing: return "Transcribing…"
+        default:            return "Dictate"
+        }
+    }
+
+    private var buttonIcon: String {
+        switch dictation.state {
+        case .listening: return "stop.circle.fill"
+        default:         return "mic.fill"
+        }
+    }
 }

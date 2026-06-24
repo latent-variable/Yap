@@ -29,7 +29,7 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Local-first TTS. No cloud, no tracking.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Parley records a short clip only when you choose to create a custom HD voice from your microphone. Nothing is sent anywhere.</string>
+	<string>Parley uses your microphone for dictation (speech to text) and to create custom HD voices. Audio is processed on-device; nothing is sent anywhere.</string>
 	<key>NSServices</key>
 	<array>
 		<dict>

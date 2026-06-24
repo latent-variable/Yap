@@ -43,6 +43,16 @@ enum Selftest {
         check("normalize quotes", gen, contains: ["\"hi\""], absent: ["“"])
         check("collapse spaces", gen, contains: ["hi\" there"])
 
+        print("Fillers — strip disfluencies, keep meaningful words")
+        check("remove um/uh", Fillers.clean("so um I uh think"), contains: ["so I think"], absent: ["um", "uh"])
+        check("runs + caps", Fillers.clean("Well Ummm yeah UH okay"), contains: ["Well yeah okay"], absent: ["Ummm", "UH"])
+        check("keep 'like'/'well'", Fillers.clean("I like it well enough"), contains: ["I like it well enough"])
+        check("tidy punctuation", Fillers.clean("wait , um, now"), contains: ["wait, now"], absent: ["um"])
+        check("recapitalize after leading filler", Fillers.clean("Um, we should go"),
+              contains: ["We should go"], absent: ["we should go"])
+        check("recapitalize past leading space", Fillers.clean(" Um, we should go"),
+              contains: ["We should go"])
+
         print("Clipboard — capture never permanently overwrites it")
         let pb = NSPasteboard.general
         // Save the user's real clipboard so the test itself isn't destructive.
