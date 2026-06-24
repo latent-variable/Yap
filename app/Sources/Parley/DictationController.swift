@@ -215,15 +215,14 @@ struct DictationHUD: View {
                 Color.clear.frame(height: 1).id("bottom")
             }
             .frame(height: min(max(textHeight, oneLine), maxTextHeight))
-            // Fade the top edge as soon as the transcript passes the first line —
-            // not only once it fully overflows. While the box is still growing,
-            // the bottom-pinned scroll would otherwise hard-chop the top line mid-
-            // letter; the gradient softens that the whole way up, so growth looks
-            // as clean as the settled (expanded) state.
+            // Only once the transcript actually overflows the box do we bottom-pin
+            // and fade the top edge (where text is genuinely cut). While it's still
+            // growing it fits and stays top-aligned — so no line is chopped AND no
+            // legible line gets dimmed by the gradient.
             .mask {
                 VStack(spacing: 0) {
                     LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: faded ? 30 : 0)
+                        .frame(height: overflowing ? 30 : 0)
                     Color.black
                 }
             }
@@ -233,14 +232,17 @@ struct DictationHUD: View {
                 withAnimation(.easeOut(duration: 0.12)) { textHeight = h }
             }
             .onChange(of: dictation.partial) {
+                // Keep the latest words visible only when scrolling (overflow); while
+                // it still fits, top-alignment already shows everything.
+                guard overflowing else { return }
                 withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
     }
 
-    /// True once the transcript is taller than a single line — the point past
-    /// which the top edge needs softening (during growth and at full size alike).
-    private var faded: Bool { textHeight > oneLine + 8 }
+    /// The transcript is taller than the box — it scrolls, so the cut top edge
+    /// needs the softening fade. Below this it fits and is shown in full.
+    private var overflowing: Bool { textHeight > maxTextHeight + 1 }
 
     @ViewBuilder private var statusDot: some View {
         switch dictation.state {

@@ -98,9 +98,13 @@ final class Dictation: ObservableObject {
             // ready by the time you stop talking. Best-effort.
             let fv = choice.finalVersion
             Task { await self.loadFinalModel(fv) }
+        } catch is CancellationError {
+            return   // superseded by a newer switch — not a real failure
         } catch {
-            // Only surface the failure if this is still the selected engine.
-            guard engineChoice == choice else { return }
+            // A cancelled URLSession/load can surface as a non-CancellationError;
+            // ignore it too, and only surface a failure for the live selection so
+            // a stale load can't stamp a false error over the new engine's state.
+            guard !Task.isCancelled, engineChoice == choice else { return }
             modelReady = false
             state = .error("Model load failed: \(error.localizedDescription)")
         }
