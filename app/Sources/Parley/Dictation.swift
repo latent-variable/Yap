@@ -47,6 +47,7 @@ final class Dictation: ObservableObject {
     private var manager: (any StreamingAsrManager)?
     private let audio = AVAudioEngine()
     private var pump: Task<Void, Never>?
+    private var loadTask: Task<Void, Never>?   // supersedable engine load (last wins)
     // Render-thread → actor handoff. nonisolated so the mic tap (any thread)
     // can enqueue without touching main-actor state.
     private nonisolated let pending = BufferQueue()
@@ -60,22 +61,36 @@ final class Dictation: ObservableObject {
 
     var isListening: Bool { state == .listening }
 
+    /// Switch/load the dictation engine, superseding any in-flight load so the
+    /// LAST selection wins. Use this from the UI (picker, retry, download) rather
+    /// than spawning ad-hoc `Task { await loadModel(...) }`, which would race.
+    func requestLoad(_ choice: EngineChoice) {
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in await self?.loadModel(choice) }
+    }
+
     /// Download (first time) + load the streaming model for the chosen engine.
-    /// Loaded once and reused — startListening only reset()s it.
+    /// Loaded once and reused — startListening only reset()s it. Concurrent calls
+    /// for different engines are safe: `engineChoice` records the latest request,
+    /// and a load only commits if it still matches it (else it's stale, discarded).
     func loadModel(_ choice: EngineChoice) async {
-        if case .loadingModel = state { return }
         if modelReady, engineChoice == choice, manager != nil { return }
-        state = .loadingModel
+        // Record the latest request up front so a superseding switch is detectable
+        // after each await; the picker also reflects the new selection immediately.
         engineChoice = choice
         Prefs.shared.dictationEngine = choice.rawValue
+        state = .loadingModel
         do {
             let mgr = choice.variant.createManager()
             try await mgr.loadModels()
+            // A newer switch superseded this load while it ran — discard it.
+            guard !Task.isCancelled, engineChoice == choice else { return }
             // The callback fires with the full running transcript on each new
             // token — drive the HUD straight from it.
             await mgr.setPartialTranscriptCallback { [weak self] text in
                 Task { @MainActor in self?.partial = text }
             }
+            guard engineChoice == choice else { return }
             manager = mgr
             modelReady = true
             state = .idle
@@ -84,6 +99,8 @@ final class Dictation: ObservableObject {
             let fv = choice.finalVersion
             Task { await self.loadFinalModel(fv) }
         } catch {
+            // Only surface the failure if this is still the selected engine.
+            guard engineChoice == choice else { return }
             modelReady = false
             state = .error("Model load failed: \(error.localizedDescription)")
         }

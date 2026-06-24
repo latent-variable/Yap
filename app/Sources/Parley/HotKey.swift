@@ -57,6 +57,11 @@ final class HotKeyManager {
             return true
         }
 
+        // keyCode 0 is the physical 'A' key (kVK_ANSI_A). An unset/invalid combo
+        // (no base key, fewer than 2 modifiers) must NOT reach Carbon, or it would
+        // silently register 'A' — or bare 'A' — and hijack that key globally.
+        guard combo.keyCode != 0 else { return false }
+
         var newRef: EventHotKeyRef?
         let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, id,
                                          GetApplicationEventTarget(), 0, &newRef)

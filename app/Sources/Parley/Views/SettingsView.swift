@@ -577,7 +577,7 @@ private struct ModelsTab: View {
             Section("Dictation model (Parakeet)") {
                 Picker("Engine", selection: Binding(
                     get: { dictation.engineChoice },
-                    set: { c in Task { await dictation.loadModel(c) } }
+                    set: { c in dictation.requestLoad(c) }
                 )) {
                     ForEach(Dictation.EngineChoice.allCases) { Text($0.label).tag($0) }
                 }
@@ -593,7 +593,7 @@ private struct ModelsTab: View {
                         Text("Downloading / loading…").font(.caption) }
                 case .error(let m):
                     Text(m).font(.caption).foregroundStyle(.red)
-                    Button("Retry") { Task { await dictation.loadModel(dictation.engineChoice) } }
+                    Button("Retry") { dictation.requestLoad(dictation.engineChoice) }
                 default:
                     if parakeetPresent {
                         Button("Delete models", role: .destructive) { confirmDeleteParakeet = true }
@@ -602,7 +602,7 @@ private struct ModelsTab: View {
                             .disabled(dictation.isListening || dictation.state == .transcribing)
                     } else {
                         Button("Download model") {
-                            Task { await dictation.loadModel(dictation.engineChoice) }
+                            dictation.requestLoad(dictation.engineChoice)
                         }.buttonStyle(.borderedProminent)
                     }
                 }

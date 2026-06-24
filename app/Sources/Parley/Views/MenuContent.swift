@@ -8,11 +8,9 @@ struct MenuContent: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var prefs: Prefs
     @Environment(\.openSettings) private var openSettings
-    @AppStorage("menuTab") private var tabRaw = MenuTab.ears.rawValue
-
-    private var tab: MenuTab {
-        get { MenuTab(rawValue: tabRaw) ?? .ears }
-    }
+    // @AppStorage binds directly to the RawRepresentable enum — no separate raw
+    // string + computed property needed.
+    @AppStorage("menuTab") private var tab = MenuTab.ears
 
     /// Open Settings and force it to the front, even when the app is an
     /// accessory (no dock icon) and the window is already buried behind others.
@@ -37,9 +35,9 @@ struct MenuContent: View {
                 permissionBanner
             }
 
-            Picker("", selection: $tabRaw) {
-                Label("Ears", systemImage: "waveform.badge.mic").tag(MenuTab.ears.rawValue)
-                Label("Voice", systemImage: "speaker.wave.2.fill").tag(MenuTab.voice.rawValue)
+            Picker("", selection: $tab) {
+                Label("Ears", systemImage: "waveform.badge.mic").tag(MenuTab.ears)
+                Label("Voice", systemImage: "speaker.wave.2.fill").tag(MenuTab.voice)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -282,7 +280,7 @@ struct EarsSection: View {
                 Spacer()
                 Picker("", selection: Binding(
                     get: { dictation.engineChoice },
-                    set: { choice in Task { await dictation.loadModel(choice) } }
+                    set: { choice in dictation.requestLoad(choice) }
                 )) {
                     ForEach(Dictation.EngineChoice.allCases) { c in
                         Text(c.label).tag(c)

@@ -26,10 +26,13 @@ final class BackendManager: ObservableObject {
         // Kill our own backend when the app quits so it doesn't linger as an
         // orphan (reparented to launchd) that the next launch can't cleanly own.
         terminateObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+            forName: NSApplication.willTerminateNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            // queue: .main → already on the main actor; assume isolation to touch
-            // main-actor state without a hop (termination handlers must be sync).
+            // queue: nil → the block runs SYNCHRONOUSLY on the posting thread
+            // (willTerminate is posted on main), so the backend is actually killed
+            // before the app exits. queue: .main would enqueue it async and the
+            // process could exit first, leaving an orphan. assumeIsolated is valid
+            // since we're on the main thread here.
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.process?.terminate()
