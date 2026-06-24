@@ -47,6 +47,7 @@ final class Dictation: ObservableObject {
     private var manager: (any StreamingAsrManager)?
     private let audio = AVAudioEngine()
     private var pump: Task<Void, Never>?
+    private var loadTask: Task<Void, Never>?   // supersedable engine load (last wins)
     // Render-thread → actor handoff. nonisolated so the mic tap (any thread)
     // can enqueue without touching main-actor state.
     private nonisolated let pending = BufferQueue()
@@ -57,33 +58,75 @@ final class Dictation: ObservableObject {
     private var captureFormat: AVAudioFormat?
     private var finalASR: AsrManager?
     private var finalVersionLoaded: AsrModelVersion?
+    private var finalTask: Task<Void, Never>?   // tracked final-pass (v2/v3) warm-up
 
     var isListening: Bool { state == .listening }
 
+    /// Switch/load the dictation engine, superseding any in-flight load so the
+    /// LAST selection wins. Use this from the UI (picker, retry, download) rather
+    /// than spawning ad-hoc `Task { await loadModel(...) }`, which would race.
+    func requestLoad(_ choice: EngineChoice) {
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in await self?.loadModel(choice) }
+    }
+
+    /// Like `requestLoad` but awaits completion — for callers that must wait
+    /// (bootstrap warm-up, toggle's lazy load). Still tracked in `loadTask`, so a
+    /// model delete can cancel it.
+    func loadModelAwaiting(_ choice: EngineChoice) async {
+        loadTask?.cancel()
+        let task: Task<Void, Never> = Task { [weak self] in await self?.loadModel(choice) }
+        loadTask = task
+        await task.value
+    }
+
     /// Download (first time) + load the streaming model for the chosen engine.
-    /// Loaded once and reused — startListening only reset()s it.
-    func loadModel(_ choice: EngineChoice) async {
-        if case .loadingModel = state { return }
+    /// Loaded once and reused — startListening only reset()s it. Concurrent calls
+    /// for different engines are safe: `engineChoice` records the latest request,
+    /// and a load only commits if it still matches it (else it's stale, discarded).
+    /// Private: external callers use `requestLoad` (fire-and-forget) or
+    /// `loadModelAwaiting` (tracked + awaited) so every load lands in `loadTask`.
+    private func loadModel(_ choice: EngineChoice) async {
+        // Already loading this same engine — don't kick off a duplicate concurrent
+        // load (e.g. startListening fires while a load is mid-flight). A switch to a
+        // *different* engine still proceeds (engineChoice differs).
+        if state == .loadingModel, engineChoice == choice { return }
         if modelReady, engineChoice == choice, manager != nil { return }
-        state = .loadingModel
+        // Record the latest request up front so a superseding switch is detectable
+        // after each await; the picker also reflects the new selection immediately.
         engineChoice = choice
         Prefs.shared.dictationEngine = choice.rawValue
+        state = .loadingModel
         do {
             let mgr = choice.variant.createManager()
             try await mgr.loadModels()
+            // A newer switch superseded this load while it ran — discard it.
+            guard !Task.isCancelled, engineChoice == choice else { return }
             // The callback fires with the full running transcript on each new
             // token — drive the HUD straight from it.
             await mgr.setPartialTranscriptCallback { [weak self] text in
                 Task { @MainActor in self?.partial = text }
             }
+            // Re-check cancellation too: a model delete during the await above
+            // cancels this task, and without this guard the resumed task would
+            // re-install a manager for files that were just deleted.
+            guard !Task.isCancelled, engineChoice == choice else { return }
             manager = mgr
             modelReady = true
             state = .idle
             // Warm the high-accuracy final-pass model in the background so it's
-            // ready by the time you stop talking. Best-effort.
+            // ready by the time you stop talking. Best-effort, and tracked so a
+            // later engine switch or a model delete can cancel it.
             let fv = choice.finalVersion
-            Task { await self.loadFinalModel(fv) }
+            finalTask?.cancel()
+            finalTask = Task { [weak self] in await self?.loadFinalModel(fv) }
+        } catch is CancellationError {
+            return   // superseded by a newer switch — not a real failure
         } catch {
+            // A cancelled URLSession/load can surface as a non-CancellationError;
+            // ignore it too, and only surface a failure for the live selection so
+            // a stale load can't stamp a false error over the new engine's state.
+            guard !Task.isCancelled, engineChoice == choice else { return }
             modelReady = false
             state = .error("Model load failed: \(error.localizedDescription)")
         }
@@ -98,9 +141,9 @@ final class Dictation: ObservableObject {
             let models = try await AsrModels.downloadAndLoad(version: version)
             let mgr = AsrManager(config: .default)
             try await mgr.loadModels(models)
-            // The user may have switched engines while this loaded — don't
-            // install a now-stale model over the current selection.
-            guard engineChoice.finalVersion == version else { return }
+            // The user may have switched engines (or this task was cancelled by a
+            // delete) while it loaded — don't install a now-stale model.
+            guard !Task.isCancelled, engineChoice.finalVersion == version else { return }
             finalASR = mgr
             finalVersionLoaded = version
         } catch {
@@ -203,12 +246,21 @@ final class Dictation: ObservableObject {
 
     /// Remove the on-disk models and unload — next dictation re-downloads.
     func deleteModelsFromDisk() {
-        try? FileManager.default.removeItem(at: Self.modelsDirOnDisk)
+        // Cancel any in-flight loads first (streaming + final-pass), or one could
+        // finish and re-create the models right after we delete them.
+        loadTask?.cancel()
+        loadTask = nil
+        finalTask?.cancel()
+        finalTask = nil
         manager = nil
         finalASR = nil
         finalVersionLoaded = nil
         modelReady = false
         if case .error = state {} else { state = .idle }
+        // The models are hundreds of MB — remove them off the main thread so the
+        // UI doesn't freeze. In-memory refs are already released above.
+        let dir = Self.modelsDirOnDisk
+        Task.detached { try? FileManager.default.removeItem(at: dir) }
     }
 
     // MARK: - capture

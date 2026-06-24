@@ -1,16 +1,20 @@
 import SwiftUI
 
+/// The two halves of Parley: ears (dictation) first — used most often — then
+/// voice (text-to-speech). Persisted so the popover reopens where you left it.
+enum MenuTab: String { case ears, voice }
+
 struct MenuContent: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var prefs: Prefs
     @Environment(\.openSettings) private var openSettings
+    // @AppStorage binds directly to the RawRepresentable enum — no separate raw
+    // string + computed property needed.
+    @AppStorage("menuTab") private var tab = MenuTab.ears
 
     /// Open Settings and force it to the front, even when the app is an
     /// accessory (no dock icon) and the window is already buried behind others.
     private func showSettings() {
-        // Promote to a regular app so the Settings window can become key and
-        // accept keyboard input (accessory windows can't). SettingsView drops
-        // back to .accessory on close.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         openSettings()
@@ -31,10 +35,38 @@ struct MenuContent: View {
                 permissionBanner
             }
 
+            Picker("", selection: $tab) {
+                Label("Ears", systemImage: "waveform.badge.mic").tag(MenuTab.ears)
+                Label("Voice", systemImage: "speaker.wave.2.fill").tag(MenuTab.voice)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            Group {
+                if tab == .ears { EarsSection() } else { voiceSection }
+            }
+
             Divider()
 
-            sectionLabel("Voice", "speaker.wave.2.fill")
+            HStack {
+                Button { showSettings() } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button("Quit") { NSApp.terminate(nil) }
+            }
+            .font(.callout)
+        }
+        .padding(14)
+        .frame(width: 300)
+        .onAppear { state.refreshHD() }   // pick up newly added HD voices
+    }
 
+    // MARK: Voice (text-to-speech)
+
+    private var voiceSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 VoiceMenuButton(voices: state.combinedVoices, selectionId: state.currentVoiceId) {
                     state.selectVoice($0)
@@ -57,54 +89,36 @@ struct MenuContent: View {
 
             transport
 
-            Divider()
-
             HStack {
-                Text("Read shortcut")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("Read shortcut").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text(KeyName.describe(prefs.hotKey))
-                    .font(.caption.monospaced())
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+                ShortcutChip(combo: prefs.hotKey)
             }
 
             if !state.lastCleaned.isEmpty {
-                preview
-            }
-
-            Divider()
-
-            sectionLabel("Ears", "waveform.badge.mic")
-            DictationRow()
-
-            Divider()
-
-            HStack {
-                Button { showSettings() } label: {
-                    Label("Settings", systemImage: "gearshape")
+                LastResultCard(title: "Last read", text: state.lastCleaned) {
+                    if state.lastMethod != .none {
+                        Text("via \(state.lastMethod.rawValue)")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    CopyButton(text: state.lastCleaned)
+                    Button { state.exportWAV() } label: {
+                        Label("WAV", systemImage: "square.and.arrow.down").font(.caption2)
+                    }.buttonStyle(.borderless).help("Export spoken audio")
                 }
-                .buttonStyle(.plain)
-                Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
             }
-            .font(.callout)
         }
-        .padding(14)
-        .frame(width: 300)
-        .onAppear { state.refreshHD() }   // pick up newly added HD voices
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: state.status.symbol)
-                .font(.title3)
-                .foregroundStyle(statusColor)
-                .symbolEffect(.pulse, isActive: state.status == .reading)
+        HStack(spacing: 10) {
+            brandMark
             VStack(alignment: .leading, spacing: 1) {
                 Text("Parley").font(.headline)
                 Text(state.preparing ? state.preparingDetail : state.status.label)
                     .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer()
             if state.preparing {
@@ -114,6 +128,24 @@ struct MenuContent: View {
                     .help("Models not installed — open Settings ▸ Models")
             }
         }
+    }
+
+    /// App glyph in a tinted rounded badge — echoes the indigo gradient of the
+    /// app/menu-bar icon so the popover reads as the same product.
+    private var brandMark: some View {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(LinearGradient(
+                colors: [Color(red: 0.44, green: 0.49, blue: 1.0),
+                         Color(red: 0.29, green: 0.24, blue: 0.84)],
+                startPoint: .top, endPoint: .bottom))
+            .frame(width: 34, height: 34)
+            .overlay(
+                Image(systemName: state.status.symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .symbolEffect(.pulse, isActive: state.status == .reading)
+            )
+            .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
     }
 
     private var permissionBanner: some View {
@@ -155,78 +187,103 @@ struct MenuContent: View {
             .controlSize(.small)
         }
     }
-
-    private var preview: some View {
-        DisclosureGroup("Last read") {
-            ScrollView {
-                Text(state.lastCleaned)
-                    .font(.caption)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .frame(maxHeight: 80)
-            HStack {
-                Text(state.lastMethod == .none ? "" : "via \(state.lastMethod.rawValue)")
-                    .font(.caption2).foregroundStyle(.secondary)
-                Spacer()
-                Button("Copy") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(state.lastCleaned, forType: .string)
-                }.controlSize(.mini)
-                Button("Export WAV") { state.exportWAV() }.controlSize(.mini)
-            }
-        }
-        .font(.caption)
-    }
-
-    private var statusColor: Color {
-        switch state.status {
-        case .reading: return .accentColor
-        case .paused: return .orange
-        case .error: return .red
-        case .loadingModel: return .blue
-        default: return .secondary
-        }
-    }
-
-    /// Small header that separates the Voice (TTS) and Ears (dictation) halves.
-    private func sectionLabel(_ title: String, _ icon: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.caption2)
-            Text(title.uppercased()).font(.caption2.weight(.semibold)).tracking(0.5)
-            Spacer()
-        }
-        .foregroundStyle(.secondary)
-    }
-
 }
 
-/// Dictation ("ears") controls in the menu: toggle, live state, engine picker.
-struct DictationRow: View {
+// MARK: - Shared pieces
+
+/// Monospaced key-combo pill used wherever a shortcut is shown in the menu.
+struct ShortcutChip: View {
+    let combo: HotKeyCombo
+    var body: some View {
+        Text(KeyName.describe(combo))
+            .font(.caption.monospaced())
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+    }
+}
+
+/// One-click copy with a brief "Copied" checkmark — no menu, no expand.
+struct CopyButton: View {
+    let text: String
+    @State private var copied = false
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(.caption2)
+        }
+        .buttonStyle(.borderless)
+        .help("Copy to clipboard")
+    }
+}
+
+/// Compact card showing the most recent result with inline actions — replaces
+/// the old disclosure dropdown so copying is a single click.
+struct LastResultCard<Actions: View>: View {
+    let title: String
+    let text: String
+    @ViewBuilder var actions: () -> Actions
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(text)
+                .font(.caption).foregroundStyle(.secondary)
+                .lineLimit(2).truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            HStack(spacing: 10) {
+                Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                actions()
+            }
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// Section header (kept for any future use / accessibility labelling).
+func menuSectionLabel(_ title: String, _ icon: String) -> some View {
+    HStack(spacing: 5) {
+        Image(systemName: icon).font(.caption2)
+        Text(title.uppercased()).font(.caption2.weight(.semibold)).tracking(0.5)
+        Spacer()
+    }
+    .foregroundStyle(.secondary)
+}
+
+// MARK: - Ears (dictation)
+
+/// Dictation controls: toggle, live state, engine picker, one-click last result.
+/// @MainActor so its @ObservedObject main-actor singletons initialize cleanly
+/// under strict concurrency.
+@MainActor
+struct EarsSection: View {
     @ObservedObject private var controller = DictationController.shared
     @ObservedObject private var dictation = DictationController.shared.dictation
     @ObservedObject private var prefs = Prefs.shared
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Button { controller.toggle() } label: {
                     Label(buttonLabel, systemImage: buttonIcon)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
                 .help("Dictate — press, speak, press again to insert")
                 Spacer()
-                Text(KeyName.describe(prefs.dictationHotKey))
-                    .font(.caption.monospaced())
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+                ShortcutChip(combo: prefs.dictationHotKey)
             }
+
             HStack {
-                Text("Dictation engine").font(.caption).foregroundStyle(.secondary)
+                Text("Engine").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Picker("", selection: Binding(
                     get: { dictation.engineChoice },
-                    set: { choice in Task { await dictation.loadModel(choice) } }
+                    set: { choice in dictation.requestLoad(choice) }
                 )) {
                     ForEach(Dictation.EngineChoice.allCases) { c in
                         Text(c.label).tag(c)
@@ -238,33 +295,17 @@ struct DictationRow: View {
             }
 
             if !dictation.lastFinal.isEmpty {
-                lastDictation
+                LastResultCard(title: "Last dictation", text: dictation.lastFinal) {
+                    Spacer()
+                    CopyButton(text: dictation.lastFinal)
+                    Button { TextInsert.insertAtCursor(dictation.lastFinal) } label: {
+                        Label("Insert", systemImage: "text.cursor").font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Paste at the current cursor")
+                }
             }
         }
-    }
-
-    /// Quick retrieval of the most recent dictation — for when a paste landed in
-    /// the wrong place (or didn't). Copy it, or re-insert at the current cursor.
-    private var lastDictation: some View {
-        DisclosureGroup("Last dictation") {
-            ScrollView {
-                Text(dictation.lastFinal)
-                    .font(.caption)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .frame(maxHeight: 70)
-            HStack {
-                Spacer()
-                Button("Copy") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(dictation.lastFinal, forType: .string)
-                }.controlSize(.mini)
-                Button("Insert") { TextInsert.insertAtCursor(dictation.lastFinal) }
-                    .controlSize(.mini)
-            }
-        }
-        .font(.caption)
     }
 
     private var buttonLabel: String {

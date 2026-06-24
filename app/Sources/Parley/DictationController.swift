@@ -23,7 +23,7 @@ final class DictationController: ObservableObject {
         hotkey.register(Prefs.shared.dictationHotKey)
         // Warm the model at launch (cached → fast; first ever launch downloads in
         // the background) so the first dictation isn't a cold load.
-        Task { await dictation.loadModel(dictation.engineChoice) }
+        Task { await dictation.loadModelAwaiting(dictation.engineChoice) }
     }
 
     /// Re-register after the user changes the dictation shortcut in Settings.
@@ -33,7 +33,9 @@ final class DictationController: ObservableObject {
     /// the screen (FluidVoice does this). Uses built-in macOS sounds.
     private func playChime(start: Bool) {
         guard Prefs.shared.dictationChime else { return }
-        NSSound(named: start ? "Tink" : "Bottle")?.play()
+        // Start: a bright "Tink" to cue recording. Stop: a soft "Pop" on insert —
+        // unobtrusive, distinct from the start cue ("Bottle" was too heavy).
+        NSSound(named: start ? "Tink" : "Pop")?.play()
     }
 
     /// Push-to-talk toggle.
@@ -45,7 +47,7 @@ final class DictationController: ObservableObject {
             showHUD()
             playChime(start: true)   // immediate "now recording" feedback
             Task {
-                if !dictation.modelReady { await dictation.loadModel(dictation.engineChoice) }
+                if !dictation.modelReady { await dictation.loadModelAwaiting(dictation.engineChoice) }
                 guard dictation.modelReady else { return }   // load failed; HUD shows error
                 dictation.startListening()
             }
@@ -213,24 +215,35 @@ struct DictationHUD: View {
                 Color.clear.frame(height: 1).id("bottom")
             }
             .frame(height: min(max(textHeight, oneLine), maxTextHeight))
-            // When the transcript overflows, fade the top edge so the partially-
-            // scrolled line softens out instead of being chopped mid-letter.
+            // Only once the transcript actually overflows the box do we bottom-pin
+            // and fade the top edge (where text is genuinely cut). While it's still
+            // growing it fits and stays top-aligned — so no line is chopped AND no
+            // legible line gets dimmed by the gradient.
             .mask {
                 VStack(spacing: 0) {
-                    // Fade a full line-height so a partially-scrolled top line
-                    // disappears smoothly instead of showing a hard half-line.
                     LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
                         .frame(height: overflowing ? 30 : 0)
                     Color.black
                 }
             }
-            .onPreferenceChange(TextHeightKey.self) { textHeight = $0 }
+            .onPreferenceChange(TextHeightKey.self) { h in
+                // Snap (don't animate) the height: animating drove a native NSPanel
+                // resize every frame (heavy on the window server). The box grows a
+                // discrete line at a time and stays top-aligned while it fits, so
+                // there's no clip to smooth over anyway.
+                textHeight = h
+            }
             .onChange(of: dictation.partial) {
+                // Keep the latest words visible only when scrolling (overflow); while
+                // it still fits, top-alignment already shows everything.
+                guard overflowing else { return }
                 withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
     }
 
+    /// The transcript is taller than the box — it scrolls, so the cut top edge
+    /// needs the softening fade. Below this it fits and is shown in full.
     private var overflowing: Bool { textHeight > maxTextHeight + 1 }
 
     @ViewBuilder private var statusDot: some View {
