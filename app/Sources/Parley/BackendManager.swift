@@ -110,6 +110,11 @@ final class BackendManager: NSObject, ObservableObject {
             // Responsive but nothing installable (no Kokoro files, no HD) — don't
             // launch/spin waiting for a model that was deleted.
             if !h.files_present && !hdInstalledOnDisk { return }
+            // A live backend is holding the port but isn't ready. Don't spawn a
+            // second process onto the same port (it would fail to bind / crash):
+            //  • adopted orphan → we own it, so free the port, then relaunch fresh.
+            //  • not ours (e.g. a hand-started dev backend) → leave it; bail.
+            if adoptedPID != nil { await stopAndWait() } else { return }
         }
         await launchProcess()
         await waitForHealth()

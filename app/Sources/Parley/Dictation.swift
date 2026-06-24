@@ -228,6 +228,10 @@ final class Dictation: ObservableObject {
 
     /// Remove the on-disk models and unload — next dictation re-downloads.
     func deleteModelsFromDisk() {
+        // Cancel any in-flight load first, or it could finish and re-create the
+        // models right after we delete them (or stamp a stale state).
+        loadTask?.cancel()
+        loadTask = nil
         try? FileManager.default.removeItem(at: Self.modelsDirOnDisk)
         manager = nil
         finalASR = nil
