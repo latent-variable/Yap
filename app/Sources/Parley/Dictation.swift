@@ -58,6 +58,20 @@ final class Dictation: ObservableObject {
 
     var isListening: Bool { state == .listening }
 
+    /// Low-latency sliding-window layout for live dictation. Small chunk → an
+    /// update roughly every second; small right-context → first text in ~1.5s
+    /// instead of ~13s. Left context keeps accuracy. Total window
+    /// (left+chunk+right = 3.5s) stays well under the model's 15s max input.
+    /// Tune chunk/right down further if it should feel even snappier.
+    private static let lowLatencyConfig = SlidingWindowAsrConfig(
+        chunkSeconds: 1.0,
+        hypothesisChunkSeconds: 1.0,
+        leftContextSeconds: 2.0,
+        rightContextSeconds: 0.5,
+        minContextForConfirmation: 1.5,
+        confirmationThreshold: 0.80
+    )
+
     /// Download (first time) + cache the Parakeet weights for the chosen engine.
     func loadModel(_ choice: EngineChoice) async {
         if case .loadingModel = state { return }
@@ -84,12 +98,15 @@ final class Dictation: ObservableObject {
             Task { @MainActor in
                 guard granted else { self.state = .error("Microphone access denied"); return }
                 do {
-                    // Fresh single-use manager over the already-loaded weights.
-                    // `.streaming` config emits quick ~1s hypothesis updates for
-                    // immediate word-by-word feedback (the `.default` config only
-                    // confirms text every 11s — that felt sluggish). finish() still
-                    // returns the authoritative full transcript.
-                    let mgr = SlidingWindowAsrManager(config: .streaming)
+                    // Fresh single-use manager over the already-loaded weights,
+                    // with a LOW-LATENCY window so partials stream as you speak.
+                    // SlidingWindowAsrManager emits one update per `chunkSeconds`
+                    // and won't emit the first until `chunkSeconds + rightContext`
+                    // of audio exists — the stock 11+2 means ~13s before any text,
+                    // then every 11s. A ~1s chunk with minimal right-context lookahead
+                    // (left context preserves accuracy) makes words pop ~1s apart.
+                    // finish() still returns the authoritative full transcript.
+                    let mgr = SlidingWindowAsrManager(config: Self.lowLatencyConfig)
                     try await mgr.loadModels(models)
                     self.manager = mgr
                     self.partial = ""
