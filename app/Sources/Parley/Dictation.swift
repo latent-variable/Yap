@@ -85,7 +85,11 @@ final class Dictation: ObservableObject {
                 guard granted else { self.state = .error("Microphone access denied"); return }
                 do {
                     // Fresh single-use manager over the already-loaded weights.
-                    let mgr = SlidingWindowAsrManager()
+                    // `.streaming` config emits quick ~1s hypothesis updates for
+                    // immediate word-by-word feedback (the `.default` config only
+                    // confirms text every 11s — that felt sluggish). finish() still
+                    // returns the authoritative full transcript.
+                    let mgr = SlidingWindowAsrManager(config: .streaming)
                     try await mgr.loadModels(models)
                     self.manager = mgr
                     self.partial = ""

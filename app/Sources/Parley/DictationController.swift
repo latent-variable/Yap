@@ -65,7 +65,7 @@ final class DictationController: ObservableObject {
 
     private func showHUD() {
         if panel == nil {
-            let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 120),
+            let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 168),
                             styleMask: [.nonactivatingPanel, .borderless],
                             backing: .buffered, defer: false)
             p.level = .floating
@@ -127,8 +127,11 @@ struct DictationHUD: View {
             Text(transcriptText)
                 .font(.system(size: 15))
                 .foregroundStyle(dictation.partial.isEmpty ? .secondary : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(3)
+                .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
+                .lineLimit(4, reservesSpace: true)
+                // Head-truncate so the *latest* spoken words stay visible as the
+                // transcript grows — a live caption, not a frozen opening line.
+                .truncationMode(.head)
                 .animation(.easeOut(duration: 0.12), value: dictation.partial)
         }
         .padding(14)
