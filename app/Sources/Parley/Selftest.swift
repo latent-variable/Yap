@@ -48,6 +48,8 @@ enum Selftest {
         check("runs + caps", Fillers.clean("Well Ummm yeah UH okay"), contains: ["Well yeah okay"], absent: ["Ummm", "UH"])
         check("keep 'like'/'well'", Fillers.clean("I like it well enough"), contains: ["I like it well enough"])
         check("tidy punctuation", Fillers.clean("wait , um, now"), contains: ["wait, now"], absent: ["um"])
+        check("recapitalize after leading filler", Fillers.clean("Um, we should go"),
+              contains: ["We should go"], absent: ["we should go"])
 
         print("Clipboard — capture never permanently overwrites it")
         let pb = NSPasteboard.general

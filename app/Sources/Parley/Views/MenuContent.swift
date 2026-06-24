@@ -234,7 +234,7 @@ struct DictationRow: View {
                 }
                 .labelsHidden()
                 .frame(width: 150)
-                .disabled(dictation.state == .listening)
+                .disabled(dictation.state == .listening || dictation.state == .loadingModel)
             }
 
             if !dictation.lastFinal.isEmpty {

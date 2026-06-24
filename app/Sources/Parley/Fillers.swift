@@ -13,6 +13,7 @@ enum Fillers {
 
     static func clean(_ text: String) -> String {
         let range = NSRange(text.startIndex..., in: text)
+        let wasCapitalized = text.first?.isUppercase ?? false
         var out = pattern.stringByReplacingMatches(in: text, range: range, withTemplate: "")
         // Tidy up the gaps the removals leave behind.
         out = out.replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
@@ -21,6 +22,11 @@ enum Fillers {
         out = out.replacingOccurrences(of: #"([,;:])(\s*[,;:])+"#, with: "$1", options: .regularExpression)
         out = out.replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
         out = out.replacingOccurrences(of: #"^[\s,]+"#, with: "", options: .regularExpression)
-        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+        out = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Re-capitalize if removing a leading filler exposed a lowercase start.
+        if wasCapitalized, let first = out.first, first.isLowercase {
+            out = first.uppercased() + out.dropFirst()
+        }
+        return out
     }
 }

@@ -196,6 +196,9 @@ final class Dictation: ObservableObject {
 
     private func beginCapture(into manager: any StreamingAsrManager) throws {
         let input = audio.inputNode
+        // Clear any tap left behind by a previous failed start — installing a
+        // second tap on the same bus crashes.
+        input.removeTap(onBus: 0)
         let format = input.inputFormat(forBus: 0)
         captureFormat = format
         let queue = pending

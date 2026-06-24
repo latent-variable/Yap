@@ -13,7 +13,15 @@ enum TextInsert {
         guard !trimmed.isEmpty else { return false }
 
         let pb = NSPasteboard.general
-        let saved = pb.string(forType: .string)   // best-effort save (string only)
+        // Back up ALL pasteboard items (rich text, images, files) — not just the
+        // plain string — so we don't clobber non-text clipboard content.
+        let savedItems = pb.pasteboardItems?.map { item -> NSPasteboardItem in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) { copy.setData(data, forType: type) }
+            }
+            return copy
+        }
         pb.clearContents()
         pb.setString(trimmed, forType: .string)
 
@@ -26,8 +34,11 @@ enum TextInsert {
             // the old clipboard (or nothing) and the user has to retry. 0.6s is a
             // safe margin across slow/Electron targets.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                // Don't stomp on something the user copied during the delay —
+                // only restore if our text is still the current clipboard.
+                guard pb.string(forType: .string) == trimmed else { return }
                 pb.clearContents()
-                if let saved { pb.setString(saved, forType: .string) }
+                if let savedItems { pb.writeObjects(savedItems) }
             }
         }
         return true
