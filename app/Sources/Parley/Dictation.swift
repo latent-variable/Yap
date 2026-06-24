@@ -107,7 +107,10 @@ final class Dictation: ObservableObject {
             await mgr.setPartialTranscriptCallback { [weak self] text in
                 Task { @MainActor in self?.partial = text }
             }
-            guard engineChoice == choice else { return }
+            // Re-check cancellation too: a model delete during the await above
+            // cancels this task, and without this guard the resumed task would
+            // re-install a manager for files that were just deleted.
+            guard !Task.isCancelled, engineChoice == choice else { return }
             manager = mgr
             modelReady = true
             state = .idle
