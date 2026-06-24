@@ -25,6 +25,10 @@ final class Dictation: ObservableObject {
         var variant: StreamingModelVariant {
             self == .english ? .parakeetEou160ms : .nemotron560ms
         }
+        /// High-accuracy batch model for the final re-transcription on stop —
+        /// Parakeet TDT v2 (English) / v3 (multilingual). FluidVoice's two-model
+        /// design: fast streaming for the live feel, this for the inserted text.
+        var finalVersion: AsrModelVersion { self == .english ? .v2 : .v3 }
     }
 
     enum State: Equatable {
@@ -47,6 +51,13 @@ final class Dictation: ObservableObject {
     // can enqueue without touching main-actor state.
     private nonisolated let pending = BufferQueue()
 
+    // Full-utterance audio kept for the accurate final pass (Parakeet v2/v3
+    // batch over everything you said), plus the loaded batch model.
+    private nonisolated let recorder = BufferQueue()
+    private var captureFormat: AVAudioFormat?
+    private var finalASR: AsrManager?
+    private var finalVersionLoaded: AsrModelVersion?
+
     var isListening: Bool { state == .listening }
 
     /// Download (first time) + load the streaming model for the chosen engine.
@@ -68,9 +79,30 @@ final class Dictation: ObservableObject {
             manager = mgr
             modelReady = true
             state = .idle
+            // Warm the high-accuracy final-pass model in the background so it's
+            // ready by the time you stop talking. Best-effort.
+            let fv = choice.finalVersion
+            Task { await self.loadFinalModel(fv) }
         } catch {
             modelReady = false
             state = .error("Model load failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Load the batch Parakeet v2/v3 model used to re-transcribe the full
+    /// utterance accurately on stop. Best-effort — if it isn't ready, the live
+    /// streaming transcript is used as-is (no regression).
+    private func loadFinalModel(_ version: AsrModelVersion) async {
+        if finalVersionLoaded == version, finalASR != nil { return }
+        do {
+            let models = try await AsrModels.downloadAndLoad(version: version)
+            let mgr = AsrManager(config: .default)
+            try await mgr.loadModels(models)
+            finalASR = mgr
+            finalVersionLoaded = version
+        } catch {
+            finalASR = nil
+            finalVersionLoaded = nil
         }
     }
 
@@ -83,6 +115,7 @@ final class Dictation: ObservableObject {
                 do {
                     try await manager.reset()
                     self.partial = ""
+                    _ = self.recorder.drain()   // clear last session's audio
                     try self.beginCapture(into: manager)
                     self.state = .listening
                 } catch {
@@ -101,16 +134,34 @@ final class Dictation: ObservableObject {
         pump?.cancel(); pump = nil
         state = .transcribing
         do {
-            // Feed anything still queued, then finish.
+            // Feed anything still queued, then finish the live stream.
             for b in pending.drain() { try? await manager.appendAudio(b) }
             try? await manager.processBufferedAudio()
-            let text = try await manager.finish().trimmingCharacters(in: .whitespacesAndNewlines)
+            let liveText = try await manager.finish().trimmingCharacters(in: .whitespacesAndNewlines)
+            // Accurate final pass over the whole utterance; fall back to the live
+            // transcript if the batch model isn't ready or fails.
+            let accurate = await runFinalPass(recorder.drain())
+            let text = (accurate?.isEmpty == false) ? accurate! : liveText
             lastFinal = text
             partial = ""
             state = .idle
             return text.isEmpty ? nil : text
         } catch {
             state = .error("Transcription failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Re-transcribe the full utterance with the high-accuracy batch model.
+    /// Returns nil (→ caller keeps the live text) if the model isn't loaded, the
+    /// audio is empty, or anything throws.
+    private func runFinalPass(_ buffers: [AVAudioPCMBuffer]) async -> String? {
+        guard let finalASR, let combined = BufferQueue.concat(buffers) else { return nil }
+        do {
+            var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
+            let result = try await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
+            return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
             return nil
         }
     }
@@ -134,6 +185,8 @@ final class Dictation: ObservableObject {
     func deleteModelsFromDisk() {
         try? FileManager.default.removeItem(at: Self.modelsDirOnDisk)
         manager = nil
+        finalASR = nil
+        finalVersionLoaded = nil
         modelReady = false
         if case .error = state {} else { state = .idle }
     }
@@ -143,10 +196,14 @@ final class Dictation: ObservableObject {
     private func beginCapture(into manager: any StreamingAsrManager) throws {
         let input = audio.inputNode
         let format = input.inputFormat(forBus: 0)
+        captureFormat = format
         let queue = pending
+        let rec = recorder
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { buf, _ in
-            // Copy: the tap's buffer is only valid for this callback.
-            if let copy = BufferQueue.copy(buf) { queue.push(copy) }
+            // Copy once: the tap's buffer is only valid for this callback. The
+            // same copy feeds the live stream (drained continuously) and the
+            // recorder (kept whole for the final pass) — both read-only.
+            if let copy = BufferQueue.copy(buf) { queue.push(copy); rec.push(copy) }
         }
         audio.prepare()
         try audio.start()
@@ -174,6 +231,29 @@ private final class BufferQueue: @unchecked Sendable {
     func drain() -> [AVAudioPCMBuffer] {
         lock.lock(); let out = items; items.removeAll(keepingCapacity: true); lock.unlock()
         return out
+    }
+
+    /// Concatenate same-format buffers into one (for the batch final pass).
+    static func concat(_ bufs: [AVAudioPCMBuffer]) -> AVAudioPCMBuffer? {
+        guard let first = bufs.first else { return nil }
+        let format = first.format
+        let total = bufs.reduce(AVAudioFrameCount(0)) { $0 + $1.frameLength }
+        guard total > 0, let dst = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: total) else { return nil }
+        let channels = Int(format.channelCount)
+        var offset = 0
+        for b in bufs {
+            let n = Int(b.frameLength)
+            if let s = b.floatChannelData, let d = dst.floatChannelData {
+                for ch in 0..<channels { memcpy(d[ch] + offset, s[ch], n * MemoryLayout<Float>.size) }
+            } else if let s = b.int16ChannelData, let d = dst.int16ChannelData {
+                for ch in 0..<channels { memcpy(d[ch] + offset, s[ch], n * MemoryLayout<Int16>.size) }
+            } else {
+                return nil
+            }
+            offset += n
+        }
+        dst.frameLength = total
+        return dst
     }
 
     /// Deep-copy a tap buffer so it stays valid past the callback.

@@ -134,7 +134,7 @@ struct DictationHUD: View {
     // Transcript area grows line-by-line up to ~4 lines, then scrolls.
     @State private var textHeight: CGFloat = 24
     private let oneLine: CGFloat = 24
-    private let maxTextHeight: CGFloat = 104   // ~4 lines at 15pt
+    private let maxTextHeight: CGFloat = 72   // ~3 lines at 15pt, then it scrolls
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
