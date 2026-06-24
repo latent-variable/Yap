@@ -223,7 +223,9 @@ final class Dictation: ObservableObject {
                 let bufs = queue.drain()
                 for b in bufs { try? await manager.appendAudio(b) }
                 if !bufs.isEmpty { try? await manager.processBufferedAudio() }
-                try? await Task.sleep(nanoseconds: 100_000_000)
+                // do/catch (not try?) so cancellation breaks the loop immediately
+                // instead of running one more full iteration after cancel.
+                do { try await Task.sleep(nanoseconds: 100_000_000) } catch { break }
             }
         }
     }
