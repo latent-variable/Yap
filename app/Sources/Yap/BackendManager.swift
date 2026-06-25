@@ -149,9 +149,9 @@ final class BackendManager: NSObject, ObservableObject {
         if bundledPython != nil { await stripQuarantine() }
         let p = Process()
         var env = ProcessInfo.processInfo.environment
-        env["PARLEY_MODELS_DIR"] = modelsDir.path
-        env["PARLEY_PORT"] = String(port)
-        env["PARLEY_PROVIDER"] = Prefs.shared.providerMode
+        env["YAP_MODELS_DIR"] = modelsDir.path
+        env["YAP_PORT"] = String(port)
+        env["YAP_PROVIDER"] = Prefs.shared.providerMode
         // If the HD engine is installed, run in the combined env (numpy 1.26 +
         // torch + kokoro) so one process serves both engines. hd-packages must
         // be FIRST on PYTHONPATH so its numpy<2 imports before the bundled 2.x.

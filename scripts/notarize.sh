@@ -13,7 +13,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IDENTITY="${1:?pass the Developer ID Application identity}"
-PROFILE="${PARLEY_NOTARY_PROFILE:-yap-notary}"
+PROFILE="${YAP_NOTARY_PROFILE:-${PARLEY_NOTARY_PROFILE:-yap-notary}}"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$ROOT/app/Resources/Info.plist")"
 APP="$ROOT/dist/Yap.app"
 DMG="$ROOT/dist/Yap-$VERSION.dmg"

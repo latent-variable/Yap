@@ -41,7 +41,7 @@ def download(url: str, dest: Path) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    default = os.environ.get("PARLEY_MODELS_DIR") or str(
+    default = os.environ.get("YAP_MODELS_DIR") or os.environ.get("PARLEY_MODELS_DIR") or str(
         Path.home() / "Library/Application Support/Yap/models")
     p.add_argument("--models-dir", default=default)
     args = p.parse_args()

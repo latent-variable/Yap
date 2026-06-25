@@ -442,7 +442,7 @@ class SynthReq(BaseModel):
 
 # Reference voice clips for the Chatterbox (cloning) engine live here.
 def hd_voices_dir() -> Path:
-    d = Path(os.environ.get("PARLEY_HD_VOICES") or
+    d = Path(os.environ.get("YAP_HD_VOICES") or os.environ.get("PARLEY_HD_VOICES") or
              (Path.home() / "Library/Application Support/Yap/hd-voices"))
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -715,10 +715,10 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8766)
-    default_models = os.environ.get("PARLEY_MODELS_DIR") or str(
+    default_models = os.environ.get("YAP_MODELS_DIR") or os.environ.get("PARLEY_MODELS_DIR") or str(
         Path.home() / "Library/Application Support/Yap/models")
     p.add_argument("--models-dir", default=default_models)
-    p.add_argument("--provider", default=os.environ.get("PARLEY_PROVIDER", "auto"),
+    p.add_argument("--provider", default=os.environ.get("YAP_PROVIDER") or os.environ.get("PARLEY_PROVIDER", "auto"),
                    help="auto | cpu | coreml")
     p.add_argument("--no-preload", action="store_true")
     args = p.parse_args()

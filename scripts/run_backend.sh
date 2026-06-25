@@ -6,9 +6,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$HERE/backend"
 SUPPORT="$HOME/Library/Application Support/Yap"
-VENV="${PARLEY_VENV:-$SUPPORT/venv}"
-PORT="${PARLEY_PORT:-8766}"
-MODELS_DIR="${PARLEY_MODELS_DIR:-$SUPPORT/models}"
+VENV="${YAP_VENV:-${PARLEY_VENV:-$SUPPORT/venv}}"
+PORT="${YAP_PORT:-${PARLEY_PORT:-8766}}"
+MODELS_DIR="${YAP_MODELS_DIR:-${PARLEY_MODELS_DIR:-$SUPPORT/models}}"
 mkdir -p "$SUPPORT"
 
 if [ ! -x "$VENV/bin/python" ]; then
@@ -29,6 +29,6 @@ else
   source "$VENV/bin/activate"
 fi
 
-export PARLEY_MODELS_DIR="$MODELS_DIR"
+export YAP_MODELS_DIR="$MODELS_DIR"
 exec python "$BACKEND/server.py" --port "$PORT" --models-dir "$MODELS_DIR" \
-     --provider "${PARLEY_PROVIDER:-auto}" "$@"
+     --provider "${YAP_PROVIDER:-${PARLEY_PROVIDER:-auto}}" "$@"

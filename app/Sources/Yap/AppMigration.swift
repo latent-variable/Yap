@@ -49,7 +49,10 @@ enum AppMigration {
                 }
             }
         }
-        if let remaining = try? fm.contentsOfDirectory(atPath: old.path), remaining.isEmpty {
+        // Ignore a stray .DS_Store (Finder drops one in any viewed folder) so the
+        // now-empty old directory is actually removed instead of left orphaned.
+        if let remaining = try? fm.contentsOfDirectory(atPath: old.path),
+           remaining.allSatisfy({ $0 == ".DS_Store" }) {
             try? fm.removeItem(at: old)
         }
     }

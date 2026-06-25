@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
 done
 
 PLIST="$ROOT/app/Resources/Info.plist"
-TAP_DIR="${PARLEY_TAP_DIR:-$ROOT/../homebrew-tap}"
+TAP_DIR="${YAP_TAP_DIR:-${PARLEY_TAP_DIR:-$ROOT/../homebrew-tap}}"
 CASK="$TAP_DIR/Casks/yap.rb"
 TAG="v$VERSION"
 DMG="$ROOT/dist/Yap-$VERSION.dmg"
