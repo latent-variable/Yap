@@ -121,6 +121,9 @@ private struct EngineTab: View {
                     Toggle("Pre-load HD model at launch", isOn: $prefs.autoLoadHD)
                     Text("Loads the HD voice in the background when the app starts, so your first HD read plays right away instead of a ~10-second cold start.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Play a cue while HD audio buffers", isOn: $prefs.hdBufferChime)
+                    Text("HD audio takes a few seconds to start. A short ping confirms it's working before speech begins.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
