@@ -284,8 +284,8 @@ struct DictationHUD: View {
         let partial = dictation.partial
         if refined.isEmpty { return partial }
         if partial.isEmpty { return refined }
-        let r = refined.split(separator: " ", omittingEmptySubsequences: true)
-        let p = partial.split(separator: " ", omittingEmptySubsequences: true)
+        let r = refined.split(whereSeparator: { $0.isWhitespace })
+        let p = partial.split(whereSeparator: { $0.isWhitespace })
         guard p.count > r.count else { return refined }
         return refined + " " + p[r.count...].joined(separator: " ")
     }

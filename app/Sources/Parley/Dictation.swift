@@ -265,19 +265,27 @@ final class Dictation: ObservableObject {
             // the whole utterance any more — drop `refined` so the HUD falls back to
             // the live streaming `partial` for the tail instead of freezing on stale
             // text. (The final pass on stop is skipped past the cap too.)
-            if recorder.overflowed { if !refined.isEmpty { refined = "" }; continue }
+            // Overflow latches on for the rest of the session, so stop the loop
+            // (don't spin every 0.8s) — the HUD falls back to the live partial.
+            if recorder.overflowed { if !refined.isEmpty { refined = "" }; break }
             // Need the accurate model, matching the live engine. Otherwise leave the
             // streaming `partial` to drive the HUD.
             guard let finalASR, finalVersionLoaded == engineChoice.finalVersion else { continue }
-            let snap = recorder.snapshot()
+            // Cheap frame count on the main actor for the gates; the expensive
+            // snapshot + concat (a memcpy of the whole utterance) runs off-main so a
+            // long hold can't stutter the UI.
+            let frames = recorder.frameCount
             // Skip until there's roughly a sentence's worth, and only when new audio
             // has arrived since the last pass. No upper cap: passes run sequentially
             // (await each before the next), so a long hold just refreshes more slowly
             // — it never piles up or freezes.
-            let secs = Double(snap.frames) / (captureFormat?.sampleRate ?? 16_000)
-            guard secs >= 0.8, snap.frames > lastFrames else { continue }
-            lastFrames = snap.frames
-            guard let combined = BufferQueue.concat(snap.buffers) else { continue }
+            let secs = Double(frames) / (captureFormat?.sampleRate ?? 16_000)
+            guard secs >= 0.8, frames > lastFrames else { continue }
+            lastFrames = frames
+            let rec = recorder
+            guard let combined = await Task.detached(priority: .userInitiated, operation: {
+                BufferQueue.concat(rec.snapshot().buffers)
+            }).value else { continue }
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
             guard let result = try? await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
             else { continue }
@@ -386,6 +394,10 @@ private final class BufferQueue: @unchecked Sendable {
     }
 
     var overflowed: Bool { lock.lock(); defer { lock.unlock() }; return overflowedFlag }
+
+    /// Current frame count alone — cheap gate for the preview loop, so it can read
+    /// length on the main actor without copying the buffer array.
+    var frameCount: Int { lock.lock(); defer { lock.unlock() }; return frames }
 
     /// Copy the current buffers + frame count WITHOUT draining — for the rolling
     /// accurate preview, which re-reads the growing audio while capture keeps
