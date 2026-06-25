@@ -160,8 +160,10 @@ enum TranscriptStitch {
     static func merge(refined: String, partial: String) -> String {
         if refined.isEmpty { return partial }
         if partial.isEmpty { return refined }
-        let r = refined.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        let p = partial.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        // Keep these as Substrings (no per-word String allocation) — merge runs
+        // several times a second on the HUD's main thread.
+        let r = refined.split(whereSeparator: { $0.isWhitespace })
+        let p = partial.split(whereSeparator: { $0.isWhitespace })
         // Anchor on refined's last two words to find the seam inside partial.
         // Both anchors must be non-empty: a punctuation-only token (e.g. a stray
         // "." split off) normalizes to "" and would match anything — skip to the
@@ -187,7 +189,7 @@ enum TranscriptStitch {
     }
 
     /// Lowercase + strip surrounding punctuation so "World." anchors to "world".
-    private static func norm(_ w: String) -> String {
+    private static func norm(_ w: Substring) -> String {
         w.lowercased().trimmingCharacters(in: .punctuationCharacters)
     }
 }
