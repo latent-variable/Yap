@@ -229,11 +229,17 @@ struct LastResultCard<Actions: View>: View {
     @ViewBuilder var actions: () -> Actions
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(text)
-                .font(.caption).foregroundStyle(.secondary)
-                .lineLimit(2).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
+            // Bounded scroll, not lineLimit: with .textSelection enabled, selecting
+            // the text makes SwiftUI ignore lineLimit and expand to full height,
+            // which would cover the Settings/Quit buttons. A fixed max height clips
+            // it for good — long results scroll inside the card instead.
+            ScrollView(.vertical, showsIndicators: false) {
+                Text(text)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 56)
             HStack(spacing: 10) {
                 Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 actions()

@@ -8,7 +8,7 @@
 
 Stop typing. Start yapping. Two-way voice for your Mac and the AI agents you drive — fully local, no cloud, no account, no tracking.
 
-[▶︎ Listen to this README](docs/yap-readme.m4a) · [Install](#install) · [The loop](#the-loop) · [What it does](#what-it-does)
+[▶︎ Listen to this README](docs/yap-readme.mp4) (yes, Yap reads it to you) · [Install](#install) · [The loop](#the-loop) · [What it does](#what-it-does)
 
 </div>
 
