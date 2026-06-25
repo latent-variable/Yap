@@ -267,11 +267,27 @@ struct DictationHUD: View {
         }
     }
 
-    /// What the box shows: the accurate rolling preview once it's available, else
-    /// the instant streaming partial (covers the first ~1s before the first
-    /// accurate pass, and the case where the batch model isn't loaded yet).
+    /// What the box shows: accurate head + live tail. The precise rolling preview
+    /// (`refined`) covers everything up to ~1s ago; the fast streaming model
+    /// (`partial`) has the newest words instantly but lags in accuracy. So show
+    /// `refined` for the settled head and append only the streaming words BEYOND
+    /// what refined has reached — those stream in real time, then get absorbed and
+    /// corrected on the next refine pass. Best of both: instant newest words, a
+    /// stable self-correcting body.
+    ///
+    /// Stitch by word count: both are full running transcripts, so when the
+    /// streaming model has more words than refined, the extra trailing words are
+    /// the not-yet-refined tail. (When it has fewer — the lossy model dropped a
+    /// word — just trust refined.)
     private var displayText: String {
-        dictation.refined.isEmpty ? dictation.partial : dictation.refined
+        let refined = dictation.refined
+        let partial = dictation.partial
+        if refined.isEmpty { return partial }
+        if partial.isEmpty { return refined }
+        let r = refined.split(separator: " ", omittingEmptySubsequences: true)
+        let p = partial.split(separator: " ", omittingEmptySubsequences: true)
+        guard p.count > r.count else { return refined }
+        return refined + " " + p[r.count...].joined(separator: " ")
     }
 
     private var transcriptText: String {
