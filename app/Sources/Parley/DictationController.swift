@@ -165,10 +165,11 @@ struct DictationHUD: View {
         self.dictation = controller.dictation
     }
 
-    // Transcript area grows line-by-line up to ~4 lines, then scrolls.
-    @State private var textHeight: CGFloat = 24
-    private let oneLine: CGFloat = 24
-    private let maxTextHeight: CGFloat = 72   // ~3 lines at 15pt, then it scrolls
+    // Transcript area grows line-by-line, then scrolls. Smaller 13pt text fits
+    // more context on screen, so the cap holds ~5 lines before scrolling.
+    @State private var textHeight: CGFloat = 20
+    private let oneLine: CGFloat = 20
+    private let maxTextHeight: CGFloat = 100   // ~5 lines at 13pt, then it scrolls
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -206,7 +207,7 @@ struct DictationHUD: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 Text(transcriptText)
-                    .font(.system(size: 15))
+                    .font(.system(size: 13))
                     .foregroundStyle(displayText.isEmpty ? .secondary : .primary)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .background(GeometryReader { g in

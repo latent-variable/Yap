@@ -261,17 +261,21 @@ final class Dictation: ObservableObject {
         while !Task.isCancelled {
             do { try await Task.sleep(nanoseconds: 800_000_000) } catch { break }
             guard state == .listening else { break }
-            // Need the accurate model, matching the live engine, and audio under the
-            // memory cap. Otherwise leave the streaming `partial` to drive the HUD.
-            guard let finalASR, finalVersionLoaded == engineChoice.finalVersion,
-                  !recorder.overflowed else { continue }
+            // Past the 180s recorder cap (a very long hold) we can't re-transcribe
+            // the whole utterance any more — drop `refined` so the HUD falls back to
+            // the live streaming `partial` for the tail instead of freezing on stale
+            // text. (The final pass on stop is skipped past the cap too.)
+            if recorder.overflowed { if !refined.isEmpty { refined = "" }; continue }
+            // Need the accurate model, matching the live engine. Otherwise leave the
+            // streaming `partial` to drive the HUD.
+            guard let finalASR, finalVersionLoaded == engineChoice.finalVersion else { continue }
             let snap = recorder.snapshot()
-            let sr = captureFormat?.sampleRate ?? 16_000
-            let secs = Double(snap.frames) / sr
-            // Skip until there's a sentence's worth, and stop refreshing past 45s so
-            // a long hold can't make each O(n) decode dominate. The final pass on
-            // stop still covers the whole utterance (up to the 180s recorder cap).
-            guard secs >= 0.8, secs <= 45, snap.frames > lastFrames else { continue }
+            // Skip until there's roughly a sentence's worth, and only when new audio
+            // has arrived since the last pass. No upper cap: passes run sequentially
+            // (await each before the next), so a long hold just refreshes more slowly
+            // — it never piles up or freezes.
+            let secs = Double(snap.frames) / (captureFormat?.sampleRate ?? 16_000)
+            guard secs >= 0.8, snap.frames > lastFrames else { continue }
             lastFrames = snap.frames
             guard let combined = BufferQueue.concat(snap.buffers) else { continue }
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
