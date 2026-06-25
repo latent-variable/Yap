@@ -38,6 +38,12 @@ should NOT be flagged.
   the callback is documented to be delivered on the main thread (NSWorkspace app
   activation, willTerminate). Not an unchecked assumption.
 
+- **System sounds via `NSSound(named: "Ping")` string literals.** `NSSound.Name`
+  is a typealias for `String`; AppKit defines **no** sound-name constants (there
+  is no `NSSound.Name.ping`/`.tink`/`.pop` — `NSSound(named: .ping)` does not
+  type-check). The string literal naming a file in `/System/Library/Sounds` is
+  the correct, only API. Matches the dictation chimes (`"Tink"`/`"Pop"`).
+
 - **Audio concat in `Dictation.refineLoop` is already off the main actor.** The
   loop is `@MainActor`, but it reads only a cheap `recorder.frameCount` on main
   for its gates; the heavy `BufferQueue.concat` (and the `snapshot()`) run inside
