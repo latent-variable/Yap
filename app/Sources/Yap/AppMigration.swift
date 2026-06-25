@@ -54,7 +54,11 @@ enum AppMigration {
         var srcIsDir: ObjCBool = false
         guard fm.fileExists(atPath: src.path, isDirectory: &srcIsDir) else { return }
         if !fm.fileExists(atPath: dst.path) {
-            try? fm.moveItem(at: src, to: dst)   // fast path: nothing to merge into
+            // Fast path: nothing to merge into. Log (to stderr, not the file logger,
+            // to avoid re-creating the dir we're migrating) so a failure is
+            // diagnosable instead of silently swallowed — the source is left intact.
+            do { try fm.moveItem(at: src, to: dst) }
+            catch { FileHandle.standardError.write(Data("Yap migration: move \(src.lastPathComponent) failed: \(error)\n".utf8)) }
             return
         }
         guard srcIsDir.boolValue else { return }  // a file already exists at dst — keep it

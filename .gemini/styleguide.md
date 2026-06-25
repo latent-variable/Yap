@@ -49,3 +49,10 @@ should NOT be flagged.
   for its gates; the heavy `BufferQueue.concat` (and the `snapshot()`) run inside
   `await Task.detached(priority: .userInitiated) { ... }`. Don't flag the concat
   as a main-thread block — it isn't on main.
+
+- **`AppMigration.merge`'s `!fm.fileExists(atPath: dst.path)` is a fast-path, not
+  a shallow skip.** When the destination is absent the whole subtree moves in one
+  step; when it *exists* the code recurses and merges child-by-child, so a
+  pre-existing empty `Yap/hd-voices`/`models` can't strand the user's voices.
+  Don't flag it as silent data loss — the no-loss path is unit-tested in
+  `--selftest`.

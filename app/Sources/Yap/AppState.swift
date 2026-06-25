@@ -86,9 +86,11 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
-        // Migration already ran at the top of Prefs.init (a stored property above),
-        // which is created before this body — so app-support + defaults are ported
-        // before backend.modelsDir touches a path here.
+        // Port pre-rename state before backend.modelsDir (below) creates a fresh
+        // Yap directory. runOnce() is idempotent, so calling it here too — rather
+        // than relying on Prefs being initialized first by declaration order — keeps
+        // correctness independent of stored-property ordering.
+        AppMigration.runOnce()
         downloader = ModelDownloader(modelsDir: backend.modelsDir)
         hotkey.onFire = { [weak self] in self?.triggerRead() }
         audio.onFinished = { [weak self] in self?.finishIfDone() }
