@@ -163,16 +163,21 @@ enum TranscriptStitch {
         let r = refined.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         let p = partial.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         // Anchor on refined's last two words to find the seam inside partial.
+        // Both anchors must be non-empty: a punctuation-only token (e.g. a stray
+        // "." split off) normalizes to "" and would match anything — skip to the
+        // count fallback instead of mis-anchoring.
         if r.count >= 2, p.count >= 2 {
             let a1 = norm(r[r.count - 2]), a2 = norm(r[r.count - 1])
-            var i = p.count - 2
-            while i >= 0 {
-                if norm(p[i]) == a1, norm(p[i + 1]) == a2 {
-                    let tail = i + 2
-                    guard tail < p.count else { return refined }  // nothing new past the anchor
-                    return refined + " " + p[tail...].joined(separator: " ")
+            if !a1.isEmpty, !a2.isEmpty {
+                var i = p.count - 2
+                while i >= 0 {
+                    if norm(p[i]) == a1, norm(p[i + 1]) == a2 {
+                        let tail = i + 2
+                        guard tail < p.count else { return refined }  // nothing new past the anchor
+                        return refined + " " + p[tail...].joined(separator: " ")
+                    }
+                    i -= 1
                 }
-                i -= 1
             }
         }
         // No anchor: append partial's words beyond refined's length (or trust

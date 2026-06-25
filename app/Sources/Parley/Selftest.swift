@@ -100,6 +100,11 @@ enum Selftest {
         checkEq("count fallback when no anchor",
                 TranscriptStitch.merge(refined: "alpha", partial: "alpha beta gamma"),
                 "alpha beta gamma")
+        // Trailing punctuation-only token (empty anchor) must not mis-anchor —
+        // falls back to count and still appends the new tail word.
+        checkEq("punctuation-only anchor falls back to count",
+                TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
+                "one two . three")
 
         print("Clipboard — capture never permanently overwrites it")
         let pb = NSPasteboard.general

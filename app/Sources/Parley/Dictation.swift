@@ -197,9 +197,12 @@ final class Dictation: ObservableObject {
         pump?.cancel()
         await pump?.value
         pump = nil
-        // Stop the accurate-preview loop. No await: its state guard (== .listening)
-        // already blocks a late write, and we want stop to stay snappy.
+        // Stop the accurate-preview loop and WAIT for it. A refine pass may have a
+        // transcribe in-flight on the shared `finalASR`, and the final pass below
+        // uses that same instance — awaiting serializes them so they never hit the
+        // ASR engine concurrently (AsrManager isn't documented thread-safe).
         refineTask?.cancel()
+        await refineTask?.value
         refineTask = nil
         state = .transcribing
         do {
@@ -283,9 +286,13 @@ final class Dictation: ObservableObject {
             guard secs >= 0.8, frames > lastFrames else { continue }
             lastFrames = frames
             let rec = recorder
-            guard let combined = await Task.detached(priority: .userInitiated, operation: {
-                BufferQueue.concat(rec.snapshot().buffers)
-            }).value else { continue }
+            // The result is a freshly-allocated, unshared buffer; wrap it so the
+            // unchecked-Sendable assertion stays contained to this handoff instead
+            // of retroactively conforming the framework type.
+            let box = await Task.detached(priority: .userInitiated) {
+                BufferQueue.concat(rec.snapshot().buffers).map(SendableBufferBox.init)
+            }.value
+            guard let combined = box?.buffer else { continue }
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
             guard let result = try? await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
             else { continue }
@@ -372,6 +379,11 @@ final class Dictation: ObservableObject {
         }
     }
 }
+
+/// Wraps a freshly-allocated, unshared `AVAudioPCMBuffer` so it can be returned
+/// from a detached task to the main actor without retroactively conforming the
+/// non-Sendable framework type. The buffer is read-only after creation.
+private struct SendableBufferBox: @unchecked Sendable { let buffer: AVAudioPCMBuffer }
 
 /// Thread-safe FIFO handoff of mic buffers from the render thread to the ASR
 /// pump task.
