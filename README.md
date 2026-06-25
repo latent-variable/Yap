@@ -2,6 +2,8 @@
 
 **Voice and ears for your Mac — fully local.** Two-way speech in one menu-bar app: highlight text anywhere and **hear it** in a high-quality [Kokoro](https://github.com/hexgrad/kokoro) voice, or press a shortcut and **speak it** — local [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) dictation types straight into whatever app you're in. No cloud, no account, no tracking. (Think [Fluid Voice](https://github.com/altic-dev/FluidVoice) for dictation **and** its text-to-speech counterpart, unified.)
 
+> *Still typing on a keyboard and reading walls of text with your eyes?* That's the bottleneck; you think faster than both. The keyboard is a straw you push thoughts through, and reading is a straw you pull them back out of. Parley widens both: **talk to your Mac and the AI agents you work with, and listen to them talk back.** Until something genuinely reads your mind, this is the shortcut.
+
 ![Parley — menu-bar controls and settings](docs/screenshot.png)
 
 The app **bundles its own Python** — nothing else to install. Pick whichever install suits you:
@@ -25,6 +27,34 @@ cd Parley && bash scripts/build_app.sh && open dist/Parley.app
 First launch downloads the Kokoro model (~340 MB) automatically. Grant Accessibility when prompted (or use Clipboard mode — no permission needed), then select text in any app and press **⌘⇧R** to hear it. To dictate, press **⌘⇧D**, speak, press again — the text types where your cursor is.
 
 > **Why the extra step for ② / why "damaged"?** Apple's Gatekeeper blocks un-notarized downloads. Notarization needs a paid Apple Developer account, which this project doesn't use. Homebrew (①) handles it cleanly; building (③) sidesteps it entirely. Everything is local and the [source is all here](app/Sources/Parley).
+
+## The loop: stop typing, stop reading
+
+Reading text aloud is nice. The real unlock is closing the loop with an **AI coding agent** (Claude Code, Cursor, Codex, whatever you drive). You stop touching the two slowest parts of the workflow — your keyboard and your eyes:
+
+1. **You → agent (ears).** Press **⌘⇧D**, ramble your prompt, press again. Parakeet types it into the agent. No keyboard.
+2. **Agent → you (voice).** The agent answers, highlight it, press **⌘⇧R**, and Parley reads it back. No eyes.
+
+Talk, listen, repeat. You can pace a whole session hands-off, eyes-off — pair-programming with something that briefs you out loud while you stare out the window.
+
+### Make your agent talk back: the clonable "Speak to me" rule
+
+Agent output is full of code, tables, and symbols that sound awful read aloud. The fix is one instruction: tell your agent to **end every reply with a short spoken-style section.** Drop this into your agent's instructions (`AGENTS.md` / `CLAUDE.md` / system prompt) and you're done:
+
+```md
+## 🔊 Speak to me
+End substantive replies with a `## 🔊 Speak to me` section: a few plain,
+conversational sentences narrating what you did, what it means, and what's next —
+written to be *heard*, not skimmed. No markdown, code, tables, links, or symbols
+inside it (a text-to-speech tool reads "asterisk" and "backtick" out loud). Spell
+numbers, flags, and filenames out in words. Skip it for trivial one-liners.
+```
+
+Now highlight that block, hit **⌘⇧R**, and your agent literally briefs you. Here it is in the wild — the spoken half of an actual Parley session:
+
+![A "Speak to me" section an agent wrote, ready to read aloud](docs/speak-to-me.png)
+
+That's the whole point: you spoke the request, the agent did the work, and now it tells you out loud. The interface gets out of the way.
 
 ## What it does
 

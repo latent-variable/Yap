@@ -1,20 +1,25 @@
 # Agent guide: Parley
 
-For any agent (build, fix, review, extend) working on this repo. Parley is a
-local-first macOS text-to-speech utility: highlight text anywhere, press a
-hotkey, hear it in a local Kokoro voice. No cloud, no account, no telemetry.
+For any agent (build, fix, review, extend) working on this repo. Parley gives a
+Mac (and the AI agents you work with) **voice and ears**, fully local. Voice:
+highlight text anywhere, press a hotkey, hear it in a local Kokoro or Chatterbox
+HD voice. Ears: press a shortcut, speak, and local Parakeet STT types the text
+at your cursor in any app. No cloud, no account, no telemetry.
 
 ## What it is, and where the source lives
 
 Two processes. Neither works without the other.
 
 - **`app/`** — native SwiftUI menu-bar app (SwiftPM executable, not an Xcode
-  project). Owns hotkey, text capture, cleanup, audio, settings, UI. Entry
-  point `Sources/Parley/ParleyApp.swift`; central state + read pipeline in
-  `AppState.swift`. Module map: `docs/ARCHITECTURE.md`.
+  project). Owns hotkey, text capture, cleanup, audio (voice), **dictation
+  (ears)**, settings, UI. Entry point `Sources/Parley/ParleyApp.swift`; central
+  state + read pipeline in `AppState.swift`; dictation in `Dictation.swift` +
+  `DictationController.swift`. Module map: `docs/ARCHITECTURE.md`.
 - **`backend/server.py`** — local FastAPI sidecar wrapping `kokoro-onnx`.
   Endpoints `/health`, `/voices`, `/synthesize`. Loads Kokoro once, keeps it
-  warm. This is the only thing that touches the model.
+  warm. **Voice only** — the ears (STT) run fully in-app on the Apple Neural
+  Engine via FluidAudio/Parakeet, no sidecar, no network. This sidecar is the
+  only thing that touches the TTS model.
 
 **The contract between them is not a schema — it lives in the code.** Two
 pieces an agent must keep in sync if touching either side:
@@ -69,6 +74,37 @@ Key facts an agent must keep straight:
 - @Published writes from the audio-stream callback **must** hop to the main actor
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.
+
+## Ears (dictation — STT, in-app, no backend)
+
+Push-to-talk dictation lives entirely in the app, off the ANE via
+[FluidAudio](https://github.com/FluidInference/FluidAudio) — `server.py` is not
+involved. `Dictation.swift` owns the mic + models; `DictationController.swift`
+owns the hotkey, the floating HUD, and paste-at-cursor.
+
+Two-model design (mirrors FluidVoice), an agent must keep these straight:
+
+- **Streaming model** (Parakeet EOU Flash English / Nemotron multilingual) drives
+  the *instant* live transcript — low latency, but lossy (cuts/misses words).
+- **Accurate batch model** (Parakeet TDT v2 English / v3 multilingual) does the
+  authoritative final pass on stop, and also powers a **rolling preview**:
+  `refineLoop` re-transcribes everything-so-far ~1/sec while you talk, published
+  as `Dictation.refined`. Sequential passes self-throttle (no pile-up); past the
+  180s recorder cap it falls back to the live partial. The concat runs off the
+  main actor (`Task.detached`, result wrapped in `SendableBufferBox`); only a
+  cheap `frameCount` is read on main.
+- **HUD display** = `TranscriptStitch.merge(refined:partial:)`: accurate head +
+  live streaming tail, anchored on refined's last two words so the two models'
+  differing tokenization doesn't dup/drop at the seam. Pure + unit-tested in
+  `--selftest`.
+- **Stop serializes the ASR engine:** `stopAndTranscribe` awaits `refineTask`
+  before the final pass — both use the same `finalASR` (`AsrManager`), which
+  isn't thread-safe.
+
+Gotchas: `@Published` writes from the streaming callback / refine loop must hop
+to the main actor. Models download on first dictation into the FluidAudio cache
+(`~/Library/Application Support/FluidAudio/Models`), managed from Settings ▸
+Models like the TTS engines. Dictation needs Microphone permission.
 
 ## Packaging / deployment
 
