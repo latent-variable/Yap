@@ -8,9 +8,11 @@
 
 Stop typing. Start yapping. Two-way voice for your Mac and the AI agents you drive — fully local, no cloud, no account, no tracking.
 
-https://github.com/latent-variable/Yap/releases/download/v0.5.0/yap-readme.mp4
 
-<sub>▶︎ Yap reads this README to you. Player not showing? <a href="https://github.com/latent-variable/Yap/releases/download/v0.5.0/yap-readme.mp4">Open the clip</a>.</sub>
+https://github.com/user-attachments/assets/e4678e5c-a237-4b9b-ba4e-d12af09b62b2
+
+
+
 
 [Install](#install) · [The loop](#the-loop) · [What it does](#what-it-does)
 
