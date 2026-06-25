@@ -62,6 +62,12 @@ enum AppMigration {
             return
         }
         guard srcIsDir.boolValue else { return }  // a file already exists at dst — keep it
+        // dst exists; only merge a directory into a directory. If dst is a file
+        // (a type mismatch that never occurs with matching Parley/Yap layouts),
+        // leave src intact rather than trying to recurse children under a file.
+        var dstIsDir: ObjCBool = false
+        fm.fileExists(atPath: dst.path, isDirectory: &dstIsDir)
+        guard dstIsDir.boolValue else { return }
         for kid in (try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: nil)) ?? [] {
             merge(kid, into: dst.appending(path: kid.lastPathComponent), fm: fm)
         }
