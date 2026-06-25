@@ -89,6 +89,9 @@ final class Prefs: ObservableObject {
     // wait. Only acts when the HD engine is installed (so it's a no-op — "off" —
     // for the default Kokoro-only setup).
     @Published var autoLoadHD: Bool { didSet { d.set(autoLoadHD, forKey: "autoLoadHD") } }
+    // Play a short cue when an HD (Chatterbox) read starts buffering — its first
+    // audio lags a few seconds, so this gives immediate "it's working" feedback.
+    @Published var hdBufferChime: Bool { didSet { d.set(hdBufferChime, forKey: "hdBufferChime") } }
     @Published var providerMode: String { didSet { d.set(providerMode, forKey: "providerMode") } }  // auto|cpu|coreml
     @Published var showMiniPlayer: Bool { didSet { d.set(showMiniPlayer, forKey: "showMiniPlayer") } }
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin") } }
@@ -113,6 +116,7 @@ final class Prefs: ObservableObject {
         stopOnNewTrigger = d.object(forKey: "stopOnNewTrigger") as? Bool ?? true
         keepWarm = d.object(forKey: "keepWarm") as? Bool ?? true
         autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
+        hdBufferChime = d.object(forKey: "hdBufferChime") as? Bool ?? true
         providerMode = d.string(forKey: "providerMode") ?? "auto"
         dictationEngine = d.string(forKey: "dictationEngine") ?? "english"
         dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true

@@ -271,6 +271,7 @@ final class AppState: ObservableObject {
         preparingDetail = prepDetail()
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
                     cushionSeconds: prefs.engine == "chatterbox" ? 0.8 : 0.35)
+        playBufferCue()   // immediate cue: HD first audio is a few seconds out
         do {
             // Speed is applied at playback (real-time, both engines), so the
             // backend synthesizes at 1.0 and pauses stretch along with it.
@@ -323,6 +324,15 @@ final class AppState: ObservableObject {
         Preprocess.clean(raw, options: Preprocess.options(for: prefs.profile), custom: prefs.customRules)
     }
 
+    /// Audible "working on it" cue for the premium HD engine, whose first audio
+    /// lags a few seconds. Played the moment an HD synth starts buffering so you
+    /// get immediate feedback before speech begins — mirrors the dictation chimes.
+    /// No-op for Kokoro (near-instant) or when the user turns it off.
+    private func playBufferCue() {
+        guard prefs.engine == "chatterbox", prefs.hdBufferChime else { return }
+        NSSound(named: "Ping")?.play()
+    }
+
     /// What to show while waiting for first audio — flags the slow HD cold-load.
     private func prepDetail() -> String {
         if prefs.engine == "chatterbox" {
@@ -357,6 +367,7 @@ final class AppState: ObservableObject {
             preparingDetail = prepDetail()
             audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
                         cushionSeconds: prefs.engine == "chatterbox" ? 0.8 : 0.35)
+            playBufferCue()   // same HD buffering cue on the voice preview
             let sample = prefs.engine == "chatterbox"
                 ? "This is a preview of the selected high definition voice."
                 : Self.sampleText(for: prefs.voice)
