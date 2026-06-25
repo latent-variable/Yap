@@ -1,18 +1,13 @@
 <div align="center">
 
-<img src="docs/yap-hero.png" alt="YAP — talk to AI, faster. It talks back." width="760">
+
+https://github.com/user-attachments/assets/e4678e5c-a237-4b9b-ba4e-d12af09b62b2
 
 # Yap
 
 **talk to AI. faster. it talks back. both of you yap.**
 
 Stop typing. Start yapping. Two-way voice for your Mac and the AI agents you drive — fully local, no cloud, no account, no tracking.
-
-
-https://github.com/user-attachments/assets/e4678e5c-a237-4b9b-ba4e-d12af09b62b2
-
-
-
 
 [Install](#install) · [The loop](#the-loop) · [What it does](#what-it-does)
 
