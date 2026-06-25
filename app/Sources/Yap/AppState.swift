@@ -86,6 +86,9 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
+        // Migration already ran at the top of Prefs.init (a stored property above),
+        // which is created before this body — so app-support + defaults are ported
+        // before backend.modelsDir touches a path here.
         downloader = ModelDownloader(modelsDir: backend.modelsDir)
         hotkey.onFire = { [weak self] in self?.triggerRead() }
         audio.onFinished = { [weak self] in self?.finishIfDone() }
@@ -389,7 +392,7 @@ final class AppState: ObservableObject {
 
     var hdVoicesDir: URL {
         let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Parley/hd-voices")
+            .appending(path: "Yap/hd-voices")
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }
@@ -534,7 +537,7 @@ final class AppState: ObservableObject {
         // the main actor from the temp copy, which needs no scope.
         let scoped = src.startAccessingSecurityScopedResource()
         let tmp = FileManager.default.temporaryDirectory
-            .appending(path: "parley-import-\(UUID().uuidString).bin")
+            .appending(path: "yap-import-\(UUID().uuidString).bin")
         do {
             try FileManager.default.copyItem(at: src, to: tmp)
         } catch {
@@ -580,7 +583,7 @@ final class AppState: ObservableObject {
                 status = .error("Export failed"); return
             }
             let panel = NSSavePanel()
-            panel.nameFieldStringValue = "parley.wav"
+            panel.nameFieldStringValue = "yap.wav"
             panel.allowedContentTypes = [.wav]
             if panel.runModal() == .OK, let url = panel.url {
                 try? data.write(to: url)

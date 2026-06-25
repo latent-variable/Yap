@@ -1,5 +1,5 @@
 # Optional "HD" engine (Chatterbox Turbo). Heavy (~2-3 GB with torch). NOT in the
-# default install — fetched on demand into ~/Library/Application Support/Parley/
+# default install — fetched on demand into ~/Library/Application Support/Yap/
 # hd-packages when the user enables HD mode. Kept separate so the default Kokoro
 # app stays light.
 numpy>=1.26,<2        # chatterbox deps pin <2; kokoro-onnx runs fine on it too

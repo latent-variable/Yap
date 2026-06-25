@@ -17,14 +17,14 @@ from typing import Optional
 
 import numpy as np
 
-log = logging.getLogger("parley")
+log = logging.getLogger("yap")
 
 SAMPLE_RATE = 24000  # matches Kokoro / the PCM contract
 
 # Where on-demand HD deps (torch, chatterbox-tts, ...) get installed.
 def hd_packages_dir() -> Path:
     d = Path(os.environ.get("PARLEY_HD_DIR") or
-             (Path.home() / "Library/Application Support/Parley/hd-packages"))
+             (Path.home() / "Library/Application Support/Yap/hd-packages"))
     return d
 
 
@@ -138,7 +138,7 @@ class ChatterboxTurboEngine:
         clip so the user's first real request is fast (~RTF 0.7)."""
         try:
             hd_voices = os.environ.get("PARLEY_HD_VOICES") or (
-                Path.home() / "Library/Application Support/Parley/hd-voices")
+                Path.home() / "Library/Application Support/Yap/hd-voices")
             refs = sorted(Path(hd_voices).glob("*.wav"))
             if not refs or self.model is None:
                 return

@@ -17,7 +17,7 @@ final class AudioPlayer {
     // node call, so a completion delivered during reset() can't deadlock). The
     // AVAudioEngine itself (start/isRunning) is engine-level, not node-level, and
     // stays on the calling thread.
-    private let q = DispatchQueue(label: "com.parley.audioplayer")
+    private let q = DispatchQueue(label: "com.yap.audioplayer")
 
     private var leftoverByte: UInt8?
     private var scheduledFrames: AVAudioFrameCount = 0

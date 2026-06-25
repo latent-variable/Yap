@@ -1,4 +1,4 @@
-"""Download Kokoro ONNX model + voices into the Parley models dir.
+"""Download Kokoro ONNX model + voices into the Yap models dir.
 
 Usage: python download_models.py [--models-dir DIR]
 Prints one JSON line per progress tick so the app can parse it.
@@ -42,7 +42,7 @@ def download(url: str, dest: Path) -> None:
 def main() -> int:
     p = argparse.ArgumentParser()
     default = os.environ.get("PARLEY_MODELS_DIR") or str(
-        Path.home() / "Library/Application Support/Parley/models")
+        Path.home() / "Library/Application Support/Yap/models")
     p.add_argument("--models-dir", default=default)
     args = p.parse_args()
     mdir = Path(args.models_dir).expanduser()

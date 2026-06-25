@@ -8,8 +8,8 @@ Chatterbox Turbo HD opt-in) behind one int16-PCM contract.
 
 | Concern | File |
 |---|---|
-| App shell / scenes | `app/Sources/Parley/ParleyApp.swift` |
-| macOS Services provider ("Read with Parley") | `ParleyApp.swift` (`ServiceProvider`) + `Resources/Info.plist` (`NSServices`) |
+| App shell / scenes | `app/Sources/Yap/YapApp.swift` |
+| macOS Services provider ("Read with Yap") | `YapApp.swift` (`ServiceProvider`) + `Resources/Info.plist` (`NSServices`) |
 | Central state + read pipeline | `AppState.swift` |
 | Preferences (UserDefaults) | `Prefs.swift` |
 | Global hotkey (Carbon) | `HotKey.swift` |
@@ -43,7 +43,7 @@ hotkey ⌘⇧R
 
 A generation counter in `AppState` cancels a stale stream when a new read starts (configurable via "stop on new trigger").
 
-The **Services menu** ("Read with Parley") is a second entry point: macOS hands the selected text straight to `ServiceProvider`, which calls `AppState.readAloud(_:)` — skipping capture, joining the pipeline at preprocess.
+The **Services menu** ("Read with Yap") is a second entry point: macOS hands the selected text straight to `ServiceProvider`, which calls `AppState.readAloud(_:)` — skipping capture, joining the pipeline at preprocess.
 
 ## Audio
 

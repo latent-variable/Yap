@@ -103,6 +103,9 @@ final class Prefs: ObservableObject {
     @Published var removeFillers: Bool { didSet { d.set(removeFillers, forKey: "removeFillers") } }           // strip "um"/"uh" from dictation
 
     private init() {
+        // Port pre-rename state (Parley → Yap) before reading any setting below, so
+        // the new bundle-id domain has the user's real prefs, not fresh defaults.
+        AppMigration.runOnce()
         engine = d.string(forKey: "engine") ?? "kokoro"
         voice = d.string(forKey: "voice") ?? "am_puck"
         hdVoice = d.string(forKey: "hdVoice") ?? ""

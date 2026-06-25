@@ -1,4 +1,4 @@
-"""Parley Kokoro TTS backend.
+"""Yap Kokoro TTS backend.
 
 Local FastAPI sidecar. Loads Kokoro once, keeps it warm, streams raw PCM for
 low-latency playback. No cloud, no telemetry.
@@ -27,8 +27,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s parley %(levelname)s %(message)s")
-log = logging.getLogger("parley")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s yap %(levelname)s %(message)s")
+log = logging.getLogger("yap")
 
 SAMPLE_RATE = 24000  # Kokoro native
 
@@ -443,7 +443,7 @@ class SynthReq(BaseModel):
 # Reference voice clips for the Chatterbox (cloning) engine live here.
 def hd_voices_dir() -> Path:
     d = Path(os.environ.get("PARLEY_HD_VOICES") or
-             (Path.home() / "Library/Application Support/Parley/hd-voices"))
+             (Path.home() / "Library/Application Support/Yap/hd-voices"))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -461,7 +461,7 @@ def hd_voice_path(voice_id: str) -> Optional[Path]:
     return p if p.exists() else None
 
 
-app = FastAPI(title="Parley TTS", docs_url=None, redoc_url=None)
+app = FastAPI(title="Yap TTS", docs_url=None, redoc_url=None)
 
 
 @app.get("/health")
@@ -692,7 +692,7 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
         joined = np.concatenate(parts) if parts else np.zeros(0, np.float32)
         data = wav_bytes(joined)
         return Response(content=data, media_type="audio/wav",
-                        headers={"Content-Disposition": "attachment; filename=parley.wav"})
+                        headers={"Content-Disposition": "attachment; filename=yap.wav"})
 
     def gen() -> Iterator[bytes]:
         for i, (text, gap) in enumerate(segments):
@@ -716,7 +716,7 @@ def main() -> None:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8766)
     default_models = os.environ.get("PARLEY_MODELS_DIR") or str(
-        Path.home() / "Library/Application Support/Parley/models")
+        Path.home() / "Library/Application Support/Yap/models")
     p.add_argument("--models-dir", default=default_models)
     p.add_argument("--provider", default=os.environ.get("PARLEY_PROVIDER", "auto"),
                    help="auto | cpu | coreml")

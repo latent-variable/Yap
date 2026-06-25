@@ -71,7 +71,7 @@ final class DictationController: ObservableObject {
     /// Track the frontmost app — where the text will land. Polled while listening
     /// so switching apps mid-dictation updates the HUD *and* the paste target
     /// (⌘V always goes to the current frontmost app, so they stay in sync).
-    /// Ignores Parley itself so our own HUD/menu never becomes the "target".
+    /// Ignores Yap itself so our own HUD/menu never becomes the "target".
     private func captureTarget() {
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }

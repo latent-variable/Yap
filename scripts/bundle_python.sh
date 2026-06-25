@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a self-contained Python runtime with Kokoro deps baked in, so the app
 # needs NO system Python. Produces dist/python-runtime/ (~270 MB), which
-# build_app.sh embeds at Parley.app/Contents/Resources/python.
+# build_app.sh embeds at Yap.app/Contents/Resources/python.
 #
 # Uses astral-sh/python-build-standalone (a relocatable CPython). Re-run only
 # when deps or the Python version change; the output is cached.

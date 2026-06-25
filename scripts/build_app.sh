@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assemble Parley.app from the SwiftPM build. Bundles the Python backend
+# Assemble Yap.app from the SwiftPM build. Bundles the Python backend
 # sources (not the venv/models — those live in Application Support).
 set -euo pipefail
 
@@ -7,17 +7,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APPDIR="$ROOT/app"
 CONFIG="${1:-release}"
 OUT="$ROOT/dist"
-APP="$OUT/Parley.app"
+APP="$OUT/Yap.app"
 
 echo "[build] swift build -c $CONFIG"
 ( cd "$APPDIR" && swift build -c "$CONFIG" )
-BIN="$(cd "$APPDIR" && swift build -c "$CONFIG" --show-bin-path)/Parley"
+BIN="$(cd "$APPDIR" && swift build -c "$CONFIG" --show-bin-path)/Yap"
 
 echo "[build] assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/repo"
 
-cp "$BIN" "$APP/Contents/MacOS/Parley"
+cp "$BIN" "$APP/Contents/MacOS/Yap"
 cp "$ROOT/app/Resources/Info.plist" "$APP/Contents/Info.plist"
 
 # App icon (regenerate if the generator is newer than the icns).
@@ -57,9 +57,9 @@ fi
 
 # Prefer a stable self-signed identity (survives reinstalls → Accessibility
 # grant persists). Falls back to ad-hoc. Set one up with scripts/setup_signing.sh.
-SIGN_ID="Parley Local Signing"
-SIGN_KC="$HOME/Library/Keychains/parley-signing.keychain-db"
-[ -f "$SIGN_KC" ] && security unlock-keychain -p "parley-local" "$SIGN_KC" 2>/dev/null || true
+SIGN_ID="Yap Local Signing"
+SIGN_KC="$HOME/Library/Keychains/yap-signing.keychain-db"
+[ -f "$SIGN_KC" ] && security unlock-keychain -p "yap-local" "$SIGN_KC" 2>/dev/null || true
 if [ -f "$SIGN_KC" ] && security find-certificate -c "$SIGN_ID" "$SIGN_KC" >/dev/null 2>&1; then
   echo "[build] signing with '$SIGN_ID' (stable identity — Accessibility grant persists)"
   if ! codesign --force --deep --sign "$SIGN_ID" --keychain "$SIGN_KC" "$APP" >/dev/null 2>&1; then

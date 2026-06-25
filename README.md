@@ -1,79 +1,82 @@
-# Parley
+<div align="center">
 
-**Voice and ears for your Mac — fully local.** Two-way speech in one menu-bar app: highlight text anywhere and **hear it** in a high-quality [Kokoro](https://github.com/hexgrad/kokoro) voice, or press a shortcut and **speak it** — local [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) dictation types straight into whatever app you're in. No cloud, no account, no tracking. (Think [Fluid Voice](https://github.com/altic-dev/FluidVoice) for dictation **and** its text-to-speech counterpart, unified.)
+<img src="docs/yap-hero.png" alt="YAP — talk to AI, faster. It talks back." width="760">
 
-> *Still typing on a keyboard and reading walls of text with your eyes?* That's the bottleneck; you think faster than both. The keyboard is a straw you push thoughts through, and reading is a straw you pull them back out of. Parley widens both: **talk to your Mac and the AI agents you work with, and listen to them talk back.** Until something genuinely reads your mind, this is the shortcut.
+# Yap
 
-![Parley — menu-bar controls and settings](docs/screenshot.png)
+**talk to AI. faster. it talks back. both of you yap.**
 
-The app **bundles its own Python** — nothing else to install. Pick whichever install suits you:
+Stop typing. Start yapping. Two-way voice for your Mac and the AI agents you drive — fully local, no cloud, no account, no tracking.
 
-**① Homebrew (easiest — one command, no Gatekeeper prompt):**
+[▶︎ Listen to this README](docs/yap-readme.m4a) · [Install](#install) · [The loop](#the-loop) · [What it does](#what-it-does)
+
+</div>
+
+---
+
+Your keyboard is the bottleneck. So are your eyes. You think faster than you type and faster than you read. **Yap** lets you hold a key and *talk* at your Mac (local [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) types it where your cursor is), and highlight anything to *hear* it in a real [Kokoro](https://github.com/hexgrad/kokoro) voice. Until neuralink wires you straight into Claude Code, this is the shortcut.
+
+## Install
+
+The app bundles its own Python — nothing else to install.
+
 ```bash
-brew install --cask latent-variable/tap/parley
+# ① Homebrew (easiest, no Gatekeeper prompt)
+brew install --cask latent-variable/tap/yap
+
+# ③ Build from source (needs Xcode command-line tools)
+git clone https://github.com/latent-variable/Yap.git
+cd Yap && bash scripts/build_app.sh && open dist/Yap.app
 ```
 
-**② Download the DMG:** grab `Parley-*.dmg` from [Releases](https://github.com/latent-variable/Parley/releases), drag to Applications. It's open-source and not notarized, so clear the download quarantine once, then open:
-```bash
-xattr -cr /Applications/Parley.app
-```
+**② DMG:** grab `Yap-*.dmg` from [Releases](https://github.com/latent-variable/Yap/releases), drag to Applications, then clear the one-time quarantine (it's open-source, not notarized): `xattr -cr /Applications/Yap.app`.
 
-**③ Build from source** (no quarantine at all; needs Xcode command-line tools):
-```bash
-git clone https://github.com/latent-variable/Parley.git
-cd Parley && bash scripts/build_app.sh && open dist/Parley.app
-```
+First launch grabs the Kokoro model (~340 MB). Grant Accessibility + Microphone when asked (or use Clipboard mode, no permission needed). Then: **⌘⇧D** to dictate, **⌘⇧R** to read the selection aloud.
 
-First launch downloads the Kokoro model (~340 MB) automatically. Grant Accessibility when prompted (or use Clipboard mode — no permission needed), then select text in any app and press **⌘⇧R** to hear it. To dictate, press **⌘⇧D**, speak, press again — the text types where your cursor is.
+## The loop
 
-> **Why the extra step for ② / why "damaged"?** Apple's Gatekeeper blocks un-notarized downloads. Notarization needs a paid Apple Developer account, which this project doesn't use. Homebrew (①) handles it cleanly; building (③) sidesteps it entirely. Everything is local and the [source is all here](app/Sources/Parley).
+The real unlock is closing the loop with an **AI coding agent**. You stop touching the two slowest parts of the workflow:
 
-## The loop: stop typing, stop reading
+1. **You → agent (ears).** ⌘⇧D, ramble your prompt, press again. No keyboard.
+2. **Agent → you (voice).** Highlight its answer, ⌘⇧R, it reads back. No eyes.
 
-Reading text aloud is nice. The real unlock is closing the loop with an **AI coding agent** (Claude Code, Cursor, Codex, whatever you drive). You stop touching the two slowest parts of the workflow — your keyboard and your eyes:
+Talk, listen, repeat — pair-program with something that briefs you out loud while you stare out the window.
 
-1. **You → agent (ears).** Press **⌘⇧D**, ramble your prompt, press again. Parakeet types it into the agent. No keyboard.
-2. **Agent → you (voice).** The agent answers, highlight it, press **⌘⇧R**, and Parley reads it back. No eyes.
+### Make your agent talk back
 
-Talk, listen, repeat. You can pace a whole session hands-off, eyes-off — pair-programming with something that briefs you out loud while you stare out the window.
-
-### Make your agent talk back: the clonable "Speak to me" rule
-
-Agent output is full of code, tables, and symbols that sound awful read aloud. The fix is one instruction: tell your agent to **end every reply with a short spoken-style section.** Drop this into your agent's instructions (`AGENTS.md` / `CLAUDE.md` / system prompt) and you're done:
+Agent output is full of code and tables that sound awful aloud. One instruction fixes it — drop this into your agent's `AGENTS.md` / `CLAUDE.md` / system prompt:
 
 ```md
 ## 🔊 Speak to me
 End substantive replies with a `## 🔊 Speak to me` section: a few plain,
 conversational sentences narrating what you did, what it means, and what's next —
-written to be *heard*, not skimmed. No markdown, code, tables, links, or symbols
-inside it (a text-to-speech tool reads "asterisk" and "backtick" out loud). Spell
-numbers, flags, and filenames out in words. Skip it for trivial one-liners.
+written to be *heard*, not skimmed. No markdown, code, tables, or symbols inside
+it (a TTS tool reads "asterisk" and "backtick" out loud). Spell numbers and flags
+out in words. Skip it for trivial one-liners.
 ```
 
-Now highlight that block, hit **⌘⇧R**, and your agent literally briefs you. Here it is in the wild — the spoken half of an actual Parley session:
+Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 
 ![A "Speak to me" section an agent wrote, ready to read aloud](docs/speak-to-me.png)
 
-That's the whole point: you spoke the request, the agent did the work, and now it tells you out loud. The interface gets out of the way.
-
 ## What it does
 
-Two halves, split into **Ears** and **Voice** tabs in the menu:
+- **Ears — dictate into anything.** Hold the shortcut, talk, release. Streaming Parakeet STT on the Apple Neural Engine: a live, self-correcting preview as you speak, then an accurate final pass pasted at your cursor. English or 25-language multilingual. Optional chime + filler-word cleanup ("um"/"uh", never real words).
+- **Voice — read from anywhere.** Chrome, PDFs, Terminal, VS Code, Slack, Gmail. Selected-text capture (Accessibility) with a clipboard fallback that restores your clipboard, or right-click → **Services ▸ Read with Yap**.
+- **Two engines, one dropdown.** **Kokoro** — 54 voices, 8 languages, instant, CPU. **Chatterbox HD** (opt-in) — markedly more natural on the GPU, with **voice cloning** from a ~10s clip. HD reads play a short cue while the first audio buffers.
+- **Streaming playback** — audio starts while the rest synthesizes; live speed/pitch/volume, natural pauses. **Smart cleanup** strips Markdown/code/citations (General/Markdown/Code/Blog/LLM profiles + custom regex).
+- **Flexible shortcuts** — a normal chord (⌘⇧R) or a **modifier-only chord** like ⌥⌘ (the "Alt+Win" press), held and released — handy for push-to-dictate.
+- **Menu-bar only, fully local.** Manage/delete each model from Settings ▸ Models. HD audio is watermarked; clone only voices you have rights to.
 
-- **Dictate into anything (ears)** — press the shortcut, speak, press again; the text pastes at your cursor in any app. Streaming [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) STT on the Apple Neural Engine: a live, self-correcting transcript as you talk, then a second accurate pass on stop. English (Parakeet Flash) or 25-language multilingual. Optional start/stop chime and filler-word cleanup (strips "um"/"uh", never real words). One-click copy of the last dictation.
-- **Read from anywhere (voice)** — Chrome, Safari, PDFs, Terminal, VS Code, Notes, Slack, Gmail, Markdown. Selected-text capture via the Accessibility API, with a clipboard-copy fallback that restores your clipboard. Or skip the hotkey: select text → right-click → **Services ▸ Read with Parley**.
-- **Two voice engines, one dropdown:**
-  - **Kokoro** (default) — 54 voices, 8 languages, instant, CPU. The everyday driver.
-  - **Chatterbox Turbo HD** (opt-in) — markedly more natural speech on the GPU, with **voice cloning** from a ~10s reference clip. Ships a few clean open voices (CMU ARCTIC) and lets you add your own.
-- **Streaming playback** — audio starts while the rest synthesizes. Play / pause / stop; **live speed** (drag mid-readout), pitch, volume; natural pauses at sentence/line/paragraph boundaries.
-- **Smart cleanup** — strips Markdown, code fences, citations, terminal prompts, and more. Profiles for General / Markdown / Code / Blog / LLM output, plus editable regex rules with live preview.
-- **Manage your models** — **Settings ▸ Models** shows each engine's size on disk and lets you delete or re-download Kokoro (~340 MB) and HD (~1.3 GB) to reclaim space. Deleting HD keeps your cloned voices.
-- **Flexible shortcuts** — bind a normal chord (⌘⇧R) or a **modifier-only chord** like ⌥⌘ (the "Alt+Win" press), held and released — handy for a fast push-to-dictate key.
-- **Menu-bar utility** — status indicator, quick controls, settings. No dock icon. Fully local; HD audio is watermarked.
+## Permissions & privacy
+
+100% on your Mac. No account, no telemetry, no network after the one-time model download. **Accessibility** lets Yap read your selection and paste; **Microphone** feeds dictation — audio never leaves the machine. Don't want to grant Accessibility? Switch **Read source → Clipboard** and copy text yourself first. Details: [docs/PRIVACY.md](docs/PRIVACY.md).
+
+> Ad-hoc signed, so each reinstall is a new identity to macOS and the Accessibility grant can go stale — remove Yap from the list and re-add, or run `scripts/setup_signing.sh` once for a stable identity.
 
 ## Architecture
 
-Native SwiftUI menu-bar app. **Voice** (TTS) talks to a local Python sidecar over `127.0.0.1`; **ears** (STT) run fully in-app on the Apple Neural Engine — no sidecar, no network.
+Native SwiftUI menu-bar app. **Voice** (TTS) talks to a local Python sidecar over `127.0.0.1`; **ears** (STT) run fully in-app on the ANE — no sidecar, no network.
 
 ```
 SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CPU)         ← voice: default, instant
@@ -82,103 +85,19 @@ SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CP
   AVAudioEngine mic ──► FluidAudio / Parakeet (CoreML, ANE) ← ears: streaming dictation, in-app
 ```
 
-- `backend/server.py` — `/health`, `/engines`, `/voices?engine=`, `/synthesize` (streams PCM, `engine` param; `?format=wav` for export), HD install + starter-voice endpoints.
-- `backend/chatterbox_engine.py` — the HD engine, lazy-loaded (no torch until used).
-- `app/Sources/Parley/` — hotkey (Carbon + a flagsChanged monitor for modifier-only chords), capture (AX + clipboard), preprocessing, AVAudioEngine player (pre-buffered streaming, live speed via time-stretch), dictation (FluidAudio streaming Parakeet + accurate final pass, mic capture, paste-at-cursor), settings, views.
-
-**The default app stays small (~88 MB).** Kokoro is bundled; the HD engine (torch + Chatterbox, ~1.3 GB) downloads on demand into Application Support **only when you enable it** — never in the shipped app. Both engines then run in one process (kokoro-onnx happily coexists with torch on numpy 1.26).
-
-HD note: Chatterbox is a cloning model — each HD voice is a ~10s reference clip. Output is watermarked (Resemble Perth). **Only clone voices you have the rights to use.** See [docs/MODELS.md](docs/MODELS.md).
+The default app stays small (~88 MB): Kokoro is bundled; the HD engine (torch, ~1.3 GB) downloads on demand only when you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Develop
 
 ```bash
-# backend only (auto-creates venv on first run)
-bash scripts/run_backend.sh
-
-# build + run the app
-bash scripts/build_app.sh && open dist/Parley.app
-
-# run the preprocessing self-test
-cd app && swift build && "$(swift build --show-bin-path)/Parley" --selftest
+bash scripts/run_backend.sh                       # backend only (auto-creates venv)
+bash scripts/build_app.sh && open dist/Yap.app    # build + run
+cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest   # Swift tests
+cd backend && python -m pytest tests/ -v          # backend suite
 ```
 
-Models live in `~/Library/Application Support/Parley/models`. The venv lives in `~/Library/Application Support/Parley/venv`.
-
-### Tests
-
-```bash
-# Swift: preprocessing + clipboard-restore invariant
-cd app && swift build && "$(swift build --show-bin-path)/Parley" --selftest
-# Backend: chunking, synth edge cases, long docs, providers, WAV export
-cd backend && python -m pytest tests/ -v
-```
-
-### Acceleration
-
-Compute provider is selectable in **Settings ▸ Diagnostics ▸ Acceleration** (or `MURMUR_PROVIDER=auto|cpu|coreml`). `auto` uses **CPU on purpose**: Kokoro is small (82M), and the vectorized CPU path benchmarks as fast as or faster than CoreML (GPU/Neural Engine) on Apple Silicon — CoreML offloads most ops back to CPU anyway. CoreML is available as a toggle; CPU is always the fallback. `/health` reports the active provider.
-
-Why Kokoro, and what could replace it: [docs/MODELS.md](docs/MODELS.md) tracks candidate models against Parley's CPU-only / ONNX / permissive-license constraints.
-
-## Models / voices
-
-Auto-downloaded on first run from the [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases). To do it manually:
-
-```bash
-cd backend && source "$HOME/Library/Application Support/Parley/venv/bin/activate"
-python download_models.py
-```
-
-## Permissions & privacy
-
-Parley runs **100% on your Mac**. No account, no telemetry, no analytics, and no network calls after the one-time model download. Speech synthesis runs in the bundled Kokoro engine; dictation runs on the Apple Neural Engine in-app — your voice and audio never leave the machine. Every line of that is in this repo — read it.
-
-**One permission: Accessibility** (plus **Microphone** for dictation). macOS gates these behind it, and Parley needs them to move text in and out of the app you're using:
-
-| What | Why it's required |
-|---|---|
-| Read the **selected text** in the frontmost app | macOS only lets a trusted app query another app's selection (`AXUIElement`) |
-| Simulate **⌘C** / **⌘V** for clipboard fallback + dictation paste | Posting a synthetic keystroke (`CGEvent`) requires Accessibility trust |
-| **Microphone** for dictation | Capturing your voice to transcribe locally — audio never leaves the Mac |
-
-That's the entire reason. Parley does **not** log your keystrokes, watch what you type, take screenshots, read your screen, or send anything anywhere. It reads one thing — the text you explicitly select and trigger — and speaks it. The capture code is [`TextCapture.swift`](app/Sources/Parley/TextCapture.swift): it reads the current selection (or copies it, then **restores your clipboard**) and nothing else.
-
-**Don't want to grant it?** Switch **Read source → Clipboard** (menu bar ▸ *Use Clipboard*). Then copy text yourself and press the shortcut — reading the clipboard needs no permission at all.
-
-**Grant it:** first launch prompts you; or System Settings ▸ Privacy & Security ▸ Accessibility ▸ enable **Parley**.
-
-**If the toggle is on but Parley still asks:** the app is ad-hoc signed, so each reinstall is a new identity to macOS and the old grant goes stale. Remove Parley from the list (**−** button), then grant again. To stop this for good, run `scripts/setup_signing.sh` once — it creates a stable signing identity so the grant survives updates. See [docs/PRIVACY.md](docs/PRIVACY.md).
-
-## Known limitations
-
-- **Not notarized.** The app bundles its own Python, so it's large and ad-hoc signed — a DMG downloaded from a browser is quarantined and macOS says *"damaged and can't be opened."* Until it's notarized (needs an Apple Developer account), clear the quarantine once after copying to Applications: `xattr -cr /Applications/Parley.app`, then open. Building locally avoids this entirely.
-- Pitch is a post-process shift (AVAudioUnitTimePitch); Kokoro has no native pitch control.
-- Capture defaults to **clipboard** (most reliable). Accessibility selected-text is offered as a mode but varies by app. Capture never reads a stale clipboard, so a failed copy reads nothing rather than the wrong text.
-- First launch still downloads the Kokoro model (~340 MB) automatically.
-
-## Roadmap
-
-Shipped:
-
-- [x] Hotkey → local Kokoro speech, streaming playback (first audio ~0.2s).
-- [x] Clipboard + Accessibility capture, with stale-clipboard protection.
-- [x] Cleanup profiles + editable rules, WAV export, launch-at-login.
-- [x] Menu-bar app, settings, diagnostics, model auto-download.
-- [x] Drag-to-install DMG + GitHub release.
-- [x] Selectable compute provider (auto/CPU/CoreML) + backend test suite.
-- [x] **Self-contained: bundles its own Python runtime** — runs on Macs with no Python installed.
-- [x] **Chatterbox Turbo HD engine** — opt-in GPU voice cloning, unified voice picker, live speed, pre-buffered streaming.
-- [x] **Right-click → Read with Parley** (macOS Services menu).
-- [x] **Model management** — delete / re-download any engine from Settings ▸ Models.
-- [x] **Dictation (ears)** — streaming Parakeet STT on the ANE, live self-correcting transcript + accurate final pass, push-to-talk, paste-at-cursor, chime + filler cleanup.
-- [x] **Modifier-only chords** — bind a pure-modifier shortcut (e.g. ⌥⌘) for fast push-to-dictate.
-
-Next:
-
-- [ ] Notarize + Developer ID sign (drop the quarantine/right-click step — needs Apple Developer account).
-- [ ] Per-app capture overrides and audio caching.
-- [ ] More export formats (MP3/AAC) and "save while reading".
+State lives in `~/Library/Application Support/Yap` (models, venv, cloned voices) — gitignored, machine-local.
 
 ## License
 
-MIT. Kokoro weights are Apache-2.0 (hexgrad/Kokoro-82M). Chatterbox is MIT (Resemble AI); HD reference voices from CMU ARCTIC (free to use). HD audio is watermarked; clone only voices you have rights to. Dictation uses [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) running NVIDIA Parakeet TDT models.
+MIT. Kokoro weights Apache-2.0 (hexgrad/Kokoro-82M); Chatterbox MIT (Resemble AI); HD starter voices from CMU ARCTIC. Dictation uses [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) running NVIDIA Parakeet. HD audio is watermarked; clone only voices you have rights to.

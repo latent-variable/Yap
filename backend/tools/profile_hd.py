@@ -6,7 +6,7 @@ a range of text lengths — so chunk sizing can be grounded in measurement, not
 guesswork.
 
 Run:
-  PYTHONPATH="$HOME/Library/Application Support/Parley/hd-packages" \
+  PYTHONPATH="$HOME/Library/Application Support/Yap/hd-packages" \
     python3 backend/tools/profile_hd.py
 """
 import os
@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-HD = Path.home() / "Library/Application Support/Parley/hd-packages"
+HD = Path.home() / "Library/Application Support/Yap/hd-packages"
 if str(HD) not in sys.path:
     sys.path.insert(0, str(HD))
 
@@ -38,7 +38,7 @@ torch.Tensor.to = _safe_to
 from chatterbox.tts_turbo import ChatterboxTurboTTS, punc_norm
 from chatterbox.models.s3gen.const import S3GEN_SIL
 
-VOICES = Path.home() / "Library/Application Support/Parley/hd-voices"
+VOICES = Path.home() / "Library/Application Support/Yap/hd-voices"
 _refs = sorted(VOICES.glob("*.wav"))
 if not _refs:
     sys.exit(f"no HD reference voices in {VOICES} — add one (or run the starter-voices "

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Launch the Parley Kokoro backend. Used by the app and for manual dev runs.
+# Launch the Yap Kokoro backend. Used by the app and for manual dev runs.
 # Creates the venv + installs deps on first run, then serves.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$HERE/backend"
-SUPPORT="$HOME/Library/Application Support/Parley"
+SUPPORT="$HOME/Library/Application Support/Yap"
 VENV="${PARLEY_VENV:-$SUPPORT/venv}"
 PORT="${PARLEY_PORT:-8766}"
 MODELS_DIR="${PARLEY_MODELS_DIR:-$SUPPORT/models}"
 mkdir -p "$SUPPORT"
 
 if [ ! -x "$VENV/bin/python" ]; then
-  echo "[parley] creating venv..."
+  echo "[yap] creating venv..."
   if command -v uv >/dev/null 2>&1; then
     uv venv --python 3.12 "$VENV"
     # shellcheck disable=SC1091

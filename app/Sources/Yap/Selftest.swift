@@ -110,7 +110,7 @@ enum Selftest {
         let pb = NSPasteboard.general
         // Save the user's real clipboard so the test itself isn't destructive.
         let userClipboard = pb.string(forType: .string)
-        let sentinel = "parley-sentinel-\(UUID().uuidString)"
+        let sentinel = "yap-sentinel-\(UUID().uuidString)"
         pb.clearContents(); pb.setString(sentinel, forType: .string)
         // viaClipboard sends Cmd+C (no selection here), must restore sentinel.
         _ = TextCapture.viaClipboard()

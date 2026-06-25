@@ -38,7 +38,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
 
     private func beginRecording(_ onFinish: @escaping (URL?) -> Void) {
         let url = FileManager.default.temporaryDirectory
-            .appending(path: "parley_rec_\(UUID().uuidString).wav")
+            .appending(path: "yap_rec_\(UUID().uuidString).wav")
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 24000,

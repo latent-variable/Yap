@@ -1,4 +1,4 @@
-# Parley review styleguide
+# Yap review styleguide
 
 Guidance for automated reviewers. Intentional, verified-correct patterns that
 should NOT be flagged.
@@ -31,7 +31,7 @@ should NOT be flagged.
 
 - **`kill(pid, ...)` on an adopted backend PID.** `adoptedPID` always comes from
   `lsof` (a real listener PID), and every call site guards `pid > 1`. Signaling
-  the adopted orphan is how Parley reclaims a backend it owns but has no
+  the adopted orphan is how Yap reclaims a backend it owns but has no
   `Process` handle for.
 
 - **`MainActor.assumeIsolated` in main-thread-only callbacks.** Used only where

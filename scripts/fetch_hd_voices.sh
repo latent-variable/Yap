@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fetch a few clean, openly-licensed reference voices for the HD (Chatterbox)
-# engine and install them into ~/Library/Application Support/Parley/hd-voices.
+# engine and install them into ~/Library/Application Support/Yap/hd-voices.
 #
 # Source: CMU ARCTIC (festvox.org) — studio-quality single-speaker recordings,
 # free to use. Each reference is ~5 utterances concatenated (~15s), resampled to
@@ -8,7 +8,7 @@
 set -euo pipefail
 
 BASE="http://festvox.org/cmu_arctic/cmu_arctic"
-DEST="$HOME/Library/Application Support/Parley/hd-voices"
+DEST="$HOME/Library/Application Support/Yap/hd-voices"
 mkdir -p "$DEST"
 command -v ffmpeg >/dev/null || { echo "ffmpeg required (brew install ffmpeg)"; exit 1; }
 

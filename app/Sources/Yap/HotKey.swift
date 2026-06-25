@@ -28,9 +28,9 @@ final class HotKeyManager {
     private static let lock = NSLock()
 
     /// `slot` distinguishes multiple hot keys in the same app (1 = read aloud,
-    /// 2 = dictation). Same 'PRLY' signature, different id.
+    /// 2 = dictation). Same 'YAPP' signature, different id.
     init(slot: UInt32 = 1) {
-        id = EventHotKeyID(signature: OSType(0x50524C59), id: slot)
+        id = EventHotKeyID(signature: OSType(0x59415050), id: slot)
         Self.lock.lock(); Self.managers[slot] = WeakManager(value: self); Self.lock.unlock()
         Self.installSharedHandlerOnce()
     }
@@ -76,8 +76,8 @@ final class HotKeyManager {
     private static var chordMonitorLocal: Any?
 
     /// Install the process-wide modifier monitor once. Global catches the chord
-    /// while other apps are focused (needs Accessibility, which Parley has);
-    /// local catches it while a Parley window is key.
+    /// while other apps are focused (needs Accessibility, which Yap has);
+    /// local catches it while a Yap window is key.
     private static func installChordMonitorOnce() {
         lock.lock(); defer { lock.unlock() }
         guard chordMonitorGlobal == nil else { return }
@@ -129,9 +129,9 @@ final class HotKeyManager {
             GetEventParameter(event, EventParamName(kEventParamDirectObject),
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hkID)
-            // Only handle our own ('PRLY') hot keys — another component could use
+            // Only handle our own ('YAPP') hot keys — another component could use
             // the same numeric id under a different signature.
-            guard hkID.signature == OSType(0x50524C59) else { return OSStatus(eventNotHandledErr) }
+            guard hkID.signature == OSType(0x59415050) else { return OSStatus(eventNotHandledErr) }
             HotKeyManager.lock.lock()
             let mgr = HotKeyManager.managers[hkID.id]?.value
             HotKeyManager.lock.unlock()
