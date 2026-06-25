@@ -31,29 +31,40 @@ enum AppMigration {
         std.set(true, forKey: migratedKey)
     }
 
-    /// Merge `Parley/` into `Yap/`. Merge-style (not a bare move) so that if a path
-    /// getter already created an empty `Yap/`, each child still moves over when it
-    /// isn't already present. Idempotent; a no-op once the old directory is gone.
+    /// Merge `Parley/` into `Yap/`. A shallow per-child check is unsafe: if a path
+    /// getter (or a partial earlier run) already created an empty `Yap/hd-voices`
+    /// or `Yap/models`, skipping that child whole would strand the user's cloned
+    /// voices or models. So merge recursively — see `merge`.
     private static func migrateAppSupport() {
         let fm = FileManager.default
-        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let old = base.appending(path: "Parley")
-        let new = base.appending(path: "Yap")
         guard fm.fileExists(atPath: old.path) else { return }
-        try? fm.createDirectory(at: new, withIntermediateDirectories: true)
-        if let kids = try? fm.contentsOfDirectory(at: old, includingPropertiesForKeys: nil) {
-            for kid in kids {
-                let dest = new.appending(path: kid.lastPathComponent)
-                if !fm.fileExists(atPath: dest.path) {
-                    try? fm.moveItem(at: kid, to: dest)
-                }
-            }
+        merge(old, into: base.appending(path: "Yap"), fm: fm)
+    }
+
+    /// Recursively move `src` into `dst`. When `dst` doesn't exist, the whole item
+    /// (file or directory subtree) moves in one step. When `dst` is an existing
+    /// directory, contents merge child-by-child, so a pre-existing (even empty)
+    /// destination subdir never causes the source's contents to be skipped. Files
+    /// already present at `dst` are kept (never overwritten); a source directory
+    /// emptied by the merge is then removed (tolerating a stray `.DS_Store`).
+    /// Internal (not private) so `--selftest` can exercise the no-data-loss path.
+    static func merge(_ src: URL, into dst: URL, fm: FileManager) {
+        var srcIsDir: ObjCBool = false
+        guard fm.fileExists(atPath: src.path, isDirectory: &srcIsDir) else { return }
+        if !fm.fileExists(atPath: dst.path) {
+            try? fm.moveItem(at: src, to: dst)   // fast path: nothing to merge into
+            return
         }
-        // Ignore a stray .DS_Store (Finder drops one in any viewed folder) so the
-        // now-empty old directory is actually removed instead of left orphaned.
-        if let remaining = try? fm.contentsOfDirectory(atPath: old.path),
+        guard srcIsDir.boolValue else { return }  // a file already exists at dst — keep it
+        for kid in (try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: nil)) ?? [] {
+            merge(kid, into: dst.appending(path: kid.lastPathComponent), fm: fm)
+        }
+        // Drop the now-empty source dir; a Finder-dropped .DS_Store doesn't count.
+        if let remaining = try? fm.contentsOfDirectory(atPath: src.path),
            remaining.allSatisfy({ $0 == ".DS_Store" }) {
-            try? fm.removeItem(at: old)
+            try? fm.removeItem(at: src)
         }
     }
 }
