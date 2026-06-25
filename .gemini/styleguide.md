@@ -1,4 +1,4 @@
-# Parley review styleguide
+# Yap review styleguide
 
 Guidance for automated reviewers. Intentional, verified-correct patterns that
 should NOT be flagged.
@@ -31,7 +31,7 @@ should NOT be flagged.
 
 - **`kill(pid, ...)` on an adopted backend PID.** `adoptedPID` always comes from
   `lsof` (a real listener PID), and every call site guards `pid > 1`. Signaling
-  the adopted orphan is how Parley reclaims a backend it owns but has no
+  the adopted orphan is how Yap reclaims a backend it owns but has no
   `Process` handle for.
 
 - **`MainActor.assumeIsolated` in main-thread-only callbacks.** Used only where
@@ -49,3 +49,10 @@ should NOT be flagged.
   for its gates; the heavy `BufferQueue.concat` (and the `snapshot()`) run inside
   `await Task.detached(priority: .userInitiated) { ... }`. Don't flag the concat
   as a main-thread block — it isn't on main.
+
+- **`AppMigration.merge`'s `!fm.fileExists(atPath: dst.path)` is a fast-path, not
+  a shallow skip.** When the destination is absent the whole subtree moves in one
+  step; when it *exists* the code recurses and merges child-by-child, so a
+  pre-existing empty `Yap/hd-voices`/`models` can't strand the user's voices.
+  Don't flag it as silent data loss — the no-loss path is unit-tested in
+  `--selftest`.

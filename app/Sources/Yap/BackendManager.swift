@@ -12,7 +12,7 @@ final class BackendManager: NSObject, ObservableObject {
     @Published var lastError: String?
 
     private var process: Process?
-    /// PID of an orphaned Parley backend we've adopted (we have no Process handle
+    /// PID of an orphaned Yap backend we've adopted (we have no Process handle
     /// to it — it outlived its spawner — so we manage it by PID/signal instead).
     private var adoptedPID: pid_t?
     let client = BackendClient()
@@ -39,7 +39,7 @@ final class BackendManager: NSObject, ObservableObject {
 
     var modelsDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Parley/models")
+            .appending(path: "Yap/models")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -47,7 +47,7 @@ final class BackendManager: NSObject, ObservableObject {
     /// Locate the repo (containing scripts/run_backend.sh). Checks the app
     /// bundle, an env override, then walks up from the executable.
     func repoRoot() -> URL? {
-        if let env = ProcessInfo.processInfo.environment["PARLEY_REPO"] {
+        if let env = ProcessInfo.processInfo.environment["YAP_REPO"] ?? ProcessInfo.processInfo.environment["PARLEY_REPO"] {
             return URL(fileURLWithPath: env)
         }
         // Bundled inside the app: Contents/Resources/repo
@@ -70,15 +70,15 @@ final class BackendManager: NSObject, ObservableObject {
 
     /// App-support base, WITHOUT the directory-creating side effect of `modelsDir`
     /// (which would re-create an empty models dir just from an existence check).
-    private var appSupportParley: URL {
+    private var appSupportBase: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Parley")
+            .appending(path: "Yap")
     }
     /// HD engine installed on disk (torch present in hd-packages). The backend
     /// can serve HD even when the Kokoro model files are absent — a cheap check
     /// so `ready` doesn't depend solely on Kokoro.
     var hdInstalledOnDisk: Bool {
-        let hd = appSupportParley.appending(path: "hd-packages")
+        let hd = appSupportBase.appending(path: "hd-packages")
         return FileManager.default.fileExists(atPath: hd.appending(path: "torch").path)
     }
     /// Whether the Kokoro model files are present (from the last /health). Distinct
@@ -98,7 +98,7 @@ final class BackendManager: NSObject, ObservableObject {
     func start() async {
         if let h = await client.health() {
             apply(h)
-            // Reusing a live backend. If it's an orphaned Parley backend (its
+            // Reusing a live backend. If it's an orphaned Yap backend (its
             // spawner died → reparented to launchd), adopt it so model management
             // isn't blocked. A backend started by hand in a terminal (ppid != 1)
             // is left external on purpose.
@@ -149,9 +149,9 @@ final class BackendManager: NSObject, ObservableObject {
         if bundledPython != nil { await stripQuarantine() }
         let p = Process()
         var env = ProcessInfo.processInfo.environment
-        env["PARLEY_MODELS_DIR"] = modelsDir.path
-        env["PARLEY_PORT"] = String(port)
-        env["PARLEY_PROVIDER"] = Prefs.shared.providerMode
+        env["YAP_MODELS_DIR"] = modelsDir.path
+        env["YAP_PORT"] = String(port)
+        env["YAP_PROVIDER"] = Prefs.shared.providerMode
         // If the HD engine is installed, run in the combined env (numpy 1.26 +
         // torch + kokoro) so one process serves both engines. hd-packages must
         // be FIRST on PYTHONPATH so its numpy<2 imports before the bundled 2.x.
@@ -197,7 +197,7 @@ final class BackendManager: NSObject, ObservableObject {
         }
         p.environment = env
 
-        let logURL = FileManager.default.temporaryDirectory.appending(path: "parley_backend.log")
+        let logURL = FileManager.default.temporaryDirectory.appending(path: "yap_backend.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let fh = try? FileHandle(forWritingTo: logURL)
         if let fh {
@@ -244,9 +244,9 @@ final class BackendManager: NSObject, ObservableObject {
 
     // MARK: Orphan detection (lsof + ps, off the main actor)
 
-    /// PID of an orphaned Parley backend listening on `port`: the process must be
+    /// PID of an orphaned Yap backend listening on `port`: the process must be
     /// running `server.py` AND have been reparented to launchd (ppid == 1), the
-    /// signature of a backend whose spawning Parley quit or crashed.
+    /// signature of a backend whose spawning Yap quit or crashed.
     private nonisolated static func orphanBackendPID(port: Int) async -> pid_t? {
         // lsof/ps block until the child exits; run them on a background queue (not
         // the cooperative pool that Task.detached uses) so a hung tool can't starve

@@ -1,6 +1,6 @@
-# Agent guide: Parley
+# Agent guide: Yap
 
-For any agent (build, fix, review, extend) working on this repo. Parley gives a
+For any agent (build, fix, review, extend) working on this repo. Yap gives a
 Mac (and the AI agents you work with) **voice and ears**, fully local. Voice:
 highlight text anywhere, press a hotkey, hear it in a local Kokoro or Chatterbox
 HD voice. Ears: press a shortcut, speak, and local Parakeet STT types the text
@@ -12,7 +12,7 @@ Two processes. Neither works without the other.
 
 - **`app/`** — native SwiftUI menu-bar app (SwiftPM executable, not an Xcode
   project). Owns hotkey, text capture, cleanup, audio (voice), **dictation
-  (ears)**, settings, UI. Entry point `Sources/Parley/ParleyApp.swift`; central
+  (ears)**, settings, UI. Entry point `Sources/Yap/YapApp.swift`; central
   state + read pipeline in `AppState.swift`; dictation in `Dictation.swift` +
   `DictationController.swift`. Module map: `docs/ARCHITECTURE.md`.
 - **`backend/server.py`** — local FastAPI sidecar wrapping `kokoro-onnx`.
@@ -112,7 +112,7 @@ The app ships a **self-contained Python runtime** so end users need nothing
 installed. `scripts/bundle_python.sh` downloads a relocatable
 python-build-standalone CPython, pip-installs `backend/requirements.txt` into it,
 and writes `dist/python-runtime/`. `build_app.sh` embeds that at
-`Parley.app/Contents/Resources/python`. `BackendManager.bundledPython` prefers it
+`Yap.app/Contents/Resources/python`. `BackendManager.bundledPython` prefers it
 and spawns `server.py` directly; only a dev checkout with no embedded runtime
 falls back to `run_backend.sh` (venv from system Python).
 
@@ -125,8 +125,8 @@ requires `scripts/notarize.sh` + a paid Apple Developer ID. Don't claim
 
 ## Where state lives (not in the repo)
 
-- venv: `~/Library/Application Support/Parley/venv`
-- models: `~/Library/Application Support/Parley/models` (~340 MB, downloaded at
+- venv: `~/Library/Application Support/Yap/venv`
+- models: `~/Library/Application Support/Yap/models` (~340 MB, downloaded at
   runtime)
 
 Both are gitignored and machine-local. `scripts/run_backend.sh` builds the venv
@@ -140,18 +140,18 @@ models, the venv, `.build/`, or `dist/`.
 bash scripts/run_backend.sh
 
 # build the app bundle and launch it
-bash scripts/build_app.sh && open dist/Parley.app
+bash scripts/build_app.sh && open dist/Yap.app
 
 # Swift headless tests: preprocessing + clipboard-restore
-cd app && swift build && "$(swift build --show-bin-path)/Parley" --selftest
+cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 # Swift full-pipeline probe (clean -> stream) on any file, all profiles:
-"$(swift build --show-bin-path)/Parley" --pipetest ../README.md
+"$(swift build --show-bin-path)/Yap" --pipetest ../README.md
 
 # backend robustness suite (chunking, synth edges, long docs, providers, export)
-cd backend && "$HOME/Library/Application Support/Parley/venv/bin/python" -m pytest tests/ -v
+cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -v
 
 # package a release DMG
-bash scripts/make_dmg.sh        # -> dist/Parley-<version>.dmg
+bash scripts/make_dmg.sh        # -> dist/Yap-<version>.dmg
 ```
 
 The pytest suite (`backend/tests/test_tts.py`) is the robustness net: short /
@@ -167,7 +167,7 @@ What "validated" means here, in order of confidence:
 3. Backend endpoints answer: `curl localhost:8766/health` reports
    `model_loaded: true`; `/synthesize` streams non-empty PCM; `?format=wav`
    produces a playable file (`ffprobe` the duration).
-4. The bundled app cold-starts: wipe the venv, launch `/Applications/Parley.app`,
+4. The bundled app cold-starts: wipe the venv, launch `/Applications/Yap.app`,
    confirm it spawns its backend and `/health` goes green.
 
 **Audio output and GUI interactions (hotkey, capture, the Settings window) can't
@@ -188,18 +188,18 @@ Versioned in `app/Resources/Info.plist` (`CFBundleShortVersionString`).
 `make_dmg.sh` reads it for the DMG name. Cut a release with the DMG attached:
 
 ```bash
-gh release create vX.Y.Z dist/Parley-X.Y.Z.dmg --title "..." --notes "..."
+gh release create vX.Y.Z dist/Yap-X.Y.Z.dmg --title "..." --notes "..."
 # refresh an existing release's binary in place:
-gh release upload vX.Y.Z dist/Parley-X.Y.Z.dmg --clobber
+gh release upload vX.Y.Z dist/Yap-X.Y.Z.dmg --clobber
 ```
 
 App is ad-hoc signed, not notarized. Three install paths exist (see README):
 Homebrew cask, DMG + `xattr -cr`, build-from-source.
 
 **After every release, bump the Homebrew cask** in the separate
-`latent-variable/homebrew-tap` repo (`Casks/parley.rb`): update `version` and
-`sha256` (`shasum -a 256 dist/Parley-<v>.dmg`), commit, push. The cask's
-`postflight` runs `xattr -cr` so `brew install --cask latent-variable/tap/parley`
+`latent-variable/homebrew-tap` repo (`Casks/yap.rb`): update `version` and
+`sha256` (`shasum -a 256 dist/Yap-<v>.dmg`), commit, push. The cask's
+`postflight` runs `xattr -cr` so `brew install --cask latent-variable/tap/yap`
 installs with no Gatekeeper prompt. Forgetting this leaves brew users on the old
 version.
 
@@ -223,14 +223,14 @@ Default capture mode is **clipboard**, not Accessibility — AX selected-text is
 inconsistent across apps. The clipboard path saves the pasteboard, sends ⌘C,
 and **only accepts text if `changeCount` actually advanced**, then restores the
 original clipboard. It must never return the pre-existing clipboard on a failed
-copy — that's what made Parley "read text I didn't select." The
+copy — that's what made Yap "read text I didn't select." The
 clipboard-restore invariant is covered by `--selftest`; keep it green.
 
-## Services menu ("Read with Parley")
+## Services menu ("Read with Yap")
 
 A second entry point besides the hotkey: `NSServices` in `Info.plist` +
-`NSApp.servicesProvider = ServiceProvider()` in `ParleyApp.swift`. macOS hands
-the pasteboard text to `ServiceProvider.readWithParley(...)`, which calls
+`NSApp.servicesProvider = ServiceProvider()` in `YapApp.swift`. macOS hands
+the pasteboard text to `ServiceProvider.readWithYap(...)`, which calls
 `AppState.readAloud(_:)` — joins the read pipeline at preprocess, no capture.
 Gotchas: the provider and `AppDelegate` are `@MainActor` (Services dispatch on
 main), the error pointer is optional (never force-deref), and after install you

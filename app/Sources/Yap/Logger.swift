@@ -1,16 +1,16 @@
 import Foundation
 
 /// Tiny file logger so capture/runtime issues are inspectable.
-/// Writes to ~/Library/Application Support/Parley/parley.log and stderr.
+/// Writes to ~/Library/Application Support/Yap/yap.log and stderr.
 enum Log {
     static let url: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Parley")
+            .appending(path: "Yap")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appending(path: "parley.log")
+        return dir.appending(path: "yap.log")
     }()
 
-    private static let queue = DispatchQueue(label: "parley.log")
+    private static let queue = DispatchQueue(label: "yap.log")
     private static let fmt: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
     }()

@@ -1,6 +1,6 @@
 # TTS model watchlist
 
-Parley's hard constraints, in priority order:
+Yap's hard constraints, in priority order:
 
 1. **CPU-only, fast** — must run well on any Apple Silicon Mac with no GPU
    requirement (Kokoro on CPU benchmarks even-to-faster than CoreML; see AGENTS).

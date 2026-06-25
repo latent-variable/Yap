@@ -14,7 +14,7 @@ struct SettingsView: View {
             DiagnosticsTab().tabItem { Label("Diagnostics", systemImage: "stethoscope") }
         }
         .padding(16)
-        // Parley runs as an accessory (menu-bar only) app, whose windows can't
+        // Yap runs as an accessory (menu-bar only) app, whose windows can't
         // take keyboard focus — text fields (e.g. the custom-voice name) silently
         // reject typing. Promote to a regular app while Settings is open so its
         // window becomes key and accepts input, then drop back to accessory.
@@ -270,7 +270,7 @@ private struct CaptureTab: View {
                 HStack {
                     Image(systemName: trusted ? "checkmark.seal.fill" : "xmark.seal")
                         .foregroundStyle(trusted ? .green : .orange)
-                    Text(trusted ? "Granted — Parley can read your selected text"
+                    Text(trusted ? "Granted — Yap can read your selected text"
                                  : "Not granted")
                     Spacer()
                 }
@@ -281,7 +281,7 @@ private struct CaptureTab: View {
                 }
             }
             Section("Why this is needed") {
-                Text("macOS only lets a trusted app read another app's selected text, and only a trusted app can simulate ⌘C for the clipboard fallback. That's the sole reason Parley asks.")
+                Text("macOS only lets a trusted app read another app's selected text, and only a trusted app can simulate ⌘C for the clipboard fallback. That's the sole reason Yap asks.")
                     .font(.caption).foregroundStyle(.secondary)
                 Label("No keylogging, no screen reading, nothing sent anywhere — it reads only the text you select and trigger. All local, all open source.",
                       systemImage: "lock.shield")
@@ -532,7 +532,7 @@ private struct ModelsTab: View {
                 } else if state.backend.ownsProcess {
                     Button("Delete model", role: .destructive) { confirmDeleteKokoro = true }
                 } else {
-                    Text("Connected to a backend Parley didn't start — restart Parley to manage models.")
+                    Text("Connected to a backend Yap didn't start — restart Yap to manage models.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let e = dl.error { Text(e).font(.caption).foregroundStyle(.red) }
@@ -570,7 +570,7 @@ private struct ModelsTab: View {
                 } else if state.backend.ownsProcess {
                     Button("Delete model", role: .destructive) { confirmDeleteHD = true }
                 } else {
-                    Text("Connected to a backend Parley didn't start — restart Parley to manage models.")
+                    Text("Connected to a backend Yap didn't start — restart Yap to manage models.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -630,7 +630,7 @@ private struct ModelsTab: View {
             Button("Delete", role: .destructive) { kokoroSize = nil; state.deleteKokoroModel() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Frees ~340 MB. Parley can't speak with Kokoro until you download it again.")
+            Text("Frees ~340 MB. Yap can't speak with Kokoro until you download it again.")
         }
         .confirmationDialog("Delete the HD model?", isPresented: $confirmDeleteHD, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { hdSize = nil; state.deleteHDModel() }
@@ -672,7 +672,7 @@ private struct DiagnosticsTab: View {
                 Button("Recheck") { Task { await refresh() } }
                 Button("Open backend log") {
                     NSWorkspace.shared.open(FileManager.default.temporaryDirectory
-                        .appending(path: "parley_backend.log"))
+                        .appending(path: "yap_backend.log"))
                 }
             }
             Section("Acceleration") {

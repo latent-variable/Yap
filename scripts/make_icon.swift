@@ -1,5 +1,5 @@
 #!/usr/bin/env swift
-// Renders Parley's app icon to app/Resources/AppIcon.icns (+ a 1024 preview PNG).
+// Renders Yap's app icon to app/Resources/AppIcon.icns (+ a 1024 preview PNG).
 // Apple-style rounded-square tile, indigo gradient, white waveform mark.
 // Run: swift scripts/make_icon.swift
 import AppKit
@@ -49,8 +49,8 @@ func render(_ px: Int) -> Data {
     sheen.draw(in: NSRect(x: rect.minX, y: rect.midY, width: rect.width, height: rect.height / 2), angle: -90)
 
     // Waveform: rounded vertical bars, symmetric, centered.
-    // Parley mark: a voice waveform (center) wrapped by sound arcs radiating
-    // out BOTH sides — speaking and listening, the two-way "parley". Distinct
+    // Yap mark: a voice waveform (center) wrapped by sound arcs radiating
+    // out BOTH sides — speaking and listening, the two-way "yap". Distinct
     // from a plain waveform.
     let cx = rect.midX, cy = rect.midY
 

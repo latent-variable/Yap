@@ -25,10 +25,10 @@ while [ $# -gt 0 ]; do
 done
 
 PLIST="$ROOT/app/Resources/Info.plist"
-TAP_DIR="${PARLEY_TAP_DIR:-$ROOT/../homebrew-tap}"
-CASK="$TAP_DIR/Casks/parley.rb"
+TAP_DIR="${YAP_TAP_DIR:-${PARLEY_TAP_DIR:-$ROOT/../homebrew-tap}}"
+CASK="$TAP_DIR/Casks/yap.rb"
 TAG="v$VERSION"
-DMG="$ROOT/dist/Parley-$VERSION.dmg"
+DMG="$ROOT/dist/Yap-$VERSION.dmg"
 say() { printf '\n\033[1m[release] %s\033[0m\n' "$1"; }
 
 # ---- preflight ----
@@ -78,10 +78,10 @@ git -C "$ROOT" commit -qm "Release $TAG"
 git -C "$ROOT" push -q origin HEAD
 
 say "creating GitHub release $TAG"
-gh release create "$TAG" "$DMG" --title "Parley $VERSION" "${NOTES_ARGS[@]}"
+gh release create "$TAG" "$DMG" --title "Yap $VERSION" "${NOTES_ARGS[@]}"
 
 say "bumping Homebrew cask"
-git -C "$TAP_DIR" commit -aqm "Parley $VERSION"
+git -C "$TAP_DIR" commit -aqm "Yap $VERSION"
 git -C "$TAP_DIR" push -q origin HEAD
 
 say "done — $TAG published, cask points at it."

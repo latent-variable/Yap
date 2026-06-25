@@ -1,7 +1,7 @@
 import Foundation
 
 /// Headless exercise of the real Swift pipeline (clean → stream) without UI or
-/// audio. Run: `Parley --pipetest <file> [profile]`. Reports per-profile
+/// audio. Run: `Yap --pipetest <file> [profile]`. Reports per-profile
 /// cleaning size, first-byte latency, total PCM, chunking, and any error — the
 /// same code paths the app uses, so failures here reproduce app failures.
 enum CLITest {

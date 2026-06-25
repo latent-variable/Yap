@@ -1,4 +1,4 @@
-"""Robustness + latency tests for the Parley backend.
+"""Robustness + latency tests for the Yap backend.
 
 Run: cd backend && source <venv>/bin/activate && pip install pytest httpx
      pytest tests/ -v
@@ -78,7 +78,7 @@ class TestSoftWrapReflow:
         assert [s for s, _ in segs] == ["First para.", "Second para."]
         assert segs[0][1] == GAP_PARAGRAPH
 
-MODELS = Path.home() / "Library/Application Support/Parley/models"
+MODELS = Path.home() / "Library/Application Support/Yap/models"
 HAVE_MODEL = (MODELS / "kokoro-v1.0.onnx").exists() and (MODELS / "voices-v1.0.bin").exists()
 needs_model = pytest.mark.skipif(not HAVE_MODEL, reason="model files not installed")
 
@@ -237,7 +237,7 @@ class TestSynth:
         assert isinstance(a, np.ndarray)
 
     def test_single_word(self, engine):
-        assert len(self.synth(engine, "Parley")) > 0
+        assert len(self.synth(engine, "Yap")) > 0
 
     def test_dense_max_chunk(self, engine):
         # a full 320-char chunk of real words (chunk-size boundary stress)

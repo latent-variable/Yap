@@ -4,14 +4,14 @@ Runs merge_for_hd on sample texts, generates each chunk for real on MPS, and
 replays the streaming timeline with the measured (not modelled) generate times
 to confirm: fast first audio + no buffer underrun (gaps).
 
-  PYTHONPATH="$HOME/Library/Application Support/Parley/hd-packages" \
+  PYTHONPATH="$HOME/Library/Application Support/Yap/hd-packages" \
     python3 backend/tools/validate_hd_stream.py
 """
 import sys
 import time
 from pathlib import Path
 
-HD = Path.home() / "Library/Application Support/Parley/hd-packages"
+HD = Path.home() / "Library/Application Support/Yap/hd-packages"
 sys.path.insert(0, str(HD))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/ for server
 
@@ -28,9 +28,9 @@ sys.argv = ["x"]
 from server import segment_text, merge_for_hd
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 
-_refs = sorted((Path.home() / "Library/Application Support/Parley/hd-voices").glob("*.wav"))
+_refs = sorted((Path.home() / "Library/Application Support/Yap/hd-voices").glob("*.wav"))
 if not _refs:
-    sys.exit("no HD reference voices in ~/Library/Application Support/Parley/hd-voices — "
+    sys.exit("no HD reference voices in ~/Library/Application Support/Yap/hd-voices — "
              "add one (or run the starter-voices fetch) before profiling.")
 REF = _refs[0]
 dev = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -39,7 +39,7 @@ m.prepare_conditionals(str(REF))
 m.generate("Warm up the graph.")  # compile once
 
 SAMPLES = {
-    "readme": "Parley reads selected text aloud. Press the hotkey and it speaks. It "
+    "readme": "Yap reads selected text aloud. Press the hotkey and it speaks. It "
               "works fully offline. Kokoro is the default engine, fast and light. "
               "Chatterbox Turbo is the optional HD engine, cloning any voice from a "
               "short clip. Both stream as you listen, so you start hearing it fast.",

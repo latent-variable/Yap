@@ -104,7 +104,7 @@ struct BackendClient {
                                engine: engine, wav: false)
         let (bytes, response) = try await session.bytes(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw NSError(domain: "Parley", code: http.statusCode,
+            throw NSError(domain: "Yap", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "backend HTTP \(http.statusCode)"])
         }
         // Collect into a contiguous [UInt8] (amortized O(1) append, no Data
@@ -129,7 +129,7 @@ struct BackendClient {
                                engine: engine, wav: true)
         let (data, response) = try await session.data(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw NSError(domain: "Parley", code: http.statusCode,
+            throw NSError(domain: "Yap", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "backend HTTP \(http.statusCode)"])
         }
         return data

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time: create a STABLE self-signed code-signing identity so every Parley
+# One-time: create a STABLE self-signed code-signing identity so every Yap
 # build shares one code identity. macOS then ties your Accessibility grant to
 # the certificate, not the binary hash — so it survives every rebuild. Grant
 # once, never again.
@@ -11,9 +11,9 @@
 #   bash scripts/setup_signing.sh --remove   # undo
 set -euo pipefail
 
-NAME="Parley Local Signing"
-SIGN_KC="$HOME/Library/Keychains/parley-signing.keychain-db"
-KCPW="parley-local"   # password for THIS keychain only
+NAME="Yap Local Signing"
+SIGN_KC="$HOME/Library/Keychains/yap-signing.keychain-db"
+KCPW="yap-local"   # password for THIS keychain only
 
 current_keychains() { security list-keychains -d user | sed 's/^[[:space:]]*//; s/"//g'; }
 
@@ -62,10 +62,10 @@ else
   LEGACY_ARGS=()
 fi
 openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -out "$TMP/id.p12" \
-  -passout pass:parley -name "$NAME" "${LEGACY_ARGS[@]}" >/dev/null 2>&1
+  -passout pass:yap -name "$NAME" "${LEGACY_ARGS[@]}" >/dev/null 2>&1
 
 echo "[sign] importing + authorizing codesign (non-interactive)"
-security import "$TMP/id.p12" -k "$SIGN_KC" -P parley -T /usr/bin/codesign -A >/dev/null
+security import "$TMP/id.p12" -k "$SIGN_KC" -P yap -T /usr/bin/codesign -A >/dev/null
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPW" "$SIGN_KC" >/dev/null 2>&1
 
 # add the signing keychain to the search list (keep existing ones)
@@ -86,7 +86,7 @@ if codesign --force --sign "$NAME" --keychain "$SIGN_KC" "$VTMP/echo" 2>/dev/nul
   echo "✓ '$NAME' ready (dedicated keychain, no prompts)."
   echo "  Rebuild + reinstall once, grant Accessibility once, and it sticks"
   echo "  across every future build:"
-  echo "    bash scripts/build_app.sh && cp -R dist/Parley.app /Applications/"
+  echo "    bash scripts/build_app.sh && cp -R dist/Yap.app /Applications/"
 else
   rm -rf "$VTMP"
   echo "✗ setup failed — codesign could not use the identity."

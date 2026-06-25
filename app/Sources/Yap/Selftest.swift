@@ -106,11 +106,33 @@ enum Selftest {
                 TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
                 "one two . three")
 
+        print("AppMigration — recursive merge never strands files")
+        do {
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appending(path: "yap-migtest-\(UUID().uuidString)")
+            let src = root.appending(path: "Parley")
+            let dst = root.appending(path: "Yap")
+            // src has a cloned voice; dst/hd-voices ALREADY exists but empty — the
+            // exact trap a shallow per-child move would skip (silent data loss).
+            try? fm.createDirectory(at: src.appending(path: "hd-voices"), withIntermediateDirectories: true)
+            fm.createFile(atPath: src.appending(path: "hd-voices/Lino.wav").path, contents: Data("voice".utf8))
+            fm.createFile(atPath: src.appending(path: "yap.log").path, contents: Data("log".utf8))
+            try? fm.createDirectory(at: dst.appending(path: "hd-voices"), withIntermediateDirectories: true)
+            AppMigration.merge(src, into: dst, fm: fm)
+            if fm.fileExists(atPath: dst.appending(path: "hd-voices/Lino.wav").path) { print("  ✓ file merged into pre-existing dst subdir") }
+            else { failures += 1; print("  ✗ file STRANDED — data loss") }
+            if fm.fileExists(atPath: dst.appending(path: "yap.log").path) { print("  ✓ top-level file moved") }
+            else { failures += 1; print("  ✗ top-level file not moved") }
+            if !fm.fileExists(atPath: src.path) { print("  ✓ emptied source removed") }
+            else { failures += 1; print("  ✗ source dir left behind") }
+            try? fm.removeItem(at: root)
+        }
+
         print("Clipboard — capture never permanently overwrites it")
         let pb = NSPasteboard.general
         // Save the user's real clipboard so the test itself isn't destructive.
         let userClipboard = pb.string(forType: .string)
-        let sentinel = "parley-sentinel-\(UUID().uuidString)"
+        let sentinel = "yap-sentinel-\(UUID().uuidString)"
         pb.clearContents(); pb.setString(sentinel, forType: .string)
         // viaClipboard sends Cmd+C (no selection here), must restore sentinel.
         _ = TextCapture.viaClipboard()

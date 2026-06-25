@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "Parley",
+    name: "Yap",
     platforms: [.macOS(.v14)],
     dependencies: [
         // Native Parakeet ASR on the Apple Neural Engine (the "ears").
@@ -10,11 +10,11 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "Parley",
+            name: "Yap",
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
-            path: "Sources/Parley",
+            path: "Sources/Yap",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]

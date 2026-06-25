@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The two halves of Parley: ears (dictation) first — used most often — then
+/// The two halves of Yap: ears (dictation) first — used most often — then
 /// voice (text-to-speech). Persisted so the popover reopens where you left it.
 enum MenuTab: String { case ears, voice }
 
@@ -115,7 +115,7 @@ struct MenuContent: View {
         HStack(spacing: 10) {
             brandMark
             VStack(alignment: .leading, spacing: 1) {
-                Text("Parley").font(.headline)
+                Text("Yap").font(.headline)
                 Text(state.preparing ? state.preparingDetail : state.status.label)
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -90,7 +90,7 @@ enum TextCapture {
     /// Clipboard fallback: save pasteboard, send Cmd+C, read the *fresh* copy,
     /// restore the original. Returns nil if Cmd+C produced no new clipboard
     /// content — critically, it never returns the pre-existing clipboard, so a
-    /// failed copy can't make Parley read text the user didn't select.
+    /// failed copy can't make Yap read text the user didn't select.
     static func viaClipboard() -> String? {
         let pb = NSPasteboard.general
         let saved = snapshot(pb)
