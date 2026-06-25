@@ -75,6 +75,32 @@ enum Selftest {
               contains: ["⌥", "⌘"])
         check("describe unset", KeyName.describe(HotKeyCombo(keyCode: 0, modifiers: 0)), contains: ["Unset"])
 
+        print("TranscriptStitch — live tail onto accurate head")
+        func checkEq(_ name: String, _ got: String, _ want: String) {
+            if got == want { print("  ✓ \(name)") }
+            else { failures += 1; print("  ✗ \(name): got «\(got)» want «\(want)»") }
+        }
+        checkEq("empty refined -> partial",
+                TranscriptStitch.merge(refined: "", partial: "hello there"), "hello there")
+        checkEq("empty partial -> refined",
+                TranscriptStitch.merge(refined: "Hello there.", partial: ""), "Hello there.")
+        // Refined's tail anchors in partial; only the words past it are appended.
+        checkEq("anchor appends live tail",
+                TranscriptStitch.merge(refined: "The quick brown", partial: "the quick brown fox jumps"),
+                "The quick brown fox jumps")
+        // Anchor matches across casing + punctuation differences between models.
+        checkEq("anchor ignores case/punctuation",
+                TranscriptStitch.merge(refined: "Hello, world.", partial: "hello world today"),
+                "Hello, world. today")
+        // Partial caught up to refined — nothing new to append.
+        checkEq("no new words keeps refined",
+                TranscriptStitch.merge(refined: "all done here", partial: "all done here"),
+                "all done here")
+        // No anchor match (disjoint) — fall back to word-count stitch.
+        checkEq("count fallback when no anchor",
+                TranscriptStitch.merge(refined: "alpha", partial: "alpha beta gamma"),
+                "alpha beta gamma")
+
         print("Clipboard — capture never permanently overwrites it")
         let pb = NSPasteboard.general
         // Save the user's real clipboard so the test itself isn't destructive.

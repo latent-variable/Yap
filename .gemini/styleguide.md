@@ -37,3 +37,9 @@ should NOT be flagged.
 - **`MainActor.assumeIsolated` in main-thread-only callbacks.** Used only where
   the callback is documented to be delivered on the main thread (NSWorkspace app
   activation, willTerminate). Not an unchecked assumption.
+
+- **Audio concat in `Dictation.refineLoop` is already off the main actor.** The
+  loop is `@MainActor`, but it reads only a cheap `recorder.frameCount` on main
+  for its gates; the heavy `BufferQueue.concat` (and the `snapshot()`) run inside
+  `await Task.detached(priority: .userInitiated) { ... }`. Don't flag the concat
+  as a main-thread block — it isn't on main.

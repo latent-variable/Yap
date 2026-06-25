@@ -142,6 +142,51 @@ final class DictationController: ObservableObject {
     }
 }
 
+/// Combine the accurate rolling preview (`refined`) with the live streaming
+/// transcript (`partial`) for the dictation HUD.
+///
+/// Both are full running transcripts of the same audio: `refined` (batch model)
+/// lags ~1s but is accurate; `partial` (streaming model) has the newest words
+/// instantly but is lossy. We show `refined` for the settled head and append
+/// only the streaming words PAST where refined has reached, so the latest words
+/// stream live and get absorbed + corrected on the next refine pass.
+///
+/// Finding the seam by raw word count alone duplicates or drops words when the
+/// two models tokenize the same audio differently (punctuation, casing). So
+/// anchor on refined's last two words (normalized) and locate them in `partial`,
+/// appending only what follows. Fall back to the count split when no anchor
+/// matches. Pure + deterministic — unit-tested in `Selftest`.
+enum TranscriptStitch {
+    static func merge(refined: String, partial: String) -> String {
+        if refined.isEmpty { return partial }
+        if partial.isEmpty { return refined }
+        let r = refined.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let p = partial.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        // Anchor on refined's last two words to find the seam inside partial.
+        if r.count >= 2, p.count >= 2 {
+            let a1 = norm(r[r.count - 2]), a2 = norm(r[r.count - 1])
+            var i = p.count - 2
+            while i >= 0 {
+                if norm(p[i]) == a1, norm(p[i + 1]) == a2 {
+                    let tail = i + 2
+                    guard tail < p.count else { return refined }  // nothing new past the anchor
+                    return refined + " " + p[tail...].joined(separator: " ")
+                }
+                i -= 1
+            }
+        }
+        // No anchor: append partial's words beyond refined's length (or trust
+        // refined when the lossy model has produced fewer words).
+        guard p.count > r.count else { return refined }
+        return refined + " " + p[r.count...].joined(separator: " ")
+    }
+
+    /// Lowercase + strip surrounding punctuation so "World." anchors to "world".
+    private static func norm(_ w: String) -> String {
+        w.lowercased().trimmingCharacters(in: .punctuationCharacters)
+    }
+}
+
 /// Natural height of the transcript text (drives the in-box grow-then-scroll).
 private struct TextHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
@@ -267,27 +312,9 @@ struct DictationHUD: View {
         }
     }
 
-    /// What the box shows: accurate head + live tail. The precise rolling preview
-    /// (`refined`) covers everything up to ~1s ago; the fast streaming model
-    /// (`partial`) has the newest words instantly but lags in accuracy. So show
-    /// `refined` for the settled head and append only the streaming words BEYOND
-    /// what refined has reached — those stream in real time, then get absorbed and
-    /// corrected on the next refine pass. Best of both: instant newest words, a
-    /// stable self-correcting body.
-    ///
-    /// Stitch by word count: both are full running transcripts, so when the
-    /// streaming model has more words than refined, the extra trailing words are
-    /// the not-yet-refined tail. (When it has fewer — the lossy model dropped a
-    /// word — just trust refined.)
+    /// What the box shows: accurate head + live tail — see `TranscriptStitch`.
     private var displayText: String {
-        let refined = dictation.refined
-        let partial = dictation.partial
-        if refined.isEmpty { return partial }
-        if partial.isEmpty { return refined }
-        let r = refined.split(whereSeparator: { $0.isWhitespace })
-        let p = partial.split(whereSeparator: { $0.isWhitespace })
-        guard p.count > r.count else { return refined }
-        return refined + " " + p[r.count...].joined(separator: " ")
+        TranscriptStitch.merge(refined: dictation.refined, partial: dictation.partial)
     }
 
     private var transcriptText: String {
