@@ -55,22 +55,28 @@ final class DictationController: ObservableObject {
             playChime(start: false)
             Task {
                 let text = await dictation.stopAndTranscribe()
-                hideHUD()
-                guard let text else { return }
+                guard let text else { hideHUD(); return }
                 // Pasting fires a synthetic ⌘V, which needs Accessibility. Without
                 // it the keystroke is dropped. Don't run the normal paste path then:
                 // it would set the clipboard, fail to paste, and 0.6s later RESTORE
                 // the old clipboard — wiping the dictated text. Instead leave the
-                // text on the clipboard (no restore) so the user can ⌘V it manually,
-                // and open the Accessibility pane so the next dictation just works.
+                // text on the clipboard (no restore), keep the HUD up with a clear
+                // message, and open the Accessibility pane so the next dictation
+                // just works.
                 guard Permissions.axTrusted else {
                     let pb = NSPasteboard.general
                     pb.clearContents()
                     pb.setString(text, forType: .string)
+                    dictation.note("Copied. Enable Accessibility for Yap, then ⌘V to paste.")
                     Permissions.requestAX()
                     Permissions.openAXSettings()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                        self?.dictation.clearError()
+                        self?.hideHUD()
+                    }
                     return
                 }
+                hideHUD()
                 TextInsert.insertAtCursor(text)
             }
         case .loadingModel, .transcribing:

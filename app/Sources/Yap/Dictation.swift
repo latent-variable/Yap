@@ -306,6 +306,10 @@ final class Dictation: ObservableObject {
 
     func clearError() { if case .error = state { state = .idle } }
 
+    /// Surface a transient message in the HUD (reuses the error display channel,
+    /// e.g. "copied — grant Accessibility to paste"). Cleared by `clearError`.
+    func note(_ message: String) { state = .error(message) }
+
     // MARK: - on-disk model management (for the Models settings tab)
 
     /// Where FluidAudio caches downloaded ASR models.
