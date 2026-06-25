@@ -42,6 +42,12 @@ final class Dictation: ObservableObject {
     /// Live transcript while listening — drives the HUD. Full running transcript,
     /// self-correcting, not a per-chunk fragment.
     @Published private(set) var partial = ""
+    /// Rolling high-accuracy preview: the batch model (same one used for the final
+    /// pass) re-transcribed over everything captured so far, refreshed ~1/sec while
+    /// you talk. The fast streaming `partial` cuts/misses words; this reads at
+    /// final-pass quality, so the preview converges to exactly the inserted text.
+    /// The HUD prefers this when present, falling back to `partial` otherwise.
+    @Published private(set) var refined = ""
     @Published private(set) var lastFinal = ""
 
     private var manager: (any StreamingAsrManager)?
@@ -59,6 +65,7 @@ final class Dictation: ObservableObject {
     private var finalASR: AsrManager?
     private var finalVersionLoaded: AsrModelVersion?
     private var finalTask: Task<Void, Never>?   // tracked final-pass (v2/v3) warm-up
+    private var refineTask: Task<Void, Never>?  // rolling accurate-preview loop
 
     var isListening: Bool { state == .listening }
 
@@ -167,9 +174,11 @@ final class Dictation: ObservableObject {
                 do {
                     try await manager.reset()
                     self.partial = ""
+                    self.refined = ""
                     _ = self.recorder.drain()   // clear last session's audio
                     try self.beginCapture(into: manager)
                     self.state = .listening
+                    self.startRefineLoop()      // accurate preview, layered over streaming
                 } catch {
                     self.state = .error("Mic start failed: \(error.localizedDescription)")
                 }
@@ -188,6 +197,13 @@ final class Dictation: ObservableObject {
         pump?.cancel()
         await pump?.value
         pump = nil
+        // Stop the accurate-preview loop and WAIT for it. A refine pass may have a
+        // transcribe in-flight on the shared `finalASR`, and the final pass below
+        // uses that same instance — awaiting serializes them so they never hit the
+        // ASR engine concurrently (AsrManager isn't documented thread-safe).
+        refineTask?.cancel()
+        await refineTask?.value
+        refineTask = nil
         state = .transcribing
         do {
             // Feed anything still queued, then finish the live stream.
@@ -204,6 +220,7 @@ final class Dictation: ObservableObject {
             if Prefs.shared.removeFillers { text = Fillers.clean(text) }
             lastFinal = text
             partial = ""
+            refined = ""
             state = .idle
             return text.isEmpty ? nil : text
         } catch {
@@ -226,6 +243,64 @@ final class Dictation: ObservableObject {
             return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             return nil
+        }
+    }
+
+    // MARK: - rolling accurate preview
+
+    /// Start the loop that publishes `refined` while listening. Cancelled on stop.
+    private func startRefineLoop() {
+        refineTask?.cancel()
+        refineTask = Task { [weak self] in await self?.refineLoop() }
+    }
+
+    /// Periodically re-transcribe everything captured so far with the high-accuracy
+    /// batch model and publish it as `refined`, so the HUD reads at final-pass
+    /// quality instead of the lossy streaming `partial`. Sequential — each pass
+    /// awaits the previous, so it self-throttles: short utterances refresh ~1/sec,
+    /// longer ones as fast as the decode allows (no overlap, no pile-up).
+    private func refineLoop() async {
+        var lastFrames = 0
+        while !Task.isCancelled {
+            do { try await Task.sleep(nanoseconds: 800_000_000) } catch { break }
+            guard state == .listening else { break }
+            // Past the 180s recorder cap (a very long hold) we can't re-transcribe
+            // the whole utterance any more — drop `refined` so the HUD falls back to
+            // the live streaming `partial` for the tail instead of freezing on stale
+            // text. (The final pass on stop is skipped past the cap too.)
+            // Overflow latches on for the rest of the session, so stop the loop
+            // (don't spin every 0.8s) — the HUD falls back to the live partial.
+            if recorder.overflowed { if !refined.isEmpty { refined = "" }; break }
+            // Need the accurate model, matching the live engine. Otherwise leave the
+            // streaming `partial` to drive the HUD.
+            guard let finalASR, finalVersionLoaded == engineChoice.finalVersion else { continue }
+            // Cheap frame count on the main actor for the gates; the expensive
+            // snapshot + concat (a memcpy of the whole utterance) runs off-main so a
+            // long hold can't stutter the UI.
+            let frames = recorder.frameCount
+            // Skip until there's roughly a sentence's worth, and only when new audio
+            // has arrived since the last pass. No upper cap: passes run sequentially
+            // (await each before the next), so a long hold just refreshes more slowly
+            // — it never piles up or freezes.
+            let secs = Double(frames) / (captureFormat?.sampleRate ?? 16_000)
+            guard secs >= 0.8, frames > lastFrames else { continue }
+            lastFrames = frames
+            let rec = recorder
+            // The result is a freshly-allocated, unshared buffer; wrap it so the
+            // unchecked-Sendable assertion stays contained to this handoff instead
+            // of retroactively conforming the framework type.
+            let box = await Task.detached(priority: .userInitiated) {
+                BufferQueue.concat(rec.snapshot().buffers).map(SendableBufferBox.init)
+            }.value
+            guard let combined = box?.buffer else { continue }
+            var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
+            guard let result = try? await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
+            else { continue }
+            // A stop / engine switch may have landed during the decode — don't stamp
+            // a stale preview over the cleared state.
+            guard !Task.isCancelled, state == .listening else { break }
+            let txt = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !txt.isEmpty { refined = txt }
         }
     }
 
@@ -252,6 +327,8 @@ final class Dictation: ObservableObject {
         loadTask = nil
         finalTask?.cancel()
         finalTask = nil
+        refineTask?.cancel()
+        refineTask = nil
         manager = nil
         finalASR = nil
         finalVersionLoaded = nil
@@ -303,6 +380,11 @@ final class Dictation: ObservableObject {
     }
 }
 
+/// Wraps a freshly-allocated, unshared `AVAudioPCMBuffer` so it can be returned
+/// from a detached task to the main actor without retroactively conforming the
+/// non-Sendable framework type. The buffer is read-only after creation.
+private struct SendableBufferBox: @unchecked Sendable { let buffer: AVAudioPCMBuffer }
+
 /// Thread-safe FIFO handoff of mic buffers from the render thread to the ASR
 /// pump task.
 private final class BufferQueue: @unchecked Sendable {
@@ -324,6 +406,18 @@ private final class BufferQueue: @unchecked Sendable {
     }
 
     var overflowed: Bool { lock.lock(); defer { lock.unlock() }; return overflowedFlag }
+
+    /// Current frame count alone — cheap gate for the preview loop, so it can read
+    /// length on the main actor without copying the buffer array.
+    var frameCount: Int { lock.lock(); defer { lock.unlock() }; return frames }
+
+    /// Copy the current buffers + frame count WITHOUT draining — for the rolling
+    /// accurate preview, which re-reads the growing audio while capture keeps
+    /// appending. Buffers are already immutable deep-copies, so sharing refs is safe.
+    func snapshot() -> (buffers: [AVAudioPCMBuffer], frames: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (items, frames)
+    }
 
     func drain() -> [AVAudioPCMBuffer] {
         lock.lock()

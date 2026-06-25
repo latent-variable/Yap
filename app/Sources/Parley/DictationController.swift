@@ -142,6 +142,58 @@ final class DictationController: ObservableObject {
     }
 }
 
+/// Combine the accurate rolling preview (`refined`) with the live streaming
+/// transcript (`partial`) for the dictation HUD.
+///
+/// Both are full running transcripts of the same audio: `refined` (batch model)
+/// lags ~1s but is accurate; `partial` (streaming model) has the newest words
+/// instantly but is lossy. We show `refined` for the settled head and append
+/// only the streaming words PAST where refined has reached, so the latest words
+/// stream live and get absorbed + corrected on the next refine pass.
+///
+/// Finding the seam by raw word count alone duplicates or drops words when the
+/// two models tokenize the same audio differently (punctuation, casing). So
+/// anchor on refined's last two words (normalized) and locate them in `partial`,
+/// appending only what follows. Fall back to the count split when no anchor
+/// matches. Pure + deterministic — unit-tested in `Selftest`.
+enum TranscriptStitch {
+    static func merge(refined: String, partial: String) -> String {
+        if refined.isEmpty { return partial }
+        if partial.isEmpty { return refined }
+        // Keep these as Substrings (no per-word String allocation) — merge runs
+        // several times a second on the HUD's main thread.
+        let r = refined.split(whereSeparator: { $0.isWhitespace })
+        let p = partial.split(whereSeparator: { $0.isWhitespace })
+        // Anchor on refined's last two words to find the seam inside partial.
+        // Both anchors must be non-empty: a punctuation-only token (e.g. a stray
+        // "." split off) normalizes to "" and would match anything — skip to the
+        // count fallback instead of mis-anchoring.
+        if r.count >= 2, p.count >= 2 {
+            let a1 = norm(r[r.count - 2]), a2 = norm(r[r.count - 1])
+            if !a1.isEmpty, !a2.isEmpty {
+                var i = p.count - 2
+                while i >= 0 {
+                    if norm(p[i]) == a1, norm(p[i + 1]) == a2 {
+                        let tail = i + 2
+                        guard tail < p.count else { return refined }  // nothing new past the anchor
+                        return refined + " " + p[tail...].joined(separator: " ")
+                    }
+                    i -= 1
+                }
+            }
+        }
+        // No anchor: append partial's words beyond refined's length (or trust
+        // refined when the lossy model has produced fewer words).
+        guard p.count > r.count else { return refined }
+        return refined + " " + p[r.count...].joined(separator: " ")
+    }
+
+    /// Lowercase + strip surrounding punctuation so "World." anchors to "world".
+    private static func norm(_ w: Substring) -> String {
+        w.lowercased().trimmingCharacters(in: .punctuationCharacters)
+    }
+}
+
 /// Natural height of the transcript text (drives the in-box grow-then-scroll).
 private struct TextHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
@@ -165,10 +217,11 @@ struct DictationHUD: View {
         self.dictation = controller.dictation
     }
 
-    // Transcript area grows line-by-line up to ~4 lines, then scrolls.
-    @State private var textHeight: CGFloat = 24
-    private let oneLine: CGFloat = 24
-    private let maxTextHeight: CGFloat = 72   // ~3 lines at 15pt, then it scrolls
+    // Transcript area grows line-by-line, then scrolls. Smaller 13pt text fits
+    // more context on screen, so the cap holds ~5 lines before scrolling.
+    @State private var textHeight: CGFloat = 20
+    private let oneLine: CGFloat = 20
+    private let maxTextHeight: CGFloat = 100   // ~5 lines at 13pt, then it scrolls
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -206,8 +259,8 @@ struct DictationHUD: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 Text(transcriptText)
-                    .font(.system(size: 15))
-                    .foregroundStyle(dictation.partial.isEmpty ? .secondary : .primary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(displayText.isEmpty ? .secondary : .primary)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .background(GeometryReader { g in
                         Color.clear.preference(key: TextHeightKey.self, value: g.size.height)
@@ -233,7 +286,7 @@ struct DictationHUD: View {
                 // there's no clip to smooth over anyway.
                 textHeight = h
             }
-            .onChange(of: dictation.partial) {
+            .onChange(of: displayText) {
                 // Keep the latest words visible only when scrolling (overflow); while
                 // it still fits, top-alignment already shows everything.
                 guard overflowing else { return }
@@ -266,11 +319,16 @@ struct DictationHUD: View {
         }
     }
 
+    /// What the box shows: accurate head + live tail — see `TranscriptStitch`.
+    private var displayText: String {
+        TranscriptStitch.merge(refined: dictation.refined, partial: dictation.partial)
+    }
+
     private var transcriptText: String {
         if case .error(let m) = dictation.state { return m }
-        if dictation.partial.isEmpty {
+        if displayText.isEmpty {
             return dictation.state == .listening ? "Speak now…" : " "
         }
-        return dictation.partial
+        return displayText
     }
 }
