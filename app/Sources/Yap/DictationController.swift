@@ -56,7 +56,16 @@ final class DictationController: ObservableObject {
             Task {
                 let text = await dictation.stopAndTranscribe()
                 hideHUD()
-                if let text { TextInsert.insertAtCursor(text) }
+                guard let text else { return }
+                // Pasting fires a synthetic ⌘V, which needs Accessibility. Without
+                // it the keystroke is silently dropped — text transcribes but never
+                // lands. Prompt + open the pane so the user isn't left guessing; the
+                // text is already on the clipboard, so they can ⌘V once granted.
+                if !Permissions.axTrusted {
+                    Permissions.requestAX()
+                    Permissions.openAXSettings()
+                }
+                TextInsert.insertAtCursor(text)
             }
         case .loadingModel, .transcribing:
             break   // mid-flight — ignore re-trigger
