@@ -68,6 +68,17 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Hash a 325 MB model off the main thread (the delegate queue is .main, and
+    /// next() runs on main), then deliver the verdict back on main so `index`
+    /// and @Published state stay single-threaded. Keeps the UI responsive during
+    /// the ~1.5s-per-file verify instead of freezing it.
+    private func verify(_ dest: URL, against expected: String, then done: @escaping (Bool) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let ok = self?.sha256(of: dest) == expected
+            DispatchQueue.main.async { done(ok) }
+        }
+    }
+
     private func next() {
         guard index < files.count else {
             ui { self.downloading = false; self.done = true; self.statusText = "Done"; self.progress = 1 }
@@ -81,12 +92,22 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
             // a bypass: a file from old (pre-pin) code, a stalled partial, or one
             // tampered after a prior good download would otherwise be skipped and
             // loaded unchecked. Match → skip; mismatch/unreadable → delete and
-            // fall through to re-download.
-            if sha256(of: dest) == f.sha256 {
-                index += 1; next(); return
+            // fall through to re-download. Hash off-main so the UI doesn't freeze.
+            ui { self.statusText = "Verifying \(f.name)…" }
+            verify(dest, against: f.sha256) { [weak self] ok in
+                guard let self else { return }
+                if ok { self.index += 1; self.next(); return }
+                try? FileManager.default.removeItem(at: dest)
+                self.startDownload(f)
             }
-            try? FileManager.default.removeItem(at: dest)
+            return
         }
+        startDownload(f)
+    }
+
+    /// Kick off the URLSession download for one file (already verified absent or
+    /// rejected). On main per the delegate-queue contract.
+    private func startDownload(_ f: (name: String, url: String, sha256: String)) {
         ui { self.statusText = "Downloading \(f.name)…" }
         session.downloadTask(with: URL(string: f.url)!).resume()
     }
@@ -117,17 +138,21 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
             return
         }
         // Integrity gate: reject (and delete) anything that doesn't match the
-        // pinned hash before it can be loaded into onnxruntime.
-        guard sha256(of: dest) == f.sha256 else {
-            try? FileManager.default.removeItem(at: dest)
-            ui {
-                self.error = "Checksum mismatch for \(f.name) — file rejected, not installed. Try again."
-                self.downloading = false
+        // pinned hash before it can be loaded into onnxruntime. Hash off-main.
+        ui { self.statusText = "Verifying \(f.name)…" }
+        verify(dest, against: f.sha256) { [weak self] ok in
+            guard let self else { return }
+            guard ok else {
+                try? FileManager.default.removeItem(at: dest)
+                self.ui {
+                    self.error = "Checksum mismatch for \(f.name) — file rejected, not installed. Try again."
+                    self.downloading = false
+                }
+                return
             }
-            return
+            self.index += 1
+            self.next()
         }
-        index += 1
-        next()
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError err: Error?) {

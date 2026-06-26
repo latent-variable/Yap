@@ -707,8 +707,15 @@ def fetch_starter_voices():
                     cp = tmp / f"{n}.wav"
                     # urlopen(timeout=) — urlretrieve has no timeout, so a stalled
                     # connection would hang the worker thread indefinitely.
+                    # Bounded read: over plain HTTP a MITM could stream unbounded
+                    # bytes and exhaust the disk. Clips are <200 KB; cap well above.
                     with urllib.request.urlopen(url, timeout=30) as r, open(cp, "wb") as f:
-                        shutil.copyfileobj(r, f)
+                        cap, got = 8 * 1024 * 1024, 0
+                        while chunk := r.read(64 * 1024):
+                            got += len(chunk)
+                            if got > cap:
+                                raise ValueError(f"clip exceeds {cap} byte cap (truncated/hostile?)")
+                            f.write(chunk)
                     # Integrity gate over untrusted HTTP: reject a swapped clip
                     # before it becomes a voice reference.
                     digest = hashlib.sha256(cp.read_bytes()).hexdigest()
