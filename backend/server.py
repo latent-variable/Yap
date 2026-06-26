@@ -678,7 +678,7 @@ def fetch_starter_voices():
     import urllib.request
     base = "http://festvox.org/cmu_arctic/cmu_arctic"
     voices = STARTER_VOICES
-    dest = hd_voices_dir()
+    voices_dir = hd_voices_dir()   # the directory; per-voice files are voices_dir/<id>.wav
 
     def concat_wavs(paths: list[Path], out: Path) -> None:
         frames = b""
@@ -695,16 +695,18 @@ def fetch_starter_voices():
         import shutil
         import tempfile
         for vid, spk, desc in voices:
-            out = dest / f"{vid}.wav"
+            out = voices_dir / f"{vid}.wav"
             if out.exists():
                 yield f"skip {vid} (exists)\n".encode(); continue
             yield f"fetching {vid} ({desc})...\n".encode()
-            # Create tmp on the SAME filesystem as dest so the final shutil.move
-            # is an atomic rename, not a cross-device copy+delete (which could
-            # leave a partial file at `out` on interruption).
-            tmp = Path(tempfile.mkdtemp(dir=dest))
+            tmp = None
             clips = []
             try:
+                # Temp dir on the SAME filesystem as the destination (inside
+                # voices_dir, a real directory) so the final shutil.move is an
+                # atomic rename, not a cross-device copy+delete. Inside the try so
+                # an mkdtemp failure yields a clean "failed" line, not a 500.
+                tmp = Path(tempfile.mkdtemp(dir=voices_dir))
                 for n in STARTER_CLIP_IDS:
                     url = f"{base}/cmu_us_{spk}_arctic/wav/arctic_a{n}.wav"
                     cp = tmp / f"{n}.wav"
@@ -740,7 +742,8 @@ def fetch_starter_voices():
             except Exception as e:  # noqa: BLE001
                 yield f"  failed {vid}: {e}\n".encode()
             finally:
-                shutil.rmtree(tmp, ignore_errors=True)
+                if tmp is not None:
+                    shutil.rmtree(tmp, ignore_errors=True)
         yield b"[done]\n"
 
     return StreamingResponse(gen(), media_type="text/plain")
