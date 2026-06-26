@@ -92,6 +92,10 @@ final class Prefs: ObservableObject {
     // Play a short cue when an HD (Chatterbox) read starts buffering — its first
     // audio lags a few seconds, so this gives immediate "it's working" feedback.
     @Published var hdBufferChime: Bool { didSet { d.set(hdBufferChime, forKey: "hdBufferChime") } }
+    // Play a short error cue when a read can't start — empty/stale capture, wrong
+    // (unfocused) window, or missing Accessibility. Without it a failed trigger is
+    // just silence, so you wait for audio that never comes.
+    @Published var failChime: Bool { didSet { d.set(failChime, forKey: "failChime") } }
     @Published var providerMode: String { didSet { d.set(providerMode, forKey: "providerMode") } }  // auto|cpu|coreml
     @Published var showMiniPlayer: Bool { didSet { d.set(showMiniPlayer, forKey: "showMiniPlayer") } }
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin") } }
@@ -120,6 +124,7 @@ final class Prefs: ObservableObject {
         keepWarm = d.object(forKey: "keepWarm") as? Bool ?? true
         autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
         hdBufferChime = d.object(forKey: "hdBufferChime") as? Bool ?? true
+        failChime = d.object(forKey: "failChime") as? Bool ?? true
         providerMode = d.string(forKey: "providerMode") ?? "auto"
         dictationEngine = d.string(forKey: "dictationEngine") ?? "english"
         dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true

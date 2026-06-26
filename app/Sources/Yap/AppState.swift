@@ -235,6 +235,7 @@ final class AppState: ObservableObject {
             lastWarningTime = now
             Log.write("read guard: capture identical to last read -> warn (possible wrong window)")
             status = .error("Same text as last read — click the window, then press again to read anyway")
+            playFailCue()
             resetToIdle(after: 4)
             return
         }
@@ -251,6 +252,7 @@ final class AppState: ObservableObject {
                 Log.write("read aborted: no text captured (source=\(prefs.readSource.rawValue))")
                 status = .error("No text captured")
             }
+            playFailCue()
             resetToIdle(after: 3)
             return
         }
@@ -361,6 +363,15 @@ final class AppState: ObservableObject {
     private func playBufferCue() {
         guard prefs.engine == "chatterbox", prefs.hdBufferChime else { return }
         NSSound(named: "Ping")?.play()
+    }
+
+    /// Audible "that didn't work" cue when a read can't start — nothing captured,
+    /// a stale/wrong-window selection, or no Accessibility. You're already waiting
+    /// for speech, so silence reads as "still working"; this distinct error sound
+    /// says "nope, try again" so you're not left hanging. Off via Settings.
+    private func playFailCue() {
+        guard prefs.failChime else { return }
+        NSSound(named: "Funk")?.play()
     }
 
     /// What to show while waiting for first audio — flags the slow HD cold-load.

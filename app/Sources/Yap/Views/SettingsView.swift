@@ -37,6 +37,9 @@ private struct GeneralTab: View {
                 ForEach(Profile.allCases) { Text($0.label).tag($0) }
             }
             Toggle("Stop current speech when shortcut pressed again", isOn: $prefs.stopOnNewTrigger)
+            Toggle("Play an error sound when a read fails", isOn: $prefs.failChime)
+            Text("A short cue when nothing can be read — empty or stale selection, or a window you haven't clicked into yet. Without it a failed shortcut is just silence.")
+                .font(.caption).foregroundStyle(.secondary)
             Toggle("Keep model warm", isOn: $prefs.keepWarm)
             Toggle("Show mini-player controls", isOn: $prefs.showMiniPlayer)
             Toggle("Launch at login", isOn: $prefs.launchAtLogin)
