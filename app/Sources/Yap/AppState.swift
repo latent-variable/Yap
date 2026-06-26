@@ -226,8 +226,12 @@ final class AppState: ObservableObject {
         // instead of replaying; a second trigger within 4s overrides (a genuine
         // re-read of the same text just press again). Timestamp, not an async
         // flag: synchronous and immune to overlapping triggers.
+        // lastWarningTime == 0 means "never warned" — check it explicitly rather
+        // than rely on now - 0 >= 4, which would be false in the first 4s of
+        // uptime (just-booted edge).
         let now = ProcessInfo.processInfo.systemUptime
-        if !wasPlaying, !trimmed.isEmpty, cleaned == lastReadCleaned, now - lastWarningTime >= 4 {
+        if !wasPlaying, !trimmed.isEmpty, cleaned == lastReadCleaned,
+           lastWarningTime == 0 || now - lastWarningTime >= 4 {
             lastWarningTime = now
             Log.write("read guard: capture identical to last read -> warn (possible wrong window)")
             status = .error("Same text as last read — click the window, then press again to read anyway")
