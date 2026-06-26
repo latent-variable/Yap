@@ -540,13 +540,16 @@ app = FastAPI(title="Yap TTS", docs_url=None, redoc_url=None)
 
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
+    # Reject browser-originated requests FIRST — before the /verify exemption —
+    # so a website can't even fingerprint the local backend with a cross-origin
+    # probe to /verify. The native Swift client sets no Origin/Sec-Fetch-Site.
+    if _is_browser_request(request):
+        return JSONResponse({"detail": "cross-origin requests are not allowed"}, status_code=403)
     # /verify self-authenticates (it returns an HMAC over a caller nonce and
     # leaks nothing), so the app can probe an unknown listener without first
     # handing it the token.
     if request.url.path == "/verify":
         return await call_next(request)
-    if _is_browser_request(request):
-        return JSONResponse({"detail": "cross-origin requests are not allowed"}, status_code=403)
     if AUTH_TOKEN is not None:
         header = request.headers.get("authorization", "")
         prefix = "Bearer "

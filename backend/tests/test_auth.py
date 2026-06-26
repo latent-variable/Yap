@@ -90,6 +90,13 @@ def test_verify_is_auth_exempt():
     assert _run_guard(_request(path="/verify")).status_code == 200
 
 
+def test_verify_blocks_browser_origin():
+    # A website must not be able to fingerprint the backend via /verify: the
+    # Origin guard runs before the /verify exemption.
+    r = _run_guard(_request(path="/verify", headers={"Origin": "https://evil.example"}))
+    assert r.status_code == 403
+
+
 def test_verify_returns_correct_hmac():
     nonce = "challenge-nonce-xyz"
     expected = hmac.new(TOKEN.encode(), nonce.encode(), hashlib.sha256).hexdigest()

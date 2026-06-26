@@ -97,3 +97,13 @@ should NOT be flagged.
   Same-user impostor is out of scope. Don't suggest TLS/mTLS/socket-peer-cred
   for a loopback TTS sidecar — disproportionate; the shared secret is the agreed
   control (matches the auditor's own recommendation).
+
+- **`stopAndWait()` already handles the kill EPERM/ESRCH cases — don't re-flag.**
+  The adopted-pid path gates the poll on `kill(pid, SIGTERM) == 0`; if SIGTERM
+  fails (ESRCH already-gone / EPERM not-ours) it skips the loop entirely (no 5s
+  main-actor stall), and because the signal succeeded the `kill(pid, 0)` poll
+  can't hit EPERM. Stale anchors claiming "exits immediately on EPERM" or
+  "blocks 5s on EPERM" are obsolete.
+
+- **`test_verify_rejects_overlong_nonce` already exists — don't suggest adding
+  it.** `tests/test_auth.py` covers the >128-char nonce -> 400 DoS bound.
