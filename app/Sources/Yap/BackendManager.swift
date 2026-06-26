@@ -97,6 +97,15 @@ final class BackendManager: NSObject, ObservableObject {
     /// Ensure the backend is up: reuse a running one, else launch it.
     func start() async {
         if let h = await client.health() {
+            // A server already answers on our port. If WE didn't spawn it, prove
+            // it's a genuine Yap backend (knows the shared secret) before we ever
+            // send it captured text — an impostor that squatted :8766 can't read
+            // the 0600 token file, so it can't pass /verify. Reject and bail.
+            if process == nil, adoptedPID == nil, !(await client.verifyAuthentic()) {
+                lastError = "Another process is using port \(port); it's not a Yap backend. Quit it and relaunch."
+                ready = false
+                return
+            }
             apply(h)
             // Reusing a live backend. If it's an orphaned Yap backend (its
             // spawner died → reparented to launchd), adopt it so model management
@@ -152,6 +161,9 @@ final class BackendManager: NSObject, ObservableObject {
         env["YAP_MODELS_DIR"] = modelsDir.path
         env["YAP_PORT"] = String(port)
         env["YAP_PROVIDER"] = Prefs.shared.providerMode
+        // Hand the spawned backend the same token file we read, so it requires
+        // our shared secret on every request (blocks website CSRF + impostors).
+        env["YAP_AUTH_TOKEN_FILE"] = BackendAuth.tokenFileURL.path
         // If the HD engine is installed, run in the combined env (numpy 1.26 +
         // torch + kokoro) so one process serves both engines. hd-packages must
         // be FIRST on PYTHONPATH so its numpy<2 imports before the bundled 2.x.

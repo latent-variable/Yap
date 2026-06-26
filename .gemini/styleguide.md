@@ -77,3 +77,23 @@ should NOT be flagged.
 - **`ModelDownloader` move-failure catch already avoids the `error` shadow.** The
   catch pulls `error.localizedDescription` into a local (`message`) before the
   `ui {}` closure. Don't re-suggest extracting it — it's extracted.
+
+- **Backend auth fails OPEN on Bearer when the token file is unreadable —
+  intentional, don't flag as "auth bypass".** `_load_or_create_token()`
+  returning `None` (e.g. disk error) disables only the Bearer check so TTS
+  isn't bricked; the `auth_guard` Origin/`Sec-Fetch-Site` rejection still runs,
+  so CSRF (#14) stays closed even in that degraded path. Same-user attackers are
+  explicitly out of scope (they already own the user's data + Accessibility
+  grants). Don't suggest fail-closed here.
+
+- **`verifyAuthentic()` probes `/verify` WITHOUT the Bearer token — deliberate,
+  not a "missing auth header".** It's authenticating a backend it hasn't trusted
+  yet; sending the token would leak it to a possible impostor. `/verify` is
+  auth-exempt by design and returns only an HMAC over a nonce. Don't re-add
+  `authed(url)` there.
+
+- **`/verify` HMAC comparison + token-in-0600-file is the chosen design.** A
+  cross-user impostor can't read the token file, so it can't forge the HMAC.
+  Same-user impostor is out of scope. Don't suggest TLS/mTLS/socket-peer-cred
+  for a loopback TTS sidecar — disproportionate; the shared secret is the agreed
+  control (matches the auditor's own recommendation).

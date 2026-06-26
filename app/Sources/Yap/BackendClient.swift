@@ -31,18 +31,52 @@ struct BackendClient {
         return URLSession(configuration: cfg)
     }()
 
+    /// Build a request already carrying the shared-secret Bearer token. Every
+    /// call to the backend goes through this — the sidecar rejects anything
+    /// without the token (so a website's cross-origin POST can't drive it).
+    private func authed(_ url: URL) -> URLRequest {
+        var req = URLRequest(url: url)
+        if let t = BackendAuth.token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        return req
+    }
+
     func health() async -> HealthInfo? {
-        var req = URLRequest(url: base.appending(path: "health"))
+        var req = authed(base.appending(path: "health"))
         req.timeoutInterval = 2
         guard let (data, _) = try? await session.data(for: req) else { return nil }
         return try? JSONDecoder().decode(HealthInfo.self, from: data)
+    }
+
+    /// Prove a backend we did NOT spawn is genuinely ours before trusting it
+    /// with captured text: send a random nonce to /verify and confirm it
+    /// returns HMAC(token, nonce). An impostor that can't read the 0600 token
+    /// file can't produce a matching proof. /verify is auth-exempt, so this
+    /// probe never leaks the token to an unverified listener.
+    func verifyAuthentic() async -> Bool {
+        let nonce = Data((0..<24).map { _ in UInt8.random(in: 0...255) }).base64EncodedString()
+        // No local token → can't verify. Fail closed: don't trust a backend we
+        // can't authenticate.
+        guard let expected = BackendAuth.proof(nonce: nonce) else { return false }
+        var url = base.appending(path: "verify")
+        url.append(queryItems: [URLQueryItem(name: "nonce", value: nonce)])
+        // Deliberately UNauthenticated: we're probing a backend we haven't
+        // trusted yet, so we must not hand it the token. /verify is auth-exempt
+        // and reveals only an HMAC over our nonce, never the token itself.
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2
+        struct Resp: Decodable { let proof: String }
+        guard let (data, response) = try? await session.data(for: req),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let r = try? JSONDecoder().decode(Resp.self, from: data) else { return false }
+        // Constant-time-ish compare; lengths equal for SHA-256 hex.
+        return r.proof.count == expected.count && r.proof == expected
     }
 
     func voices(engine: String = "kokoro") async -> [VoiceInfo] {
         struct Resp: Decodable { let voices: [VoiceInfo] }
         var url = base.appending(path: "voices")
         url.append(queryItems: [URLQueryItem(name: "engine", value: engine)])
-        guard let (data, _) = try? await session.data(for: URLRequest(url: url)),
+        guard let (data, _) = try? await session.data(for: authed(url)),
               let r = try? JSONDecoder().decode(Resp.self, from: data) else { return [] }
         return r.voices
     }
@@ -50,7 +84,7 @@ struct BackendClient {
     struct EngineInfo: Decodable { let installed: Bool; let loaded: Bool }
     func engines() async -> (kokoro: EngineInfo?, chatterbox: EngineInfo?) {
         struct Resp: Decodable { let kokoro: EngineInfo; let chatterbox: EngineInfo }
-        let req = URLRequest(url: base.appending(path: "engines"))
+        let req = authed(base.appending(path: "engines"))
         guard let (data, _) = try? await session.data(for: req),
               let r = try? JSONDecoder().decode(Resp.self, from: data) else { return (nil, nil) }
         return (r.kokoro, r.chatterbox)
@@ -58,7 +92,7 @@ struct BackendClient {
 
     /// Stream the HD-deps install, line by line, for a progress view.
     func installChatterbox(onLine: @escaping (String) -> Void) async throws {
-        var req = URLRequest(url: base.appending(path: "engines/chatterbox/install"))
+        var req = authed(base.appending(path: "engines/chatterbox/install"))
         req.httpMethod = "POST"
         req.timeoutInterval = 1800
         let (bytes, _) = try await session.bytes(for: req)
@@ -69,7 +103,7 @@ struct BackendClient {
     func warmChatterbox(voice: String) async {
         var url = base.appending(path: "engines/chatterbox/warm")
         url.append(queryItems: [URLQueryItem(name: "voice", value: voice)])
-        var req = URLRequest(url: url)
+        var req = authed(url)
         req.httpMethod = "POST"
         req.timeoutInterval = 60
         _ = try? await session.data(for: req)
@@ -77,7 +111,7 @@ struct BackendClient {
 
     /// Download the curated starter reference voices.
     func fetchStarterVoices(onLine: @escaping (String) -> Void) async throws {
-        var req = URLRequest(url: base.appending(path: "voices/hd/starters"))
+        var req = authed(base.appending(path: "voices/hd/starters"))
         req.httpMethod = "POST"
         req.timeoutInterval = 300
         let (bytes, _) = try await session.bytes(for: req)
@@ -88,7 +122,7 @@ struct BackendClient {
                               pauseScale: Double, engine: String, wav: Bool) -> URLRequest {
         var url = base.appending(path: "synthesize")
         if wav { url.append(queryItems: [URLQueryItem(name: "format", value: "wav")]) }
-        var req = URLRequest(url: url)
+        var req = authed(url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = ["text": text, "voice": voice, "speed": speed,
