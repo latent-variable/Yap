@@ -83,6 +83,8 @@ final class AppState: ObservableObject {
 
     private var generation = 0   // cancels stale streams
     private var playingText = "" // text currently being read (for the smart toggle)
+    private var lastReadCleaned = ""       // last text actually read aloud (stale-read guard)
+    private var staleOverrideArmed = false // a stale warning is pending; next trigger reads anyway
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
@@ -216,6 +218,23 @@ final class AppState: ObservableObject {
             audio.stop()   // generation already advanced; old stream is now stale
         }
 
+        // Stale-selection guard: a synthetic ⌘C / AX read always targets the
+        // *focused* window. Highlight text in a window without clicking into it
+        // and focus stays put, so we recapture the previous window's selection —
+        // an identical capture while idle is very likely that wrong window. Warn
+        // instead of replaying; the next trigger overrides (a genuine re-read of
+        // the same text just press again).
+        if !wasPlaying, !trimmed.isEmpty, cleaned == lastReadCleaned, !staleOverrideArmed {
+            staleOverrideArmed = true
+            Log.write("read guard: capture identical to last read -> warn (possible wrong window)")
+            status = .error("Same text as last read — click the window, then press again to read anyway")
+            resetToIdle(after: 4)
+            // Disarm after the window so a much-later identical read re-warns.
+            Task { try? await Task.sleep(nanoseconds: 4_000_000_000); staleOverrideArmed = false }
+            return
+        }
+        staleOverrideArmed = false
+
         lastCleaned = cleaned
         guard !trimmed.isEmpty else {
             // Distinguish "nothing selected" from "can't capture because no permission".
@@ -271,6 +290,7 @@ final class AppState: ObservableObject {
         }
 
         playingText = cleaned
+        lastReadCleaned = cleaned   // remember for the stale-selection guard (covers Services reads too)
         status = .reading
         preparing = true   // first audio not here yet (HD can take a few seconds)
         preparingDetail = prepDetail()
