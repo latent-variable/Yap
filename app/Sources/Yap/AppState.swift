@@ -85,6 +85,7 @@ final class AppState: ObservableObject {
     private var playingText = "" // text currently being read (for the smart toggle)
     private var lastReadCleaned = ""       // last text actually read aloud (stale-read guard)
     private var staleOverrideArmed = false // a stale warning is pending; next trigger reads anyway
+    private var staleDisarmTask: Task<Void, Never>? // disarms the guard after its window; cancelled on re-arm/disarm
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
@@ -230,9 +231,18 @@ final class AppState: ObservableObject {
             status = .error("Same text as last read — click the window, then press again to read anyway")
             resetToIdle(after: 4)
             // Disarm after the window so a much-later identical read re-warns.
-            Task { try? await Task.sleep(nanoseconds: 4_000_000_000); staleOverrideArmed = false }
+            // Cancel any prior disarm task first: a stale one firing could cut a
+            // newer warning's override window short.
+            staleDisarmTask?.cancel()
+            staleDisarmTask = Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                guard !Task.isCancelled else { return }
+                staleOverrideArmed = false
+            }
             return
         }
+        staleDisarmTask?.cancel()
+        staleDisarmTask = nil
         staleOverrideArmed = false
 
         lastCleaned = cleaned
