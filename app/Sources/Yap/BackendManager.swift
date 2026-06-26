@@ -346,7 +346,10 @@ final class BackendManager: NSObject, ObservableObject {
             // Adopted orphan: no Process handle, signal it and poll with kill(,0).
             // pid > 1 guard: never signal a process group / launchd on a bad parse.
             kill(pid, SIGTERM)
-            while kill(pid, 0) == 0 && Date() < deadline {
+            // kill(,0) == 0 → still alive. errno == EPERM also means alive (the
+            // process exists but we can't signal it), so don't treat that as
+            // "exited" and race a relaunch onto a port still held.
+            while (kill(pid, 0) == 0 || errno == EPERM) && Date() < deadline {
                 do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
             }
         }

@@ -68,8 +68,14 @@ struct BackendClient {
         guard let (data, response) = try? await session.data(for: req),
               let http = response as? HTTPURLResponse, http.statusCode == 200,
               let r = try? JSONDecoder().decode(Resp.self, from: data) else { return false }
-        // Constant-time-ish compare; lengths equal for SHA-256 hex.
-        return r.proof.count == expected.count && r.proof == expected
+        // Constant-time compare: don't short-circuit on the first mismatching
+        // hex digit, so the proof check can't leak per-byte timing (server side
+        // already uses hmac.compare_digest).
+        let a = Array(r.proof.utf8), b = Array(expected.utf8)
+        guard a.count == b.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<a.count { diff |= a[i] ^ b[i] }
+        return diff == 0
     }
 
     func voices(engine: String = "kokoro") async -> [VoiceInfo] {

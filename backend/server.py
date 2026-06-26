@@ -494,9 +494,16 @@ def _load_or_create_token() -> Optional[str]:
     p = Path(path)
     try:
         if p.exists():
-            tok = p.read_text().strip()
-            if tok:
-                return tok
+            # Refuse a token file any group/other can access — someone may have
+            # pre-created it (e.g. a custom YAP_AUTH_TOKEN_FILE in a shared dir)
+            # to read or fix the secret. Recreate it 0600 instead of trusting it.
+            if p.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                log.warning("auth: token file %s has loose perms; recreating 0600", p)
+                p.unlink()
+            else:
+                tok = p.read_text().strip()
+                if tok:
+                    return tok
         p.parent.mkdir(parents=True, exist_ok=True)
         tok = secrets.token_urlsafe(32)
         # Write 0600 atomically: create with restrictive mode, then write.
@@ -557,7 +564,10 @@ def verify(nonce: str = Query("")):
     """Prove this is a genuine Yap backend without revealing the token: return
     HMAC-SHA256(token, nonce). A process that can't read the 0600 token file
     (i.e. a different user / an impostor) can't produce a matching proof."""
-    if AUTH_TOKEN is None or not nonce:
+    # Cap the nonce: /verify is auth-exempt, so bound the HMAC input so a local
+    # process (or a browser GET) can't DoS via an enormous nonce. A real nonce
+    # is ~32 bytes base64.
+    if AUTH_TOKEN is None or not nonce or len(nonce) > 128:
         raise HTTPException(400, "verification unavailable")
     proof = hmac.new(AUTH_TOKEN.encode(), nonce.encode(), hashlib.sha256).hexdigest()
     return {"proof": proof}

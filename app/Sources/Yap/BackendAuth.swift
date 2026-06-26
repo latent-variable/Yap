@@ -27,10 +27,19 @@ enum BackendAuth {
     private static func loadOrCreate() -> String? {
         let url = tokenFileURL
         let fm = FileManager.default
-        if let data = try? Data(contentsOf: url),
-           let tok = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !tok.isEmpty {
-            return tok
+        if fm.fileExists(atPath: url.path) {
+            // Refuse a token file any group/other can read or write — someone
+            // may have pre-created it (e.g. a custom path in a shared dir) to
+            // learn or fix the secret. Recreate it 0600 below.
+            let perms = ((try? fm.attributesOfItem(atPath: url.path))?[.posixPermissions] as? NSNumber)?.uint16Value
+            if let perms, perms & 0o077 != 0 {
+                Log.write("auth: token file has loose perms (\(String(perms, radix: 8))); recreating 0600")
+                try? fm.removeItem(at: url)
+            } else if let data = try? Data(contentsOf: url),
+                      let tok = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !tok.isEmpty {
+                return tok
+            }
         }
         // Generate 32 random bytes, base64url (no padding) — matches the
         // backend's secrets.token_urlsafe shape closely enough; only equality

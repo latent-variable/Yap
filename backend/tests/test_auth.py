@@ -102,6 +102,14 @@ def test_verify_requires_nonce():
     assert ei.value.status_code == 400
 
 
+def test_verify_rejects_overlong_nonce():
+    # /verify is auth-exempt; an enormous nonce must be refused (DoS bound),
+    # not fed into HMAC.
+    with pytest.raises(HTTPException) as ei:
+        server.verify(nonce="x" * 129)
+    assert ei.value.status_code == 400
+
+
 def test_verify_proof_does_not_equal_token():
     # The proof is an HMAC, not the token itself.
     assert server.verify(nonce="abc")["proof"] != TOKEN
