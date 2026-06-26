@@ -48,12 +48,18 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
     }
 
     /// Streamed SHA-256 so a 325 MB model isn't read fully into memory.
+    /// A mid-file read error returns nil (not a partial hash) so the caller
+    /// treats a hashing failure as "unverified", never as a silent mismatch.
     private func sha256(of url: URL) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         var hasher = SHA256()
-        while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty {
-            hasher.update(data: chunk)
+        do {
+            while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+                hasher.update(data: chunk)
+            }
+        } catch {
+            return nil
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
@@ -67,7 +73,15 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
         let dest = dir.appending(path: f.name)
         let size = (try? dest.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         if FileManager.default.fileExists(atPath: dest.path), size > 0 {
-            index += 1; next(); return
+            // Verify pre-existing files too — the download-time gate alone leaves
+            // a bypass: a file from old (pre-pin) code, a stalled partial, or one
+            // tampered after a prior good download would otherwise be skipped and
+            // loaded unchecked. Match → skip; mismatch/unreadable → delete and
+            // fall through to re-download.
+            if sha256(of: dest) == f.sha256 {
+                index += 1; next(); return
+            }
+            try? FileManager.default.removeItem(at: dest)
         }
         ui { self.statusText = "Downloading \(f.name)…" }
         session.downloadTask(with: URL(string: f.url)!).resume()

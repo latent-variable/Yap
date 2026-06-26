@@ -651,6 +651,24 @@ STARTER_SHA256 = {
     "ksp_0005": "dbaf077726b438247124a1da8a93159fb314f1980c14463307bf49297a380fea",
 }
 
+# (voice id, cmu speaker, description) and the five clips concatenated per voice.
+# Module-level so the integrity check and the fetch loop share one source of
+# truth — and so the guard below can prove every requested clip has a pin.
+STARTER_VOICES = [
+    ("Aria", "slt", "US female"), ("Clara", "clb", "US female"),
+    ("Ben", "bdl", "US male"), ("Cole", "rms", "US male"),
+    ("Jake", "jmk", "Canadian male"), ("Angus", "awb", "Scottish male"),
+    ("Ravi", "ksp", "Indian male"),
+]
+STARTER_CLIP_IDS = ("0001", "0002", "0003", "0004", "0005")  # zero-padded, matches key format
+# Reachability guard: every clip the fetch loop will request must have a pinned
+# digest, else `.get()` returns None and a genuine clip is silently rejected.
+assert all(
+    f"{spk}_{n}" in STARTER_SHA256
+    for _, spk, _ in STARTER_VOICES
+    for n in STARTER_CLIP_IDS
+), "STARTER_SHA256 is missing a pin for a clip the fetch loop requests"
+
 
 @app.post("/voices/hd/starters")
 def fetch_starter_voices():
@@ -659,13 +677,7 @@ def fetch_starter_voices():
     import hashlib
     import urllib.request
     base = "http://festvox.org/cmu_arctic/cmu_arctic"
-    # (voice id, cmu speaker, description)
-    voices = [
-        ("Aria", "slt", "US female"), ("Clara", "clb", "US female"),
-        ("Ben", "bdl", "US male"), ("Cole", "rms", "US male"),
-        ("Jake", "jmk", "Canadian male"), ("Angus", "awb", "Scottish male"),
-        ("Ravi", "ksp", "Indian male"),
-    ]
+    voices = STARTER_VOICES
     dest = hd_voices_dir()
 
     def concat_wavs(paths: list[Path], out: Path) -> None:
@@ -690,7 +702,7 @@ def fetch_starter_voices():
             tmp = Path(tempfile.mkdtemp())
             clips = []
             try:
-                for n in ("0001", "0002", "0003", "0004", "0005"):
+                for n in STARTER_CLIP_IDS:
                     url = f"{base}/cmu_us_{spk}_arctic/wav/arctic_a{n}.wav"
                     cp = tmp / f"{n}.wav"
                     # urlopen(timeout=) — urlretrieve has no timeout, so a stalled
