@@ -107,3 +107,9 @@ should NOT be flagged.
 
 - **`test_verify_rejects_overlong_nonce` already exists — don't suggest adding
   it.** `tests/test_auth.py` covers the >128-char nonce -> 400 DoS bound.
+
+- **Case-sensitive `"Bearer "` prefix match is deliberate — don't flag as
+  RFC 7235 non-compliance.** The token protocol is first-party only: Yap's Swift
+  client always emits exactly `Authorization: Bearer <token>`. A stricter
+  case-sensitive match rejects nothing legitimate and hands an attacker no
+  advantage; case-insensitive parsing would only widen the accept surface.
