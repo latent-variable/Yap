@@ -607,20 +607,78 @@ def warm_chatterbox(voice: str = Query("")):
     return {"warm": ok, "loaded": cb_engine.model is not None, "voice": voice}
 
 
+# SHA-256 of each CMU ARCTIC clip we fetch, keyed "<spk>_<n>". festvox.org
+# serves no HTTPS (port 443 refused), so the clips come over plain HTTP — a MITM
+# could otherwise swap the voice-conditioning reference and poison all HD synth
+# for that persona. Pinning the digest makes the transport untrusted: a swapped
+# file fails the check and is discarded. These are immutable canonical research
+# files; bump only if the speaker set changes.
+STARTER_SHA256 = {
+    "slt_0001": "7862eb2cccb56875910f6bf46f9b8d26dac36e7672829aabe3956b0837ae122e",
+    "slt_0002": "d09c9367d7e756cb5f6854d4e8a279e6e6e543fafeb4d04b32757c639f7f38d3",
+    "slt_0003": "0b32e00846e132826f46d7e5cabb2d8b370a5dc654bac0447cb63285f81cc413",
+    "slt_0004": "2a653cf74346ff24690f8a2abcff5091b81463f277b0062c851031a293f25167",
+    "slt_0005": "f93c823f955875d2389ae0f731a95128afb1ee096df7614e063e8b4b5695801d",
+    "clb_0001": "c8d628cd73028ebd30741da8d49bcc18a28c67bb9d0dca2c94b72a13e2ac1545",
+    "clb_0002": "032ffd806fdae5b3173ee944479f064d5662ed042d6ffdb24c0091311d1c04be",
+    "clb_0003": "224c1376c65a65720b75a51bb1df12ded17b306b828c3133fc01d0a8875e8507",
+    "clb_0004": "61a48dcd39039227645b9d9eae7c2fd37a2ca54b4ab78c5dafb04a8eb026ee4c",
+    "clb_0005": "9ee3ec38d5096b65ad4e90f9ac81f5ea7015a5e5cf46560c30de1940f42a1004",
+    "bdl_0001": "2594562568c97203d6c3c2c2ff87b9a7c62389100a014934ab0ad39d15af0384",
+    "bdl_0002": "88b2c3f29f696637ec34f8a031964920d7e187a903ba88fd720d3cb1b0d50c2a",
+    "bdl_0003": "6bf2ec5e40a8a01a690d7aa5d1aa3a1489baae614850c7a716bf00092b005028",
+    "bdl_0004": "9014c7af0c450ffab8a64f211559ed6eb61d1eb6c8a8288cca40325e64f702e7",
+    "bdl_0005": "b654e28a68b0f49d40f715744f99f4bba338b1f66e61b58e428588e886d8fa1f",
+    "rms_0001": "728ae021d1f21042abe3cde8c9c100fd2ade82a5a5db56ae412b9c7d99355aa9",
+    "rms_0002": "a8067145cf402d06b0e97600a137aa3bb0079b857acd0962b2dccfb442dc6d5f",
+    "rms_0003": "c99fc0cd44894394e3c5f206928e5271e02162f55eca89e913a3e8baf94f15f3",
+    "rms_0004": "5b038c0b4acf5b5193e97274ac547f03ee399c2bd65cc08a29df80f263fedfa3",
+    "rms_0005": "3b6d28a4eb6b0feb56fb0f4f6eaca1e714d69119a824918c716620912ce011ea",
+    "jmk_0001": "71b1eceea11f82a9b1b0d1658753e572ec5f4dab524ff60ddfc25b6452131686",
+    "jmk_0002": "0350a354c40ac035186d773f3e47ec23c3321b40c53848ee4b076f6dd28aa32d",
+    "jmk_0003": "e59e893cbe96481cd645755512392447dc3f55d5e2afc052bf4a2a9884d6445d",
+    "jmk_0004": "7f118f87a68d8e7592df7791cffa1e8e4a414c615a0ac557a7b5570eb0732f63",
+    "jmk_0005": "a2b444edcf99bf19fde11306086bffb5c9e220b2a5d8e77c0615d09a7a7dbfdc",
+    "awb_0001": "d1ebf15b59fb1887bb0282bbff508c1db28a706b98cfa8a683a85a98fe2b7567",
+    "awb_0002": "26d811548f811128ebe3e969fe0fa74f91c5fad9097e2057f16ffbe4af0e0105",
+    "awb_0003": "ad01ac37983ff61b251115e0461a36cd7af014f432084313a2c00205443c3d70",
+    "awb_0004": "896c6fb751391a4e25117acb57f17436f44ec71932d2c9af69556c4adb1caa40",
+    "awb_0005": "e525cf1c4e98b15b5e9aa191897534aed9e69163d67f6b14de86179db08b6b85",
+    "ksp_0001": "1f7c300199340733daf09fb440c64517047124c2703048a3c6b965a39e17553a",
+    "ksp_0002": "2ff5029c6f4ded953b9bb964935913f639e8d6b021fc7c7428d15e605dcab06d",
+    "ksp_0003": "0af26fb7e5488ee9536b0e0ae0c56be9f8a598e190faf5c1088d3a6697719708",
+    "ksp_0004": "64af85ce3acf67081178bf9c54bad4dd500743343b1cd7787369347d36c8676b",
+    "ksp_0005": "dbaf077726b438247124a1da8a93159fb314f1980c14463307bf49297a380fea",
+}
+
+# (voice id, cmu speaker, description) and the five clips concatenated per voice.
+# Module-level so the integrity check and the fetch loop share one source of
+# truth — and so the guard below can prove every requested clip has a pin.
+STARTER_VOICES = [
+    ("Aria", "slt", "US female"), ("Clara", "clb", "US female"),
+    ("Ben", "bdl", "US male"), ("Cole", "rms", "US male"),
+    ("Jake", "jmk", "Canadian male"), ("Angus", "awb", "Scottish male"),
+    ("Ravi", "ksp", "Indian male"),
+]
+STARTER_CLIP_IDS = ("0001", "0002", "0003", "0004", "0005")  # zero-padded, matches key format
+# Reachability guard: every clip the fetch loop will request must have a pinned
+# digest, else `.get()` returns None and a genuine clip is silently rejected.
+assert all(
+    f"{spk}_{n}" in STARTER_SHA256
+    for _, spk, _ in STARTER_VOICES
+    for n in STARTER_CLIP_IDS
+), "STARTER_SHA256 is missing a pin for a clip the fetch loop requests"
+
+
 @app.post("/voices/hd/starters")
 def fetch_starter_voices():
     """Download a few clean, openly-licensed reference voices (CMU ARCTIC,
     free to use) into hd-voices. Streams progress. Uses stdlib only."""
+    import hashlib
     import urllib.request
     base = "http://festvox.org/cmu_arctic/cmu_arctic"
-    # (voice id, cmu speaker, description)
-    voices = [
-        ("Aria", "slt", "US female"), ("Clara", "clb", "US female"),
-        ("Ben", "bdl", "US male"), ("Cole", "rms", "US male"),
-        ("Jake", "jmk", "Canadian male"), ("Angus", "awb", "Scottish male"),
-        ("Ravi", "ksp", "Indian male"),
-    ]
-    dest = hd_voices_dir()
+    voices = STARTER_VOICES
+    voices_dir = hd_voices_dir()   # the directory; per-voice files are voices_dir/<id>.wav
 
     def concat_wavs(paths: list[Path], out: Path) -> None:
         frames = b""
@@ -637,27 +695,55 @@ def fetch_starter_voices():
         import shutil
         import tempfile
         for vid, spk, desc in voices:
-            out = dest / f"{vid}.wav"
+            out = voices_dir / f"{vid}.wav"
             if out.exists():
                 yield f"skip {vid} (exists)\n".encode(); continue
             yield f"fetching {vid} ({desc})...\n".encode()
-            tmp = Path(tempfile.mkdtemp())
+            tmp = None
             clips = []
             try:
-                for n in ("0001", "0002", "0003", "0004", "0005"):
+                # Temp dir on the SAME filesystem as the destination (inside
+                # voices_dir, a real directory) so the final shutil.move is an
+                # atomic rename, not a cross-device copy+delete. Inside the try so
+                # an mkdtemp failure yields a clean "failed" line, not a 500.
+                tmp = Path(tempfile.mkdtemp(dir=voices_dir))
+                for n in STARTER_CLIP_IDS:
                     url = f"{base}/cmu_us_{spk}_arctic/wav/arctic_a{n}.wav"
                     cp = tmp / f"{n}.wav"
                     # urlopen(timeout=) — urlretrieve has no timeout, so a stalled
                     # connection would hang the worker thread indefinitely.
+                    # Bounded read: over plain HTTP a MITM could stream unbounded
+                    # bytes and exhaust the disk. Clips are <200 KB; cap well above.
                     with urllib.request.urlopen(url, timeout=30) as r, open(cp, "wb") as f:
-                        shutil.copyfileobj(r, f)
+                        cap, got = 8 * 1024 * 1024, 0
+                        while chunk := r.read(64 * 1024):
+                            got += len(chunk)
+                            if got > cap:
+                                raise ValueError(f"clip exceeds {cap} byte cap (truncated/hostile?)")
+                            f.write(chunk)
+                    # Integrity gate over untrusted HTTP: reject a swapped clip
+                    # before it becomes a voice reference.
+                    digest = hashlib.sha256(cp.read_bytes()).hexdigest()
+                    expected = STARTER_SHA256.get(f"{spk}_{n}")
+                    if digest != expected:
+                        raise ValueError(
+                            f"checksum mismatch for {spk} a{n} "
+                            f"(got {digest[:12]}…, expected {str(expected)[:12]}…)"
+                        )
                     clips.append(cp)
-                concat_wavs(clips, out)
+                # Concat into tmp, then atomically move into place. A failure in
+                # concat_wavs or a client disconnect (GeneratorExit) mid-write
+                # must not leave a partial file at `out` — the exists() check
+                # above would otherwise treat it as a finished install forever.
+                tmp_out = tmp / "concat.wav"
+                concat_wavs(clips, tmp_out)
+                shutil.move(str(tmp_out), str(out))
                 yield f"  installed {vid}\n".encode()
             except Exception as e:  # noqa: BLE001
                 yield f"  failed {vid}: {e}\n".encode()
             finally:
-                shutil.rmtree(tmp, ignore_errors=True)
+                if tmp is not None:
+                    shutil.rmtree(tmp, ignore_errors=True)
         yield b"[done]\n"
 
     return StreamingResponse(gen(), media_type="text/plain")
