@@ -155,7 +155,10 @@ final class DictationController: ObservableObject {
     /// fixed so the box grows *upward* as more lines appear.
     func resizeHUD(height: CGFloat) {
         guard let panel else { return }
-        let h = max(72, min(height, 320)).rounded()
+        // Round UP (never below content) and add a 2pt cushion: rounding to
+        // nearest could set the panel a hair shorter than the SwiftUI content,
+        // and the material/shadow inset then clipped the top of the first row.
+        let h = max(74, min(height.rounded(.up) + 2, 322))
         let f = panel.frame
         guard abs(f.height - h) > 0.5 else { return }
         panel.setFrame(NSRect(x: f.minX, y: f.minY, width: f.width, height: h),

@@ -83,6 +83,9 @@ final class AppState: ObservableObject {
 
     private var generation = 0   // cancels stale streams
     private var playingText = "" // text currently being read (for the smart toggle)
+    private var lastReadCleaned = ""        // last text actually read aloud (stale-read guard)
+    private var lastWarningTime: Double = 0 // uptime of the last stale warning; 4s override window
+    private var resetToIdleTask: Task<Void, Never>? // single in-flight error->idle timer
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
@@ -216,6 +219,27 @@ final class AppState: ObservableObject {
             audio.stop()   // generation already advanced; old stream is now stale
         }
 
+        // Stale-selection guard: a synthetic ⌘C / AX read always targets the
+        // *focused* window. Highlight text in a window without clicking into it
+        // and focus stays put, so we recapture the previous window's selection —
+        // an identical capture while idle is very likely that wrong window. Warn
+        // instead of replaying; a second trigger within 4s overrides (a genuine
+        // re-read of the same text just press again). Timestamp, not an async
+        // flag: synchronous and immune to overlapping triggers.
+        // lastWarningTime == 0 means "never warned" — check it explicitly rather
+        // than rely on now - 0 >= 4, which would be false in the first 4s of
+        // uptime (just-booted edge).
+        let now = ProcessInfo.processInfo.systemUptime
+        if !wasPlaying, !trimmed.isEmpty, cleaned == lastReadCleaned,
+           lastWarningTime == 0 || now - lastWarningTime >= 4 {
+            lastWarningTime = now
+            Log.write("read guard: capture identical to last read -> warn (possible wrong window)")
+            status = .error("Same text as last read — click the window, then press again to read anyway")
+            resetToIdle(after: 4)
+            return
+        }
+        lastWarningTime = 0
+
         lastCleaned = cleaned
         guard !trimmed.isEmpty else {
             // Distinguish "nothing selected" from "can't capture because no permission".
@@ -271,6 +295,7 @@ final class AppState: ObservableObject {
         }
 
         playingText = cleaned
+        lastReadCleaned = cleaned   // remember for the stale-selection guard (covers Services reads too)
         status = .reading
         preparing = true   // first audio not here yet (HD can take a few seconds)
         preparingDetail = prepDetail()
@@ -596,9 +621,16 @@ final class AppState: ObservableObject {
     private func finishIfDone() {}
 
     private func resetToIdle(after seconds: Double) {
-        Task {
+        // Snapshot the exact status this timer is for; only clear it if nothing
+        // changed it in the meantime. Cancelling the prior timer covers the
+        // resetToIdle-vs-resetToIdle case; the snapshot also covers a different
+        // or persistent error set without calling resetToIdle.
+        let expected = status
+        resetToIdleTask?.cancel()
+        resetToIdleTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
-            if case .error = status { status = .idle }
+            guard !Task.isCancelled else { return }
+            if status == expected { status = .idle }
         }
     }
 }
