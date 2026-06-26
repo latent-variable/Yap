@@ -699,7 +699,10 @@ def fetch_starter_voices():
             if out.exists():
                 yield f"skip {vid} (exists)\n".encode(); continue
             yield f"fetching {vid} ({desc})...\n".encode()
-            tmp = Path(tempfile.mkdtemp())
+            # Create tmp on the SAME filesystem as dest so the final shutil.move
+            # is an atomic rename, not a cross-device copy+delete (which could
+            # leave a partial file at `out` on interruption).
+            tmp = Path(tempfile.mkdtemp(dir=dest))
             clips = []
             try:
                 for n in STARTER_CLIP_IDS:

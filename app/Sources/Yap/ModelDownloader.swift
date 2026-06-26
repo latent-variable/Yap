@@ -134,7 +134,12 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
+        // Ignore a callback that doesn't belong to the current run: a stale or
+        // out-of-order task (e.g. one finishing after the index was reset) must
+        // not write the wrong file or mis-advance index.
+        guard downloading, index < files.count else { return }
         let f = files[index]
+        guard downloadTask.originalRequest?.url?.absoluteString == f.url else { return }
         let dest = dir.appending(path: f.name)
         try? FileManager.default.removeItem(at: dest)
         do {
