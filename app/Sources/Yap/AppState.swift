@@ -83,9 +83,9 @@ final class AppState: ObservableObject {
 
     private var generation = 0   // cancels stale streams
     private var playingText = "" // text currently being read (for the smart toggle)
-    private var lastReadCleaned = ""       // last text actually read aloud (stale-read guard)
-    private var staleOverrideArmed = false // a stale warning is pending; next trigger reads anyway
-    private var staleDisarmTask: Task<Void, Never>? // disarms the guard after its window; cancelled on re-arm/disarm
+    private var lastReadCleaned = ""        // last text actually read aloud (stale-read guard)
+    private var lastWarningTime: Double = 0 // uptime of the last stale warning; 4s override window
+    private var resetToIdleTask: Task<Void, Never>? // single in-flight error->idle timer
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
@@ -223,27 +223,18 @@ final class AppState: ObservableObject {
         // *focused* window. Highlight text in a window without clicking into it
         // and focus stays put, so we recapture the previous window's selection —
         // an identical capture while idle is very likely that wrong window. Warn
-        // instead of replaying; the next trigger overrides (a genuine re-read of
-        // the same text just press again).
-        if !wasPlaying, !trimmed.isEmpty, cleaned == lastReadCleaned, !staleOverrideArmed {
-            staleOverrideArmed = true
+        // instead of replaying; a second trigger within 4s overrides (a genuine
+        // re-read of the same text just press again). Timestamp, not an async
+        // flag: synchronous and immune to overlapping triggers.
+        let now = ProcessInfo.processInfo.systemUptime
+        if !wasPlaying, !trimmed.isEmpty, cleaned == lastReadCleaned, now - lastWarningTime >= 4 {
+            lastWarningTime = now
             Log.write("read guard: capture identical to last read -> warn (possible wrong window)")
             status = .error("Same text as last read — click the window, then press again to read anyway")
             resetToIdle(after: 4)
-            // Disarm after the window so a much-later identical read re-warns.
-            // Cancel any prior disarm task first: a stale one firing could cut a
-            // newer warning's override window short.
-            staleDisarmTask?.cancel()
-            staleDisarmTask = Task {
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                guard !Task.isCancelled else { return }
-                staleOverrideArmed = false
-            }
             return
         }
-        staleDisarmTask?.cancel()
-        staleDisarmTask = nil
-        staleOverrideArmed = false
+        lastWarningTime = 0
 
         lastCleaned = cleaned
         guard !trimmed.isEmpty else {
@@ -626,8 +617,12 @@ final class AppState: ObservableObject {
     private func finishIfDone() {}
 
     private func resetToIdle(after seconds: Double) {
-        Task {
+        // Single in-flight timer: cancel any prior one so an earlier error's
+        // reset can't clear a newer error before its own window elapses.
+        resetToIdleTask?.cancel()
+        resetToIdleTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+            guard !Task.isCancelled else { return }
             if case .error = status { status = .idle }
         }
     }
