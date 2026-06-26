@@ -3,7 +3,11 @@
 Local FastAPI sidecar. Loads Kokoro once, keeps it warm, streams raw PCM for
 low-latency playback. No cloud, no telemetry.
 
+All endpoints except /verify require a shared-secret Bearer token (see the auth
+section near the FastAPI app) and reject browser-originated requests.
+
 Endpoints:
+  GET  /verify?nonce=         -> HMAC(token, nonce) — auth-exempt identity proof
   GET  /health                -> readiness + model status
   GET  /voices                -> available voices grouped by language
   GET  /models                -> model file status in models dir
@@ -13,18 +17,22 @@ Endpoints:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import io
 import logging
 import os
 import re
+import secrets
+import stat
 import sys
 import wave
 from pathlib import Path
 from typing import Iterator, Optional
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import Response, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s yap %(levelname)s %(message)s")
@@ -461,7 +469,111 @@ def hd_voice_path(voice_id: str) -> Optional[Path]:
     return p if p.exists() else None
 
 
+# ---------------------------------------------------------------------------
+# Loopback auth. The sidecar binds 127.0.0.1, which is reachable by every local
+# process AND by `fetch()` from any website the user visits. Two holes that
+# closes: (1) a website CSRFing a no-body POST (e.g. the multi-GB pip install),
+# and (2) Yap reusing an impostor that squatted the port and then receiving
+# captured selected text. Defense: a shared secret in a 0600 file both the app
+# and this backend read-or-create. Every request must carry it as a Bearer
+# token; cross-user processes can't read the file, so they can't forge it. The
+# app proves a *reused* backend is genuine via /verify (HMAC challenge) before
+# trusting it. Same-user attackers are out of scope — they already own the
+# user's data and Accessibility grants.
+def _load_or_create_token() -> Optional[str]:
+    # Explicit path wins (the app passes it when spawning us); else the default
+    # app-support location, which the app uses too. A hand-started dev backend
+    # creates the file; a later app launch reads the same one.
+    path = os.environ.get("YAP_AUTH_TOKEN_FILE")
+    if not path:
+        path = str(Path.home() / "Library/Application Support/Yap/auth-token")
+    # An inline token override (env) is honored without touching disk.
+    inline = os.environ.get("YAP_AUTH_TOKEN")
+    if inline:
+        return inline.strip() or None
+    p = Path(path)
+    try:
+        if p.exists():
+            # Refuse a token file any group/other can access — someone may have
+            # pre-created it (e.g. a custom YAP_AUTH_TOKEN_FILE in a shared dir)
+            # to read or fix the secret. Recreate it 0600 instead of trusting it.
+            if p.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                log.warning("auth: token file %s has loose perms; recreating 0600", p)
+                p.unlink()
+            else:
+                tok = p.read_text().strip()
+                if tok:
+                    return tok
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tok = secrets.token_urlsafe(32)
+        # Write 0600 atomically: create with restrictive mode, then write.
+        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+        with os.fdopen(fd, "w") as f:
+            f.write(tok)
+        os.chmod(str(p), stat.S_IRUSR | stat.S_IWUSR)
+        return tok
+    except OSError as e:
+        # Fail open on the Bearer check rather than bricking TTS, but the Origin
+        # guard below still runs, so CSRF stays closed even here.
+        log.warning("auth: could not load/create token (%s); Bearer auth disabled", e)
+        return None
+
+
+AUTH_TOKEN = _load_or_create_token()
+
+
+def _is_browser_request(request: Request) -> bool:
+    # The native Swift client never sets these; a browser always does on a
+    # cross-origin fetch/form-POST. Reject them outright (belt-and-suspenders
+    # for CSRF — the Bearer check already blocks browsers, which can't set an
+    # Authorization header cross-origin without a preflight we don't satisfy).
+    if request.headers.get("origin"):
+        return True
+    sfs = request.headers.get("sec-fetch-site")
+    if sfs and sfs not in ("same-origin", "none"):
+        return True
+    return False
+
+
 app = FastAPI(title="Yap TTS", docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    # Reject browser-originated requests FIRST — before the /verify exemption —
+    # so a website can't even fingerprint the local backend with a cross-origin
+    # probe to /verify. The native Swift client sets no Origin/Sec-Fetch-Site.
+    if _is_browser_request(request):
+        return JSONResponse({"detail": "cross-origin requests are not allowed"}, status_code=403)
+    # /verify self-authenticates (it returns an HMAC over a caller nonce and
+    # leaks nothing), so the app can probe an unknown listener without first
+    # handing it the token.
+    if request.url.path == "/verify":
+        return await call_next(request)
+    if AUTH_TOKEN is not None:
+        header = request.headers.get("authorization", "")
+        prefix = "Bearer "
+        presented = header[len(prefix):] if header.startswith(prefix) else ""
+        # Compare as bytes: compare_digest raises ValueError on non-ASCII str
+        # (Starlette decodes the header latin-1), which would 500 instead of a
+        # clean 401 if a client sent non-ASCII in Authorization.
+        if not presented or not hmac.compare_digest(presented.encode(), AUTH_TOKEN.encode()):
+            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
+@app.get("/verify")
+def verify(nonce: str = Query("")):
+    """Prove this is a genuine Yap backend without revealing the token: return
+    HMAC-SHA256(token, nonce). A process that can't read the 0600 token file
+    (i.e. a different user / an impostor) can't produce a matching proof."""
+    # Cap the nonce: /verify is auth-exempt, so bound the HMAC input so a local
+    # process (or a browser GET) can't DoS via an enormous nonce. A real nonce
+    # is ~32 bytes base64.
+    if AUTH_TOKEN is None or not nonce or len(nonce) > 128:
+        raise HTTPException(400, "verification unavailable")
+    proof = hmac.new(AUTH_TOKEN.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    return {"proof": proof}
 
 
 @app.get("/health")

@@ -29,6 +29,14 @@ struct YapApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--selftest") { Selftest.run() }
+        // Cross-language check for the backend /verify HMAC. Prints the proof
+        // BackendAuth computes for a nonce (using the real 0600 token file) so a
+        // test can confirm it matches the Python backend byte-for-byte.
+        if let i = CommandLine.arguments.firstIndex(of: "--authproof"),
+           CommandLine.arguments.count > i + 1 {
+            print(BackendAuth.proof(nonce: CommandLine.arguments[i + 1]) ?? "NO_TOKEN")
+            exit(0)
+        }
         if CommandLine.arguments.contains("--diag") {
             print("Yap capture diagnostics\n")
             print(TextCapture.diagnose())

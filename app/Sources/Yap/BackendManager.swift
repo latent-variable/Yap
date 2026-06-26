@@ -97,11 +97,34 @@ final class BackendManager: NSObject, ObservableObject {
     /// Ensure the backend is up: reuse a running one, else launch it.
     func start() async {
         if let h = await client.health() {
+            // A server we didn't spawn answers on our port. Don't trust it with
+            // captured text until it proves it's a genuine Yap backend (knows the
+            // shared secret via /verify) — an impostor that squatted :8766 can't
+            // read the 0600 token file, so it can't produce a valid proof.
+            if process == nil, adoptedPID == nil, !(await client.verifyAuthentic()) {
+                // Verification failed. Distinguish two cases:
+                //  • Identifiably a Yap server.py orphan (ppid==1) → almost always
+                //    a STALE pre-auth backend left running across an app upgrade
+                //    (no /verify endpoint yet). Reclaim it: kill and relaunch a
+                //    fresh, authenticated backend so the upgrade "just works".
+                //  • Otherwise it's a foreign listener / impostor → never hand it
+                //    captured text; bail with a clear error.
+                if let pid = await Self.orphanBackendPID(port: port) {
+                    adoptedPID = pid
+                    await stopAndWait()          // SIGTERM + wait, frees the port
+                    await launchProcess()
+                    await waitForHealth()
+                } else {
+                    lastError = "Another process is using port \(port); it's not a Yap backend. Quit it and relaunch."
+                    ready = false
+                }
+                return
+            }
             apply(h)
-            // Reusing a live backend. If it's an orphaned Yap backend (its
-            // spawner died → reparented to launchd), adopt it so model management
-            // isn't blocked. A backend started by hand in a terminal (ppid != 1)
-            // is left external on purpose.
+            // Reusing a verified live backend. If it's an orphaned Yap backend
+            // (its spawner died → reparented to launchd), adopt it so model
+            // management isn't blocked. A backend started by hand in a terminal
+            // (ppid != 1) is left external on purpose.
             if process == nil, adoptedPID == nil, let pid = await Self.orphanBackendPID(port: port) {
                 adoptedPID = pid
                 ownsProcess = true
@@ -152,6 +175,9 @@ final class BackendManager: NSObject, ObservableObject {
         env["YAP_MODELS_DIR"] = modelsDir.path
         env["YAP_PORT"] = String(port)
         env["YAP_PROVIDER"] = Prefs.shared.providerMode
+        // Hand the spawned backend the same token file we read, so it requires
+        // our shared secret on every request (blocks website CSRF + impostors).
+        env["YAP_AUTH_TOKEN_FILE"] = BackendAuth.tokenFileURL.path
         // If the HD engine is installed, run in the combined env (numpy 1.26 +
         // torch + kokoro) so one process serves both engines. hd-packages must
         // be FIRST on PYTHONPATH so its numpy<2 imports before the bundled 2.x.
@@ -319,9 +345,14 @@ final class BackendManager: NSObject, ObservableObject {
         } else if let pid = adoptedPID, pid > 1 {
             // Adopted orphan: no Process handle, signal it and poll with kill(,0).
             // pid > 1 guard: never signal a process group / launchd on a bad parse.
-            kill(pid, SIGTERM)
-            while kill(pid, 0) == 0 && Date() < deadline {
-                do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
+            // Only poll if SIGTERM was actually delivered. If it fails with
+            // ESRCH (already gone) or EPERM (not ours to signal), there's nothing
+            // to wait on — don't stall the main actor for the full 5s. And since
+            // we could signal it, the kill(,0) poll below can't hit EPERM either.
+            if kill(pid, SIGTERM) == 0 {
+                while kill(pid, 0) == 0 && Date() < deadline {
+                    do { try await Task.sleep(nanoseconds: 50_000_000) } catch { break }
+                }
             }
         }
         process = nil
