@@ -68,3 +68,12 @@ should NOT be flagged.
   streamed read is inside `do { while let chunk = try handle.read(...) } catch
   { return nil }`, so a mid-file read error returns `nil`, never a partial hash.
   Don't suggest adding the do/catch — it's there.
+
+- **`ModelDownloader.start()` re-entrancy guard + `start()` main-isolation are
+  present.** `start()` runs its whole body inside `ui {}` (main queue), guards
+  `!downloading`, and resets `index`/progress there. Don't re-flag "add a
+  `guard !downloading`" or "isolate start() to main" — both are done.
+
+- **`ModelDownloader` move-failure catch already avoids the `error` shadow.** The
+  catch pulls `error.localizedDescription` into a local (`message`) before the
+  `ui {}` closure. Don't re-suggest extracting it — it's extracted.

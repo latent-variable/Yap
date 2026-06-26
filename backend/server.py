@@ -726,7 +726,13 @@ def fetch_starter_voices():
                             f"(got {digest[:12]}…, expected {str(expected)[:12]}…)"
                         )
                     clips.append(cp)
-                concat_wavs(clips, out)
+                # Concat into tmp, then atomically move into place. A failure in
+                # concat_wavs or a client disconnect (GeneratorExit) mid-write
+                # must not leave a partial file at `out` — the exists() check
+                # above would otherwise treat it as a finished install forever.
+                tmp_out = tmp / "concat.wav"
+                concat_wavs(clips, tmp_out)
+                shutil.move(str(tmp_out), str(out))
                 yield f"  installed {vid}\n".encode()
             except Exception as e:  # noqa: BLE001
                 yield f"  failed {vid}: {e}\n".encode()

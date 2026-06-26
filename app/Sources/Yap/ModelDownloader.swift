@@ -38,17 +38,27 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
     private func ui(_ block: @escaping () -> Void) { DispatchQueue.main.async(execute: block) }
 
     func start() {
-        // Re-entrancy guard: a second tap while a download is live would reset
-        // index under an in-flight task and spawn a concurrent one, racing on
-        // index. Ignore until the current run finishes or errors.
-        guard !downloading else { return }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // Reset index: after a prior completed run index == files.count. Without
-        // this, a delete-then-redownload would hit the `index < files.count`
-        // guard immediately, report "Done", and fetch nothing.
-        index = 0
-        ui { self.downloading = true; self.error = nil; self.done = false; self.progress = 0 }
-        next()
+        // All state (downloading/index/@Published) is main-thread-only — the
+        // delegate queue is .main and verify() hops back to main. Run start on
+        // main too (serialized) so a background caller can't race the guard or
+        // index reset against an in-flight delegate/verify callback.
+        ui {
+            // Re-entrancy guard: a second tap while a download is live would
+            // reset index under an in-flight task and spawn a concurrent one,
+            // racing on index. Serialized on main, so the first run flips
+            // downloading=true before the second sees the guard.
+            guard !self.downloading else { return }
+            try? FileManager.default.createDirectory(at: self.dir, withIntermediateDirectories: true)
+            // Reset index: after a prior completed run index == files.count.
+            // Without this a delete-then-redownload would hit the
+            // `index < files.count` guard immediately, report "Done", fetch nothing.
+            self.index = 0
+            self.downloading = true
+            self.error = nil
+            self.done = false
+            self.progress = 0
+            self.next()
+        }
     }
 
     /// Streamed SHA-256 so a 325 MB model isn't read fully into memory.
@@ -74,7 +84,8 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
     /// the ~1.5s-per-file verify instead of freezing it.
     private func verify(_ dest: URL, against expected: String, then done: @escaping (Bool) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let ok = self?.sha256(of: dest) == expected
+            guard let self else { return }   // gone: drop it, don't fire the callback
+            let ok = self.sha256(of: dest) == expected
             DispatchQueue.main.async { done(ok) }
         }
     }
