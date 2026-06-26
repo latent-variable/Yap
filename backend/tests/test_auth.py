@@ -57,6 +57,13 @@ def test_health_rejects_wrong_token():
     assert _run_guard(_request(headers=_auth("nope"))).status_code == 401
 
 
+def test_non_ascii_token_returns_401_not_500():
+    # Starlette decodes the header latin-1; a non-ASCII Bearer value must yield a
+    # clean 401, not a compare_digest ValueError -> 500.
+    r = _run_guard(_request(headers={"Authorization": "Bearer café-Ω-\xff"}))
+    assert r.status_code == 401
+
+
 def test_browser_origin_rejected_even_with_token():
     r = _run_guard(_request(headers={**_auth(), "Origin": "https://evil.example"}))
     assert r.status_code == 403

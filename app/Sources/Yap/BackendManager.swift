@@ -97,20 +97,34 @@ final class BackendManager: NSObject, ObservableObject {
     /// Ensure the backend is up: reuse a running one, else launch it.
     func start() async {
         if let h = await client.health() {
-            // A server already answers on our port. If WE didn't spawn it, prove
-            // it's a genuine Yap backend (knows the shared secret) before we ever
-            // send it captured text — an impostor that squatted :8766 can't read
-            // the 0600 token file, so it can't pass /verify. Reject and bail.
+            // A server we didn't spawn answers on our port. Don't trust it with
+            // captured text until it proves it's a genuine Yap backend (knows the
+            // shared secret via /verify) — an impostor that squatted :8766 can't
+            // read the 0600 token file, so it can't produce a valid proof.
             if process == nil, adoptedPID == nil, !(await client.verifyAuthentic()) {
-                lastError = "Another process is using port \(port); it's not a Yap backend. Quit it and relaunch."
-                ready = false
+                // Verification failed. Distinguish two cases:
+                //  • Identifiably a Yap server.py orphan (ppid==1) → almost always
+                //    a STALE pre-auth backend left running across an app upgrade
+                //    (no /verify endpoint yet). Reclaim it: kill and relaunch a
+                //    fresh, authenticated backend so the upgrade "just works".
+                //  • Otherwise it's a foreign listener / impostor → never hand it
+                //    captured text; bail with a clear error.
+                if let pid = await Self.orphanBackendPID(port: port) {
+                    adoptedPID = pid
+                    await stopAndWait()          // SIGTERM + wait, frees the port
+                    await launchProcess()
+                    await waitForHealth()
+                } else {
+                    lastError = "Another process is using port \(port); it's not a Yap backend. Quit it and relaunch."
+                    ready = false
+                }
                 return
             }
             apply(h)
-            // Reusing a live backend. If it's an orphaned Yap backend (its
-            // spawner died → reparented to launchd), adopt it so model management
-            // isn't blocked. A backend started by hand in a terminal (ppid != 1)
-            // is left external on purpose.
+            // Reusing a verified live backend. If it's an orphaned Yap backend
+            // (its spawner died → reparented to launchd), adopt it so model
+            // management isn't blocked. A backend started by hand in a terminal
+            // (ppid != 1) is left external on purpose.
             if process == nil, adoptedPID == nil, let pid = await Self.orphanBackendPID(port: port) {
                 adoptedPID = pid
                 ownsProcess = true

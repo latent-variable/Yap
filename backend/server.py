@@ -544,7 +544,10 @@ async def auth_guard(request: Request, call_next):
         header = request.headers.get("authorization", "")
         prefix = "Bearer "
         presented = header[len(prefix):] if header.startswith(prefix) else ""
-        if not presented or not hmac.compare_digest(presented, AUTH_TOKEN):
+        # Compare as bytes: compare_digest raises ValueError on non-ASCII str
+        # (Starlette decodes the header latin-1), which would 500 instead of a
+        # clean 401 if a client sent non-ASCII in Authorization.
+        if not presented or not hmac.compare_digest(presented.encode(), AUTH_TOKEN.encode()):
             return JSONResponse({"detail": "unauthorized"}, status_code=401)
     return await call_next(request)
 

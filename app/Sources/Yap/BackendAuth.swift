@@ -43,13 +43,18 @@ enum BackendAuth {
             .replacingOccurrences(of: "=", with: "")
         do {
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // Write with owner-only perms (0600) from the start — don't create
-            // world-readable then chmod (a race window where another process
-            // could read it).
-            try tok.write(to: url, atomically: true, encoding: .utf8)
-            try fm.setAttributes([.posixPermissions: 0o600], ofItemAt: url)
         } catch {
-            Log.write("auth: could not create token file: \(error.localizedDescription)")
+            Log.write("auth: could not create token dir: \(error.localizedDescription)")
+            return nil
+        }
+        // Create the file at 0600 from the very first syscall: passing the perms
+        // to createFile means it's never world-readable, not even briefly. An
+        // atomic write+chmod would leave a window where the renamed temp sits at
+        // the default umask (0644) before chmod lands — exactly the race the
+        // Python side avoids with os.open(mode=0600).
+        guard fm.createFile(atPath: url.path, contents: Data(tok.utf8),
+                            attributes: [.posixPermissions: 0o600]) else {
+            Log.write("auth: could not create token file at \(url.path)")
             return nil
         }
         return tok
@@ -62,11 +67,5 @@ enum BackendAuth {
         let key = SymmetricKey(data: Data(token.utf8))
         let mac = HMAC<SHA256>.authenticationCode(for: Data(nonce.utf8), using: key)
         return mac.map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-extension FileManager {
-    fileprivate func setAttributes(_ attrs: [FileAttributeKey: Any], ofItemAt url: URL) throws {
-        try setAttributes(attrs, ofItemAtPath: url.path)
     }
 }
