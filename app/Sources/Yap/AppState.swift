@@ -617,13 +617,16 @@ final class AppState: ObservableObject {
     private func finishIfDone() {}
 
     private func resetToIdle(after seconds: Double) {
-        // Single in-flight timer: cancel any prior one so an earlier error's
-        // reset can't clear a newer error before its own window elapses.
+        // Snapshot the exact status this timer is for; only clear it if nothing
+        // changed it in the meantime. Cancelling the prior timer covers the
+        // resetToIdle-vs-resetToIdle case; the snapshot also covers a different
+        // or persistent error set without calling resetToIdle.
+        let expected = status
         resetToIdleTask?.cancel()
         resetToIdleTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
             guard !Task.isCancelled else { return }
-            if case .error = status { status = .idle }
+            if status == expected { status = .idle }
         }
     }
 }
