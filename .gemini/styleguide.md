@@ -56,3 +56,15 @@ should NOT be flagged.
   pre-existing empty `Yap/hd-voices`/`models` can't strand the user's voices.
   Don't flag it as silent data loss — the no-loss path is unit-tested in
   `--selftest`.
+
+- **`ModelDownloader` SHA-256 gate covers pre-existing files — don't re-flag
+  it as "verifies only after download".** `next()`'s skip-if-present branch
+  hashes any on-disk file against its pinned digest before skipping (match →
+  skip; mismatch/unreadable → delete + re-download), and `didFinishDownloadingTo`
+  verifies fresh downloads. Both paths are gated. Re-anchored stale comments
+  claiming the skip-path is unverified are obsolete as of the integrity fix.
+
+- **`ModelDownloader.sha256(of:)` already do/catch-wraps the read loop.** The
+  streamed read is inside `do { while let chunk = try handle.read(...) } catch
+  { return nil }`, so a mid-file read error returns `nil`, never a partial hash.
+  Don't suggest adding the do/catch — it's there.

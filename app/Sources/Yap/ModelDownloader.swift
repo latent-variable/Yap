@@ -38,6 +38,10 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
     private func ui(_ block: @escaping () -> Void) { DispatchQueue.main.async(execute: block) }
 
     func start() {
+        // Re-entrancy guard: a second tap while a download is live would reset
+        // index under an in-flight task and spawn a concurrent one, racing on
+        // index. Ignore until the current run finishes or errors.
+        guard !downloading else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // Reset index: after a prior completed run index == files.count. Without
         // this, a delete-then-redownload would hit the `index < files.count`
@@ -106,7 +110,10 @@ final class ModelDownloader: NSObject, ObservableObject, URLSessionDownloadDeleg
         } catch {
             // Surface the failure instead of swallowing it — a missed move
             // leaves an incomplete model that silently fails to load later.
-            ui { self.error = "Failed to save \(f.name): \(error.localizedDescription)"; self.downloading = false }
+            // Pull the message out first: the closure escapes across the actor
+            // hop, and `error` here shadows the @Published `error` property.
+            let message = error.localizedDescription
+            ui { self.error = "Failed to save \(f.name): \(message)"; self.downloading = false }
             return
         }
         // Integrity gate: reject (and delete) anything that doesn't match the
