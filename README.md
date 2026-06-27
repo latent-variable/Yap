@@ -62,6 +62,8 @@ Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 
 ## What it does
 
+![Yap's Settings window and menu-bar dropdown — pick a voice, speed, and read the selection](docs/settings.png)
+
 - **Ears — dictate into anything.** Hold the shortcut, talk, release. Streaming Parakeet STT on the Apple Neural Engine: a live, self-correcting preview as you speak, then an accurate final pass pasted at your cursor. English or 25-language multilingual. Optional chime + filler-word cleanup ("um"/"uh", never real words).
 - **Voice — read from anywhere.** Chrome, PDFs, Terminal, VS Code, Slack, Gmail. Selected-text capture (Accessibility) with a clipboard fallback that restores your clipboard, or right-click → **Services ▸ Read with Yap**.
 - **Two engines, one dropdown.** **Kokoro** — 54 voices, 8 languages, instant, CPU. **Chatterbox HD** (opt-in) — markedly more natural on the GPU, with **voice cloning** from a ~10s clip. HD reads play a short cue while the first audio buffers.
