@@ -140,6 +140,13 @@ enum TextCapture {
         defer { restore(pb, saved) }   // always put the user's clipboard back
         let beforeCount = pb.changeCount
 
+        // The read hotkey (e.g. ⌘⇧R) is almost always still physically held when
+        // capture fires. A synthetic ⌘C posted now merges with those held
+        // modifiers into ⌘⇧C, which is NOT Copy — the clipboard never changes and
+        // the read fails. It only ever "worked" when the user released the keys
+        // fast enough before the post landed (hence the intermittent failures).
+        // Wait briefly for the real modifiers to clear, then post a clean ⌘C.
+        await waitForModifiersToClear()
         sendCopy()
 
         var changed = false
@@ -163,6 +170,22 @@ enum TextCapture {
         // clipboard restored by the defer above
         if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
         return nil
+    }
+
+    /// Modifier bits that, if still held, would corrupt a synthetic ⌘C.
+    private static let chordMods: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+
+    /// Poll up to ~0.5s for the user to lift the hotkey modifiers, yielding the
+    /// main actor between checks so the UI never freezes. Returns as soon as no
+    /// modifier is held; gives up after the deadline and lets the copy proceed
+    /// (better a possibly-contaminated attempt than hanging forever).
+    @MainActor
+    private static func waitForModifiersToClear() async {
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if CGEventSource.flagsState(.combinedSessionState).intersection(chordMods).isEmpty { return }
+            do { try await Task.sleep(nanoseconds: 10_000_000) } catch { return }  // 10 ms
+        }
     }
 
     // MARK: - clipboard plumbing
