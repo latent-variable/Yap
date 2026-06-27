@@ -25,6 +25,15 @@ struct StableToggleStyle: ToggleStyle {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // The switch is hand-drawn (Capsule + Circle), so VoiceOver would
+        // otherwise announce a generic "button" with no on/off state. Expose a
+        // native Toggle to the accessibility tree for correct role + state.
+        .accessibilityRepresentation {
+            Toggle(isOn: Binding(get: { configuration.isOn },
+                                 set: { configuration.isOn = $0 })) {
+                configuration.label
+            }
+        }
         .animation(.easeInOut(duration: 0.15), value: configuration.isOn)
     }
 
