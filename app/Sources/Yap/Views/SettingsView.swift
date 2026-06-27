@@ -14,6 +14,10 @@ struct SettingsView: View {
             DiagnosticsTab().tabItem { Label("Diagnostics", systemImage: "stethoscope") }
         }
         .padding(16)
+        // Keep "on" toggles visibly accent-colored even when the window isn't key
+        // (Yap is a menu-bar accessory, so Settings is often inactive — stock
+        // switches would gray out and you couldn't tell what's on). See StableToggleStyle.
+        .toggleStyle(StableToggleStyle())
         // Yap runs as an accessory (menu-bar only) app, whose windows can't
         // take keyboard focus — text fields (e.g. the custom-voice name) silently
         // reject typing. Promote to a regular app while Settings is open so its
@@ -341,7 +345,9 @@ private struct CleanupTab: View {
             List {
                 ForEach($prefs.customRules) { $rule in
                     HStack(spacing: 6) {
-                        Toggle("", isOn: $rule.enabled).labelsHidden()
+                        // Compact inline switch in a fixed-width row — keep the
+                        // stock style so it doesn't claim the row's flexible width.
+                        Toggle("", isOn: $rule.enabled).labelsHidden().toggleStyle(.switch)
                         TextField("name", text: $rule.name).frame(width: 90)
                         TextField("pattern", text: $rule.pattern).font(.caption.monospaced())
                         TextField("→ repl", text: $rule.replacement).font(.caption.monospaced()).frame(width: 90)
