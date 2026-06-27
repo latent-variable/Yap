@@ -135,6 +135,19 @@ enum TextCapture {
         guard !isCapturing else { return nil }
         isCapturing = true
         defer { isCapturing = false }
+
+        // The read hotkey (e.g. ⌘⇧R) is almost always still physically held when
+        // capture fires. A synthetic ⌘C posted now merges with those held
+        // modifiers into ⌘⇧C, which is NOT Copy — the clipboard never changes and
+        // the read fails. It only ever "worked" when the user released the keys
+        // fast enough before the post landed (hence the intermittent failures).
+        // Wait briefly for the real modifiers to clear, then post a clean ⌘C.
+        //
+        // Snapshot the pasteboard AFTER this wait: the wait yields the main actor
+        // for up to 0.5s, and snapshotting before it would let a copy that lands
+        // during the wait be clobbered when `restore` runs the stale snapshot.
+        await waitForModifiersToClear()
+
         let pb = NSPasteboard.general
         let saved = snapshot(pb)
         defer { restore(pb, saved) }   // always put the user's clipboard back
@@ -163,6 +176,26 @@ enum TextCapture {
         // clipboard restored by the defer above
         if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
         return nil
+    }
+
+    /// Modifier bits that, if still held, would corrupt a synthetic ⌘C into a
+    /// different chord (⌘⇧C, ⌥⌘C, …). Command itself is excluded on purpose: a
+    /// held ⌘ matches the modifier the synthetic Copy already sets, so it doesn't
+    /// corrupt anything — waiting on it would just add 0.5s of lag to every
+    /// ⌘-based read shortcut (e.g. ⌘⇧R) for no benefit.
+    private static let chordMods: CGEventFlags = [.maskShift, .maskAlternate, .maskControl]
+
+    /// Poll up to ~0.5s for the user to lift the hotkey modifiers, yielding the
+    /// main actor between checks so the UI never freezes. Returns as soon as no
+    /// modifier is held; gives up after the deadline and lets the copy proceed
+    /// (better a possibly-contaminated attempt than hanging forever).
+    @MainActor
+    private static func waitForModifiersToClear() async {
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if CGEventSource.flagsState(.combinedSessionState).intersection(chordMods).isEmpty { return }
+            do { try await Task.sleep(nanoseconds: 10_000_000) } catch { return }  // 10 ms
+        }
     }
 
     // MARK: - clipboard plumbing
