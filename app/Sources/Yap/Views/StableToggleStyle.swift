@@ -9,15 +9,23 @@ import SwiftUI
 /// ourselves so the accent fill is honored regardless of window-active state.
 struct StableToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
-        HStack {
-            configuration.label
-            Spacer(minLength: 8)
-            switchTrack(isOn: configuration.isOn)
-                .contentShape(Rectangle())
-                .onTapGesture { configuration.isOn.toggle() }
-                .animation(.easeInOut(duration: 0.15), value: configuration.isOn)
-                .accessibilityAddTraits(configuration.isOn ? [.isSelected] : [])
+        // A plain Button (not a bare .onTapGesture) keeps the control keyboard-
+        // navigable (Tab to focus, Space/Return to flip), makes the whole row —
+        // including the label — clickable, and preserves VoiceOver traits. The
+        // Settings window is promoted to a regular app for keyboard focus, so
+        // these matter.
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            HStack {
+                configuration.label
+                Spacer(minLength: 8)
+                switchTrack(isOn: configuration.isOn)
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: configuration.isOn)
     }
 
     private func switchTrack(isOn: Bool) -> some View {
