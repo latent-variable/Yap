@@ -135,10 +135,6 @@ enum TextCapture {
         guard !isCapturing else { return nil }
         isCapturing = true
         defer { isCapturing = false }
-        let pb = NSPasteboard.general
-        let saved = snapshot(pb)
-        defer { restore(pb, saved) }   // always put the user's clipboard back
-        let beforeCount = pb.changeCount
 
         // The read hotkey (e.g. ⌘⇧R) is almost always still physically held when
         // capture fires. A synthetic ⌘C posted now merges with those held
@@ -146,7 +142,17 @@ enum TextCapture {
         // the read fails. It only ever "worked" when the user released the keys
         // fast enough before the post landed (hence the intermittent failures).
         // Wait briefly for the real modifiers to clear, then post a clean ⌘C.
+        //
+        // Snapshot the pasteboard AFTER this wait: the wait yields the main actor
+        // for up to 0.5s, and snapshotting before it would let a copy that lands
+        // during the wait be clobbered when `restore` runs the stale snapshot.
         await waitForModifiersToClear()
+
+        let pb = NSPasteboard.general
+        let saved = snapshot(pb)
+        defer { restore(pb, saved) }   // always put the user's clipboard back
+        let beforeCount = pb.changeCount
+
         sendCopy()
 
         var changed = false
