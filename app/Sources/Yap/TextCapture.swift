@@ -172,8 +172,12 @@ enum TextCapture {
         return nil
     }
 
-    /// Modifier bits that, if still held, would corrupt a synthetic ⌘C.
-    private static let chordMods: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+    /// Modifier bits that, if still held, would corrupt a synthetic ⌘C into a
+    /// different chord (⌘⇧C, ⌥⌘C, …). Command itself is excluded on purpose: a
+    /// held ⌘ matches the modifier the synthetic Copy already sets, so it doesn't
+    /// corrupt anything — waiting on it would just add 0.5s of lag to every
+    /// ⌘-based read shortcut (e.g. ⌘⇧R) for no benefit.
+    private static let chordMods: CGEventFlags = [.maskShift, .maskAlternate, .maskControl]
 
     /// Poll up to ~0.5s for the user to lift the hotkey modifiers, yielding the
     /// main actor between checks so the UI never freezes. Returns as soon as no
