@@ -142,8 +142,8 @@ final class AppState: ObservableObject {
 
     func bootstrap() {
         seedStarterVoices()
-        hotkey.register(prefs.hotKey)
-        Log.write("bootstrap: axTrusted=\(Permissions.axTrusted) readSource=\(prefs.readSource.rawValue) captureMode=\(prefs.captureMode.rawValue)")
+        reapplyHotKey()   // honors voiceEnabled — won't bind the hot key when reading is off
+        Log.write("bootstrap: axTrusted=\(Permissions.axTrusted) readSource=\(prefs.readSource.rawValue) captureMode=\(prefs.captureMode.rawValue) voiceEnabled=\(prefs.voiceEnabled)")
         // Selection capture needs Accessibility. Prompt up front so the user
         // isn't met with a silent "No text captured" later.
         if prefs.readSource == .selection && !Permissions.axTrusted {
@@ -168,7 +168,12 @@ final class AppState: ObservableObject {
         }
     }
 
-    func reapplyHotKey() { hotkey.register(prefs.hotKey) }
+    /// Bind the read hot key only when the reading feature is enabled; otherwise
+    /// fully unbind it so it can't fire by accident.
+    func reapplyHotKey() {
+        if prefs.voiceEnabled { hotkey.register(prefs.hotKey) }
+        else { hotkey.unregister() }
+    }
 
     // MARK: - read pipeline
 
@@ -361,7 +366,7 @@ final class AppState: ObservableObject {
     /// get immediate feedback before speech begins — mirrors the dictation chimes.
     /// No-op for Kokoro (near-instant) or when the user turns it off.
     private func playBufferCue() {
-        guard prefs.engine == "chatterbox", prefs.hdBufferChime else { return }
+        guard !prefs.muteAllSounds, prefs.engine == "chatterbox", prefs.hdBufferChime else { return }
         NSSound(named: "Ping")?.play()
     }
 

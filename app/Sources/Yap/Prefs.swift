@@ -96,6 +96,14 @@ final class Prefs: ObservableObject {
     // (unfocused) window, or missing Accessibility. Without it a failed trigger is
     // just silence, so you wait for audio that never comes.
     @Published var failChime: Bool { didSet { d.set(failChime, forKey: "failChime") } }
+    // Master feature switches: turn the read-aloud ("voice") or dictation ("ears")
+    // feature off entirely. When off, that feature's global hot key is unregistered
+    // so it can't fire by accident. Default on.
+    @Published var voiceEnabled: Bool { didSet { d.set(voiceEnabled, forKey: "voiceEnabled") } }
+    @Published var dictationEnabled: Bool { didSet { d.set(dictationEnabled, forKey: "dictationEnabled") } }
+    // Master mute: silence every audible cue (read-fail, HD buffer, dictation
+    // start/stop) in one switch, regardless of the individual chime toggles.
+    @Published var muteAllSounds: Bool { didSet { d.set(muteAllSounds, forKey: "muteAllSounds") } }
     @Published var providerMode: String { didSet { d.set(providerMode, forKey: "providerMode") } }  // auto|cpu|coreml
     @Published var showMiniPlayer: Bool { didSet { d.set(showMiniPlayer, forKey: "showMiniPlayer") } }
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin") } }
@@ -125,6 +133,9 @@ final class Prefs: ObservableObject {
         autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
         hdBufferChime = d.object(forKey: "hdBufferChime") as? Bool ?? true
         failChime = d.object(forKey: "failChime") as? Bool ?? true
+        voiceEnabled = d.object(forKey: "voiceEnabled") as? Bool ?? true
+        dictationEnabled = d.object(forKey: "dictationEnabled") as? Bool ?? true
+        muteAllSounds = d.object(forKey: "muteAllSounds") as? Bool ?? false
         providerMode = d.string(forKey: "providerMode") ?? "auto"
         dictationEngine = d.string(forKey: "dictationEngine") ?? "english"
         dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true
