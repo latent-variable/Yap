@@ -55,19 +55,39 @@ if [ "${PARLEY_BUNDLE_PYTHON:-1}" = "1" ]; then
   ditto "$ROOT/dist/python-runtime" "$APP/Contents/Resources/python"
 fi
 
-# Prefer a stable self-signed identity (survives reinstalls → Accessibility
-# grant persists). Falls back to ad-hoc. Set one up with scripts/setup_signing.sh.
+# Prefer a stable self-signed identity. macOS ties the Accessibility (and Mic)
+# grant to the signature's DESIGNATED REQUIREMENT — i.e. the certificate —
+# instead of the binary's cdhash. So every rebuild keeps the same identity and
+# the grant survives. Ad-hoc signing (the fallback) is cdhash-bound, so each
+# rebuild looks like a brand-new app to TCC and the grant is lost — that's what
+# made axTrusted flap. Set the identity up once with scripts/setup_signing.sh.
 SIGN_ID="Yap Local Signing"
 SIGN_KC="$HOME/Library/Keychains/yap-signing.keychain-db"
-[ -f "$SIGN_KC" ] && security unlock-keychain -p "yap-local" "$SIGN_KC" 2>/dev/null || true
+SIGN_KCPW="yap-local"
 if [ -f "$SIGN_KC" ] && security find-certificate -c "$SIGN_ID" "$SIGN_KC" >/dev/null 2>&1; then
   echo "[build] signing with '$SIGN_ID' (stable identity — Accessibility grant persists)"
-  if ! codesign --force --deep --sign "$SIGN_ID" --keychain "$SIGN_KC" "$APP" >/dev/null 2>&1; then
-    echo "[build] stable signing failed, falling back to ad-hoc"
-    codesign --force --deep --sign - "$APP" >/dev/null 2>&1
+  # codesign needs the key reachable non-interactively: just UNLOCK the keychain.
+  # Do NOT re-run set-key-partition-list here — that's a one-time setup step
+  # (setup_signing.sh), and re-applying it right before signing leaves codesign
+  # unable to reach the private key, silently yielding an ad-hoc signature (the
+  # exact bug that broke grant persistence). Unlock-then-sign is the working path.
+  security unlock-keychain -p "$SIGN_KCPW" "$SIGN_KC" 2>/dev/null || true
+  # Gate on codesign's OWN exit code, not a follow-up `codesign -dvv` read:
+  # codesign --sign <identity> either succeeds with that identity (exit 0) or
+  # errors (non-zero) — it never silently ad-hocs (only `--sign -` does that).
+  # A separate -dvv check can read a stale signature from the kernel's code-sign
+  # cache right after re-signing and false-negative, which is misleading.
+  if codesign --force --deep --sign "$SIGN_ID" --keychain "$SIGN_KC" "$APP" 2>/tmp/yap_codesign.err; then
+    echo "[build] signed with stable identity (Accessibility grant persists across rebuilds)"
+  else
+    echo "[build] ERROR: codesign with '$SIGN_ID' failed — grant will NOT persist:" >&2
+    sed 's/^/[build]   /' /tmp/yap_codesign.err >&2
+    echo "[build]        Re-run: bash scripts/setup_signing.sh   then rebuild." >&2
+    rm -f /tmp/yap_codesign.err; exit 1
   fi
+  rm -f /tmp/yap_codesign.err
 else
-  echo "[build] ad-hoc signing (run scripts/setup_signing.sh for a persistent identity)"
+  echo "[build] ad-hoc signing (no stable identity; run scripts/setup_signing.sh)"
   codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "[build] codesign skipped"
 fi
 
