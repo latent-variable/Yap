@@ -375,7 +375,7 @@ final class AppState: ObservableObject {
     /// for speech, so silence reads as "still working"; this distinct error sound
     /// says "nope, try again" so you're not left hanging. Off via Settings.
     private func playFailCue() {
-        guard prefs.failChime else { return }
+        guard !prefs.muteAllSounds, prefs.failChime else { return }
         NSSound(named: "Funk")?.play()
     }
 
