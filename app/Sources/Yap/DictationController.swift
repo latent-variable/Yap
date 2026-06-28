@@ -20,19 +20,28 @@ final class DictationController: ObservableObject {
     func bootstrap() {
         dictation.engineChoice = Dictation.EngineChoice(rawValue: Prefs.shared.dictationEngine) ?? .english
         hotkey.onFire = { [weak self] in self?.toggle() }
-        hotkey.register(Prefs.shared.dictationHotKey)
+        reapplyHotKey()   // honors dictationEnabled — won't bind the hot key when ears are off
         // Warm the model at launch (cached → fast; first ever launch downloads in
-        // the background) so the first dictation isn't a cold load.
-        Task { await dictation.loadModelAwaiting(dictation.engineChoice) }
+        // the background) so the first dictation isn't a cold load. Skip entirely
+        // when dictation is disabled — no point downloading/loading a model the
+        // user turned off.
+        if Prefs.shared.dictationEnabled {
+            Task { await dictation.loadModelAwaiting(dictation.engineChoice) }
+        }
     }
 
-    /// Re-register after the user changes the dictation shortcut in Settings.
-    func reapplyHotKey() { hotkey.register(Prefs.shared.dictationHotKey) }
+    /// Bind the dictation hot key only when the ears feature is enabled; otherwise
+    /// fully unbind it so it can't fire by accident. Also called after the user
+    /// changes the dictation shortcut in Settings.
+    func reapplyHotKey() {
+        if Prefs.shared.dictationEnabled { hotkey.register(Prefs.shared.dictationHotKey) }
+        else { hotkey.unregister() }
+    }
 
     /// Short start/stop cue so you know recording began/ended without watching
     /// the screen (FluidVoice does this). Uses built-in macOS sounds.
     private func playChime(start: Bool) {
-        guard Prefs.shared.dictationChime else { return }
+        guard !Prefs.shared.muteAllSounds, Prefs.shared.dictationChime else { return }
         // Start: a bright "Tink" to cue recording. Stop: a soft "Pop" on insert —
         // unobtrusive, distinct from the start cue ("Bottle" was too heavy).
         NSSound(named: start ? "Tink" : "Pop")?.play()

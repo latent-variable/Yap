@@ -34,6 +34,14 @@ private struct GeneralTab: View {
     @EnvironmentObject var state: AppState
     var body: some View {
         Form {
+            Section("Features") {
+                Toggle("Reading aloud (voice)", isOn: $prefs.voiceEnabled)
+                    .onChange(of: prefs.voiceEnabled) { _, _ in state.reapplyHotKey() }
+                Toggle("Dictation (ears)", isOn: $prefs.dictationEnabled)
+                    .onChange(of: prefs.dictationEnabled) { _, _ in DictationController.shared.reapplyHotKey() }
+                Text("Turn a feature off to disable its global shortcut, so you can't trigger it by accident. The other keeps working.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Picker("Read source", selection: $prefs.readSource) {
                 ForEach(ReadSource.allCases) { Text($0.label).tag($0) }
             }
@@ -41,7 +49,11 @@ private struct GeneralTab: View {
                 ForEach(Profile.allCases) { Text($0.label).tag($0) }
             }
             Toggle("Stop current speech when shortcut pressed again", isOn: $prefs.stopOnNewTrigger)
+            Toggle("Mute all sounds", isOn: $prefs.muteAllSounds)
+            Text("Silences every cue at once — read-fail, HD buffering, and dictation start/stop — without touching their individual settings.")
+                .font(.caption).foregroundStyle(.secondary)
             Toggle("Play an error sound when a read fails", isOn: $prefs.failChime)
+                .disabled(prefs.muteAllSounds)
             Text("A short cue when nothing can be read — empty or stale selection, or a window you haven't clicked into yet. Without it a failed shortcut is just silence.")
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("Keep model warm", isOn: $prefs.keepWarm)

@@ -70,6 +70,13 @@ final class HotKeyManager {
         return false
     }
 
+    /// Fully unbind this hot key (both the Carbon ref and any modifier-only chord
+    /// state) so it can't fire. Used when its feature is disabled in Settings.
+    func unregister() {
+        if let ref { UnregisterEventHotKey(ref); self.ref = nil }
+        Self.lock.lock(); chordModifiers = 0; armed = true; Self.lock.unlock()
+    }
+
     // MARK: Modifier-only chords (flagsChanged monitor)
 
     private static var chordMonitorGlobal: Any?
