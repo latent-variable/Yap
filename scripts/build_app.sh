@@ -77,15 +77,16 @@ if [ -f "$SIGN_KC" ] && security find-certificate -c "$SIGN_ID" "$SIGN_KC" >/dev
   # errors (non-zero) — it never silently ad-hocs (only `--sign -` does that).
   # A separate -dvv check can read a stale signature from the kernel's code-sign
   # cache right after re-signing and false-negative, which is misleading.
-  if codesign --force --deep --sign "$SIGN_ID" --keychain "$SIGN_KC" "$APP" 2>/tmp/yap_codesign.err; then
+  CODESIGN_ERR="$(mktemp)"   # unique temp file — no predictable /tmp symlink target
+  if codesign --force --deep --sign "$SIGN_ID" --keychain "$SIGN_KC" "$APP" 2>"$CODESIGN_ERR"; then
     echo "[build] signed with stable identity (Accessibility grant persists across rebuilds)"
   else
     echo "[build] ERROR: codesign with '$SIGN_ID' failed — grant will NOT persist:" >&2
-    sed 's/^/[build]   /' /tmp/yap_codesign.err >&2
+    sed 's/^/[build]   /' "$CODESIGN_ERR" >&2
     echo "[build]        Re-run: bash scripts/setup_signing.sh   then rebuild." >&2
-    rm -f /tmp/yap_codesign.err; exit 1
+    rm -f "$CODESIGN_ERR"; exit 1
   fi
-  rm -f /tmp/yap_codesign.err
+  rm -f "$CODESIGN_ERR"
 else
   echo "[build] ad-hoc signing (no stable identity; run scripts/setup_signing.sh)"
   codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "[build] codesign skipped"
