@@ -66,7 +66,7 @@ Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 
 - **Ears — dictate into anything.** Hold the shortcut, talk, release. Streaming Parakeet STT on the Apple Neural Engine: a live, self-correcting preview as you speak, then an accurate final pass pasted at your cursor. English or 25-language multilingual. Optional chime + filler-word cleanup ("um"/"uh", never real words).
 - **Voice — read from anywhere.** Chrome, PDFs, Terminal, VS Code, Slack, Gmail. Selected-text capture (Accessibility) with a clipboard fallback that restores your clipboard, or right-click → **Services ▸ Read with Yap**.
-- **Two engines, one dropdown.** **Kokoro** — 54 voices, 8 languages, instant, CPU. **Chatterbox HD** (opt-in) — markedly more natural on the GPU, with **voice cloning** from a ~10s clip. HD reads play a short cue while the first audio buffers.
+- **Two engines, one dropdown.** **Kokoro** — 54 voices, 8 languages, instant, CPU. **Pocket TTS** (opt-in) — 26 markedly more natural built-in voices, ~10x realtime on CPU, plus **voice cloning** from a ~20s clip (cloning needs a free Hugging Face token).
 - **Streaming playback** — audio starts while the rest synthesizes; live speed/pitch/volume, natural pauses. **Smart cleanup** strips Markdown/code/citations (General/Markdown/Code/Blog/LLM profiles + custom regex).
 - **Flexible shortcuts** — a normal chord (⌘⇧R) or a **modifier-only chord** like ⌥⌘ (the "Alt+Win" press), held and released — handy for push-to-dictate.
 - **Menu-bar only, fully local.** Manage/delete each model from Settings ▸ Models. HD audio is watermarked; clone only voices you have rights to.
@@ -82,13 +82,13 @@ Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 Native SwiftUI menu-bar app. **Voice** (TTS) talks to a local Python sidecar over `127.0.0.1`; **ears** (STT) run fully in-app on the ANE — no sidecar, no network.
 
 ```
-SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CPU)         ← voice: default, instant
-  hotkey · capture · cleanup            └─ Chatterbox Turbo (PyTorch, MPS) ← voice: opt-in HD, cloning
+SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CPU)      ← voice: default, instant
+  hotkey · capture · cleanup            └─ Pocket TTS (PyTorch, CPU)   ← voice: opt-in, natural + cloning
   AVAudioEngine player                     streaming int16 PCM @ 24 kHz
   AVAudioEngine mic ──► FluidAudio / Parakeet (CoreML, ANE) ← ears: streaming dictation, in-app
 ```
 
-The default app stays small (~88 MB): Kokoro is bundled; the HD engine (torch, ~1.3 GB) downloads on demand only when you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The default app stays small (~88 MB): Kokoro is bundled; the Pocket engine (torch, ~1 GB) downloads on demand only when you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Develop
 
@@ -103,4 +103,4 @@ State lives in `~/Library/Application Support/Yap` (models, venv, cloned voices)
 
 ## License
 
-MIT. Kokoro weights Apache-2.0 (hexgrad/Kokoro-82M); Chatterbox MIT (Resemble AI); HD starter voices from CMU ARCTIC. Dictation uses [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) running NVIDIA Parakeet. HD audio is watermarked; clone only voices you have rights to.
+MIT. Kokoro weights Apache-2.0 (hexgrad/Kokoro-82M); Pocket TTS by [Kyutai](https://github.com/kyutai-labs/pocket-tts) (catalog model open; cloning model gated, needs your own Hugging Face token); starter reference voices from CMU ARCTIC. Dictation uses [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) running NVIDIA Parakeet. Clone only voices you have rights to.
