@@ -81,7 +81,7 @@ def test_sec_fetch_same_origin_allowed():
 
 def test_install_endpoint_csrf_blocked_without_token():
     # The no-body POST a malicious page would fire to trigger a multi-GB pip run.
-    assert _run_guard(_request(path="/engines/chatterbox/install")).status_code == 401
+    assert _run_guard(_request(path="/engines/pocket/install")).status_code == 401
 
 
 def test_verify_is_auth_exempt():
