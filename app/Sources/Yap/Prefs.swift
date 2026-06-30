@@ -73,9 +73,9 @@ final class Prefs: ObservableObject {
     static let shared = Prefs()
     private let d = UserDefaults.standard
 
-    @Published var engine: String { didSet { d.set(engine, forKey: "engine") } }   // "kokoro" | "chatterbox"
+    @Published var engine: String { didSet { d.set(engine, forKey: "engine") } }   // "kokoro" | "pocket"
     @Published var voice: String { didSet { d.set(voice, forKey: "voice") } }
-    @Published var hdVoice: String { didSet { d.set(hdVoice, forKey: "hdVoice") } } // chatterbox reference id
+    @Published var hdVoice: String { didSet { d.set(hdVoice, forKey: "hdVoice") } } // pocket catalog name or cloned ref id
     @Published var speed: Double { didSet { d.set(speed, forKey: "speed") } }
     @Published var pitch: Double { didSet { d.set(pitch, forKey: "pitch") } }    // cents
     @Published var volume: Double { didSet { d.set(volume, forKey: "volume") } }
@@ -85,12 +85,12 @@ final class Prefs: ObservableObject {
     @Published var readSource: ReadSource { didSet { d.set(readSource.rawValue, forKey: "readSource") } }
     @Published var stopOnNewTrigger: Bool { didSet { d.set(stopOnNewTrigger, forKey: "stopOnNewTrigger") } }
     @Published var keepWarm: Bool { didSet { d.set(keepWarm, forKey: "keepWarm") } }
-    // Pre-load the HD model at launch so the first HD read isn't a cold ~10s
-    // wait. Only acts when the HD engine is installed (so it's a no-op — "off" —
+    // Pre-load the Pocket model at launch so the first read isn't a cold wait.
+    // Only acts when the Pocket engine is installed (so it's a no-op — "off" —
     // for the default Kokoro-only setup).
     @Published var autoLoadHD: Bool { didSet { d.set(autoLoadHD, forKey: "autoLoadHD") } }
-    // Play a short cue when an HD (Chatterbox) read starts buffering — its first
-    // audio lags a few seconds, so this gives immediate "it's working" feedback.
+    // Play a short cue when a Pocket read starts buffering — its first segment
+    // takes a moment, so this gives immediate "it's working" feedback.
     @Published var hdBufferChime: Bool { didSet { d.set(hdBufferChime, forKey: "hdBufferChime") } }
     // Play a short error cue when a read can't start — empty/stale capture, wrong
     // (unfocused) window, or missing Accessibility. Without it a failed trigger is
@@ -118,7 +118,11 @@ final class Prefs: ObservableObject {
         // Port pre-rename state (Parley → Yap) before reading any setting below, so
         // the new bundle-id domain has the user's real prefs, not fresh defaults.
         AppMigration.runOnce()
-        engine = d.string(forKey: "engine") ?? "kokoro"
+        // Pocket TTS replaced the Chatterbox engine. Existing users stored
+        // "chatterbox" but won't have Pocket installed yet, so fall back to the
+        // always-present Kokoro default; they re-install Pocket from the Engine tab.
+        let storedEngine = d.string(forKey: "engine") ?? "kokoro"
+        engine = (storedEngine == "chatterbox") ? "kokoro" : storedEngine
         voice = d.string(forKey: "voice") ?? "am_puck"
         hdVoice = d.string(forKey: "hdVoice") ?? ""
         speed = d.object(forKey: "speed") as? Double ?? 1.0

@@ -108,7 +108,7 @@ private struct VoiceTab: View {
     }
 }
 
-// MARK: - Engine (Kokoro / Chatterbox HD)
+// MARK: - Engine (Kokoro / Pocket TTS)
 
 private struct EngineTab: View {
     @EnvironmentObject var state: AppState
@@ -120,6 +120,8 @@ private struct EngineTab: View {
     @State private var newName = ""
     @State private var fetching = false
     @State private var fetchLog = ""
+    @State private var hfToken = ""
+    @State private var savingToken = false
 
     private var nameReady: Bool { !newName.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -128,29 +130,36 @@ private struct EngineTab: View {
             Section("Voice engine") {
                 Picker("Engine", selection: $prefs.engine) {
                     Text("Kokoro — instant, 54 voices").tag("kokoro")
-                    Text("Chatterbox HD — natural, cloned voices").tag("chatterbox")
+                    Text("Pocket TTS — natural voices + cloning").tag("pocket")
                 }
                 .pickerStyle(.radioGroup)
-                Text("Kokoro runs on CPU and starts instantly. Chatterbox HD uses the GPU for noticeably more natural speech (a few seconds of startup), and lets you add your own voices by cloning a short clip. Switch any time — or just pick a voice from the dropdown.")
+                Text("Kokoro runs on CPU and starts instantly. Pocket TTS gives noticeably more natural speech with 26 built-in voices, also fully on CPU. Add your own voices by cloning a short clip (needs a free Hugging Face token, below). Switch any time — or just pick a voice from the dropdown.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             if state.hdInstalled {
                 Section {
-                    Toggle("Pre-load HD model at launch", isOn: $prefs.autoLoadHD)
-                    Text("Loads the HD voice in the background when the app starts, so your first HD read plays right away instead of a ~10-second cold start.")
+                    Toggle("Pre-load Pocket model at launch", isOn: $prefs.autoLoadHD)
+                    Text("Loads the Pocket voice in the background when the app starts, so your first read plays right away instead of a cold start.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Toggle("Play a cue while HD audio buffers", isOn: $prefs.hdBufferChime)
-                    Text("HD audio takes a few seconds to start. A short ping confirms it's working before speech begins.")
+                    Toggle("Play a cue while audio buffers", isOn: $prefs.hdBufferChime)
+                    Text("A short ping confirms it's working before speech begins.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
-            if prefs.engine == "chatterbox" {
-                if !state.hdInstalled { enableSection } else { voicesSection; addSection; ethicsSection }
+            if prefs.engine == "pocket" {
+                if !state.hdInstalled {
+                    enableSection
+                } else {
+                    catalogSection
+                    cloningSection
+                    if state.cloningReady { voicesSection; addSection }
+                    ethicsSection
+                }
             } else {
                 Section {
-                    Label("Custom voice cloning lives in the Chatterbox HD engine. Select it above to add your own voices.",
+                    Label("Pocket TTS adds 26 natural built-in voices and lets you clone your own. Select it above to set it up.",
                           systemImage: "wand.and.stars").font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -170,15 +179,15 @@ private struct EngineTab: View {
 
     // MARK: enable / download
     private var enableSection: some View {
-        Section("Enable HD") {
-            Text("HD mode downloads its engine once (~1.3 GB) into Application Support. It is not bundled, so the app stays small.")
+        Section("Set up Pocket TTS") {
+            Text("Pocket downloads its engine once (~1 GB) into Application Support. It is not bundled, so the app stays small. The 26 built-in voices need no account; cloning your own needs a free Hugging Face token (set up after install).")
                 .font(.caption).foregroundStyle(.secondary)
             if installing {
                 HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
                 ScrollView { Text(installLog).font(.caption.monospaced())
                     .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 110).border(.quaternary)
             } else {
-                Button("Download & enable HD") {
+                Button("Download & enable Pocket") {
                     installing = true; installLog = ""
                     Task {
                         await state.installHD { line in installLog += line + "\n" }
@@ -189,30 +198,82 @@ private struct EngineTab: View {
         }
     }
 
-    // MARK: voice list
-    private var voicesSection: some View {
-        Section("Your HD voices") {
-            if state.hdVoices.isEmpty {
-                Text("No voices yet. Add one below, or get the free starter pack.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(state.hdVoices) { v in
-                HStack(spacing: 8) {
-                    Image(systemName: prefs.hdVoice == v.id ? "largecircle.fill.circle" : "circle")
-                        .foregroundStyle(prefs.hdVoice == v.id ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                    Text(v.id)
-                    Spacer()
-                    Button { prefs.engine = "chatterbox"; prefs.hdVoice = v.id; state.testVoice() } label: {
-                        Image(systemName: "play.circle")
-                    }.buttonStyle(.borderless).help("Test")
-                    Button(role: .destructive) { state.deleteHDVoice(v.id) } label: {
-                        Image(systemName: "trash")
-                    }.buttonStyle(.borderless).help("Delete")
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { prefs.engine = "chatterbox"; prefs.hdVoice = v.id }
+    // MARK: built-in catalog voices (no account)
+    private var catalogSection: some View {
+        Section("Built-in voices") {
+            ForEach(state.hdVoices.filter { $0.needs_cloning != true }) { v in
+                voiceRow(v, deletable: false)
             }
         }
+    }
+
+    // MARK: cloned voices (require a token + accepted terms)
+    private var voicesSection: some View {
+        Section("Your cloned voices") {
+            let cloned = state.hdVoices.filter { $0.needs_cloning == true }
+            if cloned.isEmpty {
+                Text("No cloned voices yet. Add one below, or get the free starter pack.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(cloned) { v in voiceRow(v, deletable: true) }
+        }
+    }
+
+    private func voiceRow(_ v: VoiceInfo, deletable: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: prefs.hdVoice == v.id ? "largecircle.fill.circle" : "circle")
+                .foregroundStyle(prefs.hdVoice == v.id ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            Text(deletable ? "✨ \(v.id)" : v.id)
+            Spacer()
+            Button { prefs.engine = "pocket"; prefs.hdVoice = v.id; state.testVoice() } label: {
+                Image(systemName: "play.circle")
+            }.buttonStyle(.borderless).help("Test")
+            if deletable {
+                Button(role: .destructive) { state.deleteHDVoice(v.id) } label: {
+                    Image(systemName: "trash")
+                }.buttonStyle(.borderless).help("Delete")
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { prefs.engine = "pocket"; prefs.hdVoice = v.id }
+    }
+
+    // MARK: voice cloning (Hugging Face token)
+    private var cloningSection: some View {
+        Section("Voice cloning") {
+            if state.cloningReady {
+                Label("Voice cloning is active — add your own voices below.",
+                      systemImage: "checkmark.seal.fill")
+                    .font(.caption).foregroundStyle(.green)
+            } else {
+                Text("Cloning your own voice needs the gated Pocket model. One-time setup, fully local afterwards:")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("1. Accept the terms (opens huggingface.co/kyutai/pocket-tts).\n2. Create a read-only token at huggingface.co/settings/tokens.\n3. Paste it below.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Link("Accept the Pocket TTS terms ↗",
+                     destination: URL(string: "https://huggingface.co/kyutai/pocket-tts")!)
+                    .font(.caption)
+            }
+            SecureField("hf_… (read token)", text: $hfToken)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Button(savingToken ? "Applying…" : "Save token & enable cloning") {
+                    savingToken = true
+                    Task { await state.applyHFToken(hfToken); savingToken = false }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(savingToken || hfToken.trimmingCharacters(in: .whitespaces).isEmpty)
+                if HFToken.isSet {
+                    Button("Remove token") {
+                        hfToken = ""
+                        Task { await state.applyHFToken("") }
+                    }.buttonStyle(.bordered)
+                }
+            }
+            Text("Stored only in your macOS Keychain and sent only to the local engine. Never uploaded by Yap.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .onAppear { if hfToken.isEmpty, let t = HFToken.value { hfToken = t } }
     }
 
     // MARK: add a voice
@@ -268,7 +329,7 @@ private struct EngineTab: View {
 
     private var ethicsSection: some View {
         Section {
-            Label("HD audio is watermarked (Resemble Perth) to mark it AI-generated. Only clone voices you have permission to use.",
+            Label("Only clone voices you have permission to use — your own, or someone who consented. Don't clone real people without consent.",
                   systemImage: "checkmark.shield").font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -564,7 +625,7 @@ private struct ModelsTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("HD model (Chatterbox)") {
+            Section("Pocket model") {
                 LabeledContent("Status",
                     value: state.hdInstalled ? "Installed" : "Not installed")
                 if state.hdInstalled, let s = hdSize {
@@ -579,9 +640,9 @@ private struct ModelsTab: View {
                     ScrollView { Text(hdInstallLog).font(.caption.monospaced())
                         .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 90).border(.quaternary)
                 } else if !state.hdInstalled {
-                    Text("Optional ~1.3 GB engine for natural, cloned voices.")
+                    Text("Optional ~1 GB engine for natural built-in voices and cloning.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("Download & install HD") {
+                    Button("Download & install Pocket") {
                         hdInstalling = true; hdInstallLog = ""
                         Task {
                             await state.installHD { line in hdInstallLog += line + "\n" }
@@ -653,11 +714,11 @@ private struct ModelsTab: View {
         } message: {
             Text("Frees ~340 MB. Yap can't speak with Kokoro until you download it again.")
         }
-        .confirmationDialog("Delete the HD model?", isPresented: $confirmDeleteHD, titleVisibility: .visible) {
+        .confirmationDialog("Delete the Pocket model?", isPresented: $confirmDeleteHD, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { hdSize = nil; state.deleteHDModel() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Frees ~1.3 GB. Your cloned voices are kept; you can reinstall HD any time.")
+            Text("Frees ~1 GB. Your cloned voices are kept; you can reinstall Pocket any time.")
         }
         .onChange(of: dictation.state) { _, _ in refreshSizes() }
         .confirmationDialog("Delete the dictation models?", isPresented: $confirmDeleteParakeet, titleVisibility: .visible) {

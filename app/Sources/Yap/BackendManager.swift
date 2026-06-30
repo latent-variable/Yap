@@ -178,9 +178,13 @@ final class BackendManager: NSObject, ObservableObject {
         // Hand the spawned backend the same token file we read, so it requires
         // our shared secret on every request (blocks website CSRF + impostors).
         env["YAP_AUTH_TOKEN_FILE"] = BackendAuth.tokenFileURL.path
-        // If the HD engine is installed, run in the combined env (numpy 1.26 +
-        // torch + kokoro) so one process serves both engines. hd-packages must
-        // be FIRST on PYTHONPATH so its numpy<2 imports before the bundled 2.x.
+        // The user's Hugging Face token (Keychain) unlocks Pocket voice cloning by
+        // letting the backend download the gated cloning weights. Catalog voices
+        // need none of this, so it's set only when present.
+        if let hf = HFToken.value { env["HF_TOKEN"] = hf }
+        // If the Pocket (HD) engine is installed, run in the combined env (torch +
+        // kokoro) so one process serves both engines. hd-packages must be FIRST on
+        // PYTHONPATH so its numpy/torch import before the bundled ones.
         let hd = modelsDir.deletingLastPathComponent().appending(path: "hd-packages")
         let hdPresent = FileManager.default.fileExists(atPath: hd.appending(path: "torch").path)
 
@@ -193,8 +197,8 @@ final class BackendManager: NSObject, ObservableObject {
             // Drop inherited vars that would pull in the user's Python so the
             // relocatable runtime self-locates — THEN set PYTHONPATH to just
             // hd-packages (when present). Order matters: a prior bug cleared this
-            // key AFTER setting it, so the HD engine loaded the bundled numpy 2.x
-            // and torch/chatterbox failed on the version mismatch.
+            // key AFTER setting it, so the engine loaded the bundled numpy instead
+            // of hd-packages' and torch failed on the version mismatch.
             env.removeValue(forKey: "PYTHONHOME")
             env.removeValue(forKey: "PYTHONSTARTUP")
             env["PYTHONNOUSERSITE"] = "1"   // ignore ~/.local site-packages

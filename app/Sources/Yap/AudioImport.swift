@@ -1,6 +1,6 @@
 import AVFoundation
 
-/// Convert an arbitrary audio file into a Chatterbox reference clip:
+/// Convert an arbitrary audio file into a Pocket reference clip:
 /// mono, 24 kHz, 16-bit WAV, trimmed to a sane length.
 enum AudioImport {
     enum Err: Error { case open, convert, write }

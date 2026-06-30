@@ -1,0 +1,8 @@
+# Pocket TTS (Kyutai) — Yap's HD / voice-cloning engine. Heavy (pulls torch).
+# NOT in the default install; fetched on demand into
+# ~/Library/Application Support/Yap/hd-packages when the user enables Pocket.
+# Kept separate so the default Kokoro app stays light.
+#
+# Catalog voices need no account. Voice cloning needs the user's own Hugging Face
+# token (read scope) + accepting the terms at huggingface.co/kyutai/pocket-tts.
+pocket-tts>=2.1.0

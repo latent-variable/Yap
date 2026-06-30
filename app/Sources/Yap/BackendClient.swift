@@ -5,6 +5,11 @@ struct VoiceInfo: Identifiable, Decodable, Hashable {
     let lang: String
     let lang_label: String
     let gender: String
+    /// Server-supplied grouping label (Pocket: "Pocket Voices" / "✨ Cloned").
+    /// Absent for Kokoro voices (grouped by language instead).
+    var section: String? = nil
+    /// Pocket cloned refs need the gated cloning model loaded to be usable.
+    var needs_cloning: Bool? = nil
 }
 
 struct HealthInfo: Decodable {
@@ -87,27 +92,33 @@ struct BackendClient {
         return r.voices
     }
 
-    struct EngineInfo: Decodable { let installed: Bool; let loaded: Bool }
-    func engines() async -> (kokoro: EngineInfo?, chatterbox: EngineInfo?) {
-        struct Resp: Decodable { let kokoro: EngineInfo; let chatterbox: EngineInfo }
+    /// Pocket engine status. `cloning` = the gated cloning model is loaded;
+    /// `has_token` = an HF token is present in the backend env.
+    struct EngineInfo: Decodable {
+        let installed: Bool; let loaded: Bool
+        var cloning: Bool? = nil
+        var has_token: Bool? = nil
+    }
+    func engines() async -> (kokoro: EngineInfo?, pocket: EngineInfo?) {
+        struct Resp: Decodable { let kokoro: EngineInfo; let pocket: EngineInfo }
         let req = authed(base.appending(path: "engines"))
         guard let (data, _) = try? await session.data(for: req),
               let r = try? JSONDecoder().decode(Resp.self, from: data) else { return (nil, nil) }
-        return (r.kokoro, r.chatterbox)
+        return (r.kokoro, r.pocket)
     }
 
-    /// Stream the HD-deps install, line by line, for a progress view.
-    func installChatterbox(onLine: @escaping (String) -> Void) async throws {
-        var req = authed(base.appending(path: "engines/chatterbox/install"))
+    /// Stream the Pocket-deps install, line by line, for a progress view.
+    func installPocket(onLine: @escaping (String) -> Void) async throws {
+        var req = authed(base.appending(path: "engines/pocket/install"))
         req.httpMethod = "POST"
         req.timeoutInterval = 1800
         let (bytes, _) = try await session.bytes(for: req)
         for try await line in bytes.lines { onLine(line) }
     }
 
-    /// Pre-load the HD model + a voice so the first read isn't a cold ~8s wait.
-    func warmChatterbox(voice: String) async {
-        var url = base.appending(path: "engines/chatterbox/warm")
+    /// Pre-load the Pocket model + a voice so the first read isn't a cold wait.
+    func warmPocket(voice: String) async {
+        var url = base.appending(path: "engines/pocket/warm")
         url.append(queryItems: [URLQueryItem(name: "voice", value: voice)])
         var req = authed(url)
         req.httpMethod = "POST"

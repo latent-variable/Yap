@@ -2,8 +2,8 @@
 
 For any agent (build, fix, review, extend) working on this repo. Yap gives a
 Mac (and the AI agents you work with) **voice and ears**, fully local. Voice:
-highlight text anywhere, press a hotkey, hear it in a local Kokoro or Chatterbox
-HD voice. Ears: press a shortcut, speak, and local Parakeet STT types the text
+highlight text anywhere, press a hotkey, hear it in a local Kokoro or Pocket TTS
+voice. Ears: press a shortcut, speak, and local Parakeet STT types the text
 at your cursor in any app. No cloud, no account, no telemetry.
 
 ## What it is, and where the source lives
@@ -36,41 +36,48 @@ pieces an agent must keep in sync if touching either side:
   answers does it launch `scripts/run_backend.sh`. Don't assume the app owns the
   process it's talking to.
 
-## Two engines (Kokoro + Chatterbox Turbo HD)
+## Two engines (Kokoro + Pocket TTS)
 
-`/synthesize` takes an `engine` param: `kokoro` (default) or `chatterbox`. Both
-emit the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
+`/synthesize` takes an `engine` param: `kokoro` (default) or `pocket`. Both emit
+the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
 
 - **Kokoro** — `Engine` in `server.py`, ONNX/CPU, bundled, instant. Voices = the
   54 model voices.
-- **Chatterbox Turbo HD** — `chatterbox_engine.py`, PyTorch/MPS, **cloning-only**:
-  each "voice" is a ~10s reference WAV in `hd-voices/`. Lazy — no torch import
-  until first HD use. Gotchas baked in: a global float64→float32 `.to(mps)` patch
-  (Metal has no float64, crashes otherwise), a warmup on load (~8s cold, then
-  RTF ~0.7), and the real Perth watermark when available.
+- **Pocket TTS** (Kyutai) — `pocket_engine.py`, PyTorch/**CPU**, ~10x realtime.
+  Replaced Chatterbox. One model family, two modes:
+  - **Catalog voices** (built-in, no account): 26 predefined speakers from the
+    *ungated* `kyutai/pocket-tts-without-voice-cloning` weights. A catalog name
+    (e.g. `michael`) is passed straight to `get_state_for_audio_prompt`.
+  - **Cloning** (opt-in, gated): clone any ~20s reference WAV in `hd-voices/`.
+    Needs the *gated* `kyutai/pocket-tts` weights — the user supplies their OWN
+    HF token (read scope) AND accepts terms at huggingface.co/kyutai/pocket-tts.
+    Token reaches the backend as `HF_TOKEN` (app sets it from the macOS Keychain
+    via `HFToken`/`Keychain.swift`). `pocket_tts` silently falls back to
+    catalog-only if the token is absent OR terms aren't accepted (403), so
+    `engine.has_cloning` is the source of truth, surfaced as `/engines` →
+    `pocket.cloning`. A cloned-voice request with cloning off returns **403**.
+  Lazy — no torch import until first Pocket use; per-voice conditioning cached;
+  inference serialized by a lock.
 
 Key facts an agent must keep straight:
-- HD deps are **not** in `requirements.txt` (too heavy). They install on demand
-  into `hd-packages/` via `/engines/chatterbox/install`, which **also** installs
-  kokoro-onnx + onnxruntime there so ONE process serves both engines. numpy is
-  pinned <2; kokoro-onnx's `>=2` pin is conservative and works on 1.26 (verified).
-- `BackendManager` adds `hd-packages` to the backend's `PYTHONPATH` when present,
-  so numpy 1.26 is used process-wide. Restart the backend after install to load
-  the combined env.
-- HD is cloning. **Never source or ship celebrity / non-consented voices.** Audio
-  is watermarked; the UI says clone only what you have rights to. Starter voices
-  are CMU ARCTIC (free); `fetch_hd_voices.sh` / `/voices/hd/starters` fetch them.
+- Pocket deps are **not** in `requirements.txt` (too heavy, pulls torch ~1 GB).
+  They install on demand into `hd-packages/` via `/engines/pocket/install`, which
+  **also** installs kokoro-onnx + onnxruntime there so ONE process serves both
+  engines. Pocket pulls numpy ≥2; kokoro-onnx imports fine on it (verified).
+- `BackendManager` adds `hd-packages` to the backend's `PYTHONPATH` when present
+  (FIRST, so its torch/numpy win), and injects `HF_TOKEN` from the Keychain.
+  Restart the backend after install — or after a token change — to reload.
+- Cloning. **Never source or ship celebrity / non-consented voices.** The UI says
+  clone only what you have rights to (Pocket has no built-in watermark, unlike the
+  old Chatterbox). Starter voices are CMU ARCTIC (free); `/voices/hd/starters`
+  fetches them. (Internal Swift identifiers still use the `hd*` prefix — `hdVoice`,
+  `hdInstalled`, `installHD` — they now denote the Pocket engine.)
 - Speed is applied at **playback** (AVAudioUnitTimePitch rate, live-adjustable),
-  not the backend — Chatterbox has no speed knob, and this makes speed real-time
-  for both engines. The player pre-buffers a cushion (0.35s Kokoro, 0.8s HD)
-  before starting, so generation jitter doesn't underrun into silence.
-- HD chunking is buffer-aware, not fixed-size. `merge_for_hd` in `server.py` sizes
-  each Chatterbox chunk from a measured cost model — `generate(T sec audio) ≈
-  0.8 + 0.49·T` on MPS — so its generate time can't outrun the audio already
-  queued. The first chunk is small (first audio ~2.2s); later chunks grow as the
-  buffer banks, keeping every chunk RTF < 1. This is what makes HD latency
-  consistent; if you touch the cost model, re-run `backend/tools/validate_hd_stream.py`
-  (real model) and the `TestHDChunking` suite. Profile with `tools/profile_hd.py`.
+  not the backend — parity across engines. The player pre-buffers a 0.35s cushion
+  (both engines now; Pocket is fast enough not to need the old HD buffer logic).
+- Pocket is fast enough for the plain per-segment pipeline — the Chatterbox
+  buffer-aware HD chunking (`merge_for_hd` + cost model) and its tools/tests were
+  removed.
 - @Published writes from the audio-stream callback **must** hop to the main actor
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.

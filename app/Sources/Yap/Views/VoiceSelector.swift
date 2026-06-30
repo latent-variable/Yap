@@ -93,7 +93,8 @@ struct VoiceMenuButton: View {
 
     private var current: String {
         if let v = voices.first(where: { $0.id == selectionId }) {
-            return v.engine == "chatterbox" ? "✨ \(v.label)" : v.label
+            // Mark cloned voices with the sparkle; catalog voices read plain.
+            return v.section.contains("Cloned") ? "✨ \(v.label)" : v.label
         }
         return selectionId.split(separator: ":").last.map(String.init) ?? selectionId
     }

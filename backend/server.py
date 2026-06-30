@@ -216,123 +216,6 @@ def segment_text(text: str, max_chars: int = 320) -> list[tuple[str, float]]:
     return segs
 
 
-# Chatterbox Turbo cost model, measured on Apple-Silicon MPS (2nd-run, synced):
-#   generate(T seconds of audio) ≈ HD_GEN_FIXED  (s3gen vocoder floor, per call)
-#                                 + HD_GEN_PER_SEC * T   (AR decode + vocode)
-# so a chunk's generate stays FASTER than its playback once it holds more than
-# ~1.6s of audio. Speech runs ~HD_CHARS_PER_SEC chars/sec.
-HD_CHARS_PER_SEC = 17.0
-HD_GEN_FIXED = 0.8         # vocoder floor per generate() call
-HD_GEN_PER_SEC = 0.49     # marginal generate cost per second of audio
-HD_FIRST_SECONDS = 2.8    # first chunk floor: sets the buffer floor T₀ and very
-                          # nearly covers any later chunk's generate. First audio
-                          # lands ~2.2s.
-HD_MIN_SECONDS = 1.8      # drain-free floor for later chunks: above the RTF=1
-                          # breakeven (~1.6s), so each still banks slack
-HD_MAX_SECONDS = 6.0      # target ceiling (keeps long runs responsive)
-HD_MAX_CHARS = 68         # cap ONE sentence (comma-preferring) so gen(sentence)
-                          # ≤ gen at the first-chunk floor T₀ — no single sentence
-                          # can outrun the initial banked buffer
-HD_SAFETY_SECONDS = 0.3   # size chunks to finish generating this far AHEAD of
-                          # the buffer draining, so MPS/CPU jitter can't underrun
-
-
-def _hd_gen_seconds(audio_seconds: float) -> float:
-    return HD_GEN_FIXED + HD_GEN_PER_SEC * audio_seconds
-
-
-def _split_long_for_hd(text: str, gap: float) -> list[tuple[str, float]]:
-    """Break a single over-long sentence into <=HD_MAX_CHARS pieces, preferring
-    comma boundaries then spaces, so no one chunk's generate can outrun the
-    playback buffer. Inner pieces get gap 0 (no pause — still one sentence); the
-    last piece keeps the sentence's real trailing gap."""
-    if len(text) <= HD_MAX_CHARS:
-        return [(text, gap)]
-    words = text.split()
-    pieces: list[str] = []
-    line = ""
-    for w in words:
-        cand = f"{line} {w}".strip()
-        if len(cand) > HD_MAX_CHARS and line:
-            pieces.append(line)
-            line = w
-        else:
-            line = cand
-        if line.endswith((",", ";", ":")) and len(line) >= HD_MAX_CHARS * 0.6:
-            pieces.append(line)   # clean break at a clause boundary
-            line = ""
-    if line:
-        pieces.append(line)
-    return [(p, gap if i == len(pieces) - 1 else 0.0) for i, p in enumerate(pieces)]
-
-
-def merge_for_hd(segs: list[tuple[str, float]]) -> list[tuple[str, float]]:
-    """Merge sentence-level segments into HD chunks, sized so the player buffer
-    never drains while the next chunk generates.
-
-    Budget-aware greedy scheduler: it tracks `banked` — the seconds of audio
-    queued when the NEXT chunk starts generating — and caps each chunk so its
-    generate time can't exceed what's banked. The first chunk is small (fast
-    first audio); chunks grow as the buffer banks, then settle. Provably no
-    underrun (each chunk's gen ≤ banked buffer). Whole sentences stay together;
-    paragraph gaps force a break and keep their silence between chunks."""
-    segs = [p for text, gap in segs for p in _split_long_for_hd(text, gap)]
-    out: list[tuple[str, float]] = []
-    buf: list[tuple[str, float]] = []
-    length = 0
-    banked = 0.0
-    target_s = HD_FIRST_SECONDS
-    first = True
-
-    def flush() -> None:
-        nonlocal buf, length, banked, target_s, first
-        if not buf:
-            return
-        text = " ".join(t for t, _ in buf)
-        # Trailing gap = the LARGEST gap among the merged segments, not just the
-        # last. When a short paragraph/line is absorbed into a chunk, its longer
-        # pause is preserved at the chunk boundary instead of being dropped.
-        # (Extra silence only deepens the buffer — it can't cause an underrun.)
-        out.append((text, max(g for _, g in buf)))
-        audio_s = len(text) / HD_CHARS_PER_SEC
-        if first:
-            banked = audio_s                # playback starts as this chunk lands
-            first = False
-        else:
-            banked = max(0.0, banked - _hd_gen_seconds(audio_s)) + audio_s
-        # largest next chunk whose generate fits inside the banked buffer, with a
-        # jitter margin so it lands ahead of the buffer draining (not at the wire)
-        safe = (banked - HD_GEN_FIXED - HD_SAFETY_SECONDS) / HD_GEN_PER_SEC
-        target_s = min(HD_MAX_SECONDS, max(HD_MIN_SECONDS, safe))
-        buf, length = [], 0
-
-    # Gap-free invariant: the player buffer only grows once playback starts
-    # (every chunk ≥ ~1.6s audio nets positive), so its floor is banked₀ = T₀,
-    # the FIRST chunk's duration. Two rules make it hold for any input:
-    #   1. never flush the first chunk below the minimum — it sets that floor;
-    #   2. size every later chunk to target_s = gen⁻¹(banked), so its generate
-    #      time can't exceed the buffer already queued.
-    first_min = HD_FIRST_SECONDS * HD_CHARS_PER_SEC   # floor for chunk 0 (T₀)
-    drain_min = HD_MIN_SECONDS * HD_CHARS_PER_SEC     # drain-free floor after
-    ceil_chars = HD_MAX_SECONDS * HD_CHARS_PER_SEC
-    for text, gap in segs:
-        seglen = len(text) + 1
-        # A chunk may flush only past its floor: the first chunk past first_min
-        # (so T₀ covers any later chunk's generate), later chunks past the small
-        # drain-free floor (so they never drain the buffer). Below the floor,
-        # short adjacent sentences / paragraphs merge instead of shipping tiny.
-        floor = drain_min if out else first_min
-        if buf and length >= floor and (
-                length + seglen > target_s * HD_CHARS_PER_SEC or length + seglen > ceil_chars):
-            flush()
-        buf.append((text, gap))
-        length += seglen
-        if gap >= GAP_PARAGRAPH and length >= floor:
-            flush()
-    flush()
-    return out
-
-
 # --- engine ---------------------------------------------------------------------
 # onnxruntime execution-provider selection. CoreML routes to Apple GPU/ANE,
 # but for an 82M model like Kokoro it benchmarks ~even-to-slower than the
@@ -433,22 +316,22 @@ def wav_bytes(samples: np.ndarray) -> bytes:
 
 
 # --- app ------------------------------------------------------------------------
-from chatterbox_engine import ChatterboxTurboEngine
+from pocket_engine import PocketEngine, CATALOG_NAMES
 
 engine: Engine  # set in main
-cb_engine = ChatterboxTurboEngine()  # optional HD engine; lazy, no torch import yet
+pk_engine = PocketEngine()  # optional HD/cloning engine; lazy, no torch import yet
 
 
 class SynthReq(BaseModel):
     text: str
-    voice: str = "am_puck"      # kokoro voice id, OR chatterbox reference-clip id
+    voice: str = "am_puck"      # kokoro voice id, OR pocket catalog name / cloned ref id
     speed: float = Field(1.0, ge=0.25, le=4.0)
     lang: Optional[str] = None
     pause_scale: float = Field(1.0, ge=0.0, le=10.0)    # multiplies the gaps between sentences/lines/paragraphs
-    engine: str = "kokoro"      # "kokoro" | "chatterbox"
+    engine: str = "kokoro"      # "kokoro" | "pocket"
 
 
-# Reference voice clips for the Chatterbox (cloning) engine live here.
+# Reference voice clips for the Pocket cloning engine live here.
 def hd_voices_dir() -> Path:
     d = Path(os.environ.get("YAP_HD_VOICES") or os.environ.get("PARLEY_HD_VOICES") or
              (Path.home() / "Library/Application Support/Yap/hd-voices"))
@@ -596,7 +479,7 @@ def engines_status() -> dict:
     return {
         "kokoro": {"name": "kokoro", "label": "Kokoro", "installed": engine.files_present(),
                    "loaded": engine.kokoro is not None},
-        "chatterbox": cb_engine.status(),
+        "pocket": pk_engine.status(),
     }
 
 
@@ -605,25 +488,25 @@ def engines():
     return engines_status()
 
 
-@app.post("/engines/chatterbox/install")
-def install_chatterbox():
-    """Install the heavy HD deps into app-support hd-packages (not the bundle).
-    Streams pip output so the app can show progress. ~2-3 GB, one time."""
+@app.post("/engines/pocket/install")
+def install_pocket():
+    """Install the Pocket TTS deps into app-support hd-packages (not the bundle).
+    Streams pip output so the app can show progress. ~1 GB (torch), one time."""
     import subprocess
-    from chatterbox_engine import hd_packages_dir
+    from pocket_engine import hd_packages_dir
     target = hd_packages_dir()
     target.mkdir(parents=True, exist_ok=True)
-    req_file = Path(__file__).parent / "requirements-chatterbox.txt"
+    req_file = Path(__file__).parent / "requirements-pocket.txt"
     pip = [sys.executable, "-m", "pip", "install", "--target", str(target)]
-    # 1) HD deps (numpy<2). 2) kokoro into the SAME env without disturbing numpy,
-    # so one process can serve both engines.
+    # 1) Pocket deps (pulls torch + numpy>=2). 2) kokoro into the SAME env without
+    # disturbing its deps, so one process can serve both engines.
     steps = [
         pip + ["--upgrade", "-r", str(req_file)],
         pip + ["--no-deps", "--upgrade", "kokoro-onnx", "onnxruntime"],
     ]
 
     def gen() -> Iterator[bytes]:
-        yield f"installing HD engine into {target}\n".encode()
+        yield f"installing Pocket engine into {target}\n".encode()
         try:
             import importlib.util
             if importlib.util.find_spec("pip") is None:
@@ -652,20 +535,35 @@ def install_chatterbox():
                         proc.kill()
             if rc != 0:
                 break
-        ok = rc == 0 and cb_engine.available()
-        yield f"\n[{'done' if ok else 'failed'}] exit={rc} installed={cb_engine.available()}\n".encode()
-        yield b"\n[note] restart the engine to activate HD (the app does this for you).\n"
+        ok = rc == 0 and pk_engine.available()
+        yield f"\n[{'done' if ok else 'failed'}] exit={rc} installed={pk_engine.available()}\n".encode()
+        yield b"\n[note] restart the engine to activate Pocket (the app does this for you).\n"
 
     return StreamingResponse(gen(), media_type="text/plain")
 
 
 @app.get("/voices")
 def voices(engine_name: str = Query("kokoro", alias="engine")):
-    if engine_name == "chatterbox":
+    if engine_name == "pocket":
         items = []
+        # Built-in catalog speakers — always available, no account. Pocket uses
+        # short lang codes (en/fr/de/…) not in LANG_LABEL's en-us/fr-fr keys, so
+        # map them to display names here.
+        pocket_lang = {"en": "English", "fr": "French", "de": "German",
+                       "es": "Spanish", "it": "Italian", "pt": "Portuguese"}
+        for name, lang in pk_engine.voices():
+            items.append({"id": name, "lang": lang,
+                          "lang_label": pocket_lang.get(lang, lang),
+                          "gender": "catalog", "section": "Pocket Voices"})
+        # Cloned reference clips — only usable when the gated cloning model is
+        # loaded (user supplied a token + accepted terms). Listed either way so
+        # the user sees their clones; the UI can disable them when cloning is off.
         for p in sorted(hd_voices_dir().glob("*.wav")):
-            items.append({"id": p.stem, "lang": "any", "lang_label": "Cloned", "gender": "ref"})
-        return {"voices": items, "count": len(items)}
+            items.append({"id": p.stem, "lang": "any", "lang_label": "Cloned",
+                          "gender": "ref", "section": "✨ Cloned",
+                          "needs_cloning": True})
+        return {"voices": items, "count": len(items),
+                "cloning": pk_engine.has_cloning, "has_token": pk_engine.has_token()}
     items = []
     for v in engine.voices():
         lang = lang_for_voice(v)
@@ -692,14 +590,24 @@ def models():
 
 def _segment_synth(req: SynthReq):
     """Return a `synth(text) -> ndarray` bound to the requested engine."""
-    if req.engine == "chatterbox":
+    if req.engine == "pocket":
+        if not pk_engine.load():
+            raise HTTPException(503, pk_engine.error or "Pocket engine not available")
+        # Resolve voice id. A user's explicit clone wins over a same-named catalog
+        # voice when cloning is usable; otherwise fall back to the catalog (so a
+        # clone named like a catalog voice still speaks when cloning is off),
+        # and only 403 when a clone is the sole match but cloning isn't loaded.
         ref = hd_voice_path(req.voice)
-        if ref is None:
-            raise HTTPException(400, f"reference voice '{req.voice}' not found")
-        if not cb_engine.load():
-            raise HTTPException(503, cb_engine.error or "HD engine not available")
-        ref_str = str(ref)
-        return lambda text: cb_engine.synth(text, ref_str, req.speed)
+        if ref is not None and pk_engine.has_cloning:
+            target = str(ref)
+        elif req.voice in CATALOG_NAMES:
+            target = req.voice
+        elif ref is not None:
+            raise HTTPException(403, "voice cloning unavailable — add a Hugging "
+                                "Face token and accept the Pocket TTS terms")
+        else:
+            raise HTTPException(400, f"voice '{req.voice}' not found")
+        return lambda text: pk_engine.synth(text, target, req.speed)
     # default: Kokoro
     if engine.kokoro is None:
         engine.load()
@@ -708,15 +616,18 @@ def _segment_synth(req: SynthReq):
     return lambda text: engine.synth(text, req.voice, req.speed, req.lang)
 
 
-@app.post("/engines/chatterbox/warm")
-def warm_chatterbox(voice: str = Query("")):
-    """Pre-load the HD model + a voice so the first read is fast. Called when
-    the user switches to the HD engine. Blocks until warm (~8s cold)."""
-    if not cb_engine.available():
-        raise HTTPException(503, "HD engine not installed")
-    ref = hd_voice_path(voice) if voice else None
-    ok = cb_engine.warm(str(ref) if ref else "")
-    return {"warm": ok, "loaded": cb_engine.model is not None, "voice": voice}
+@app.post("/engines/pocket/warm")
+def warm_pocket(voice: str = Query("")):
+    """Pre-load the Pocket model + a voice so the first read is fast. Called when
+    the user switches to the Pocket engine."""
+    if not pk_engine.available():
+        raise HTTPException(503, "Pocket engine not installed")
+    # A catalog name warms directly; otherwise resolve a cloned reference clip.
+    target = voice if voice in CATALOG_NAMES else (
+        str(hd_voice_path(voice)) if voice and hd_voice_path(voice) else "")
+    ok = pk_engine.warm(target)
+    return {"warm": ok, "loaded": pk_engine.model is not None,
+            "cloning": pk_engine.has_cloning, "voice": voice}
 
 
 # SHA-256 of each CMU ARCTIC clip we fetch, keyed "<spk>_<n>". festvox.org
@@ -867,8 +778,6 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
         raise HTTPException(400, "empty text")
 
     segments = segment_text(req.text)
-    if req.engine == "chatterbox":
-        segments = merge_for_hd(segments)   # fewer, larger calls = smoother HD
     if not segments:
         raise HTTPException(400, "no speakable text")
     do_synth = _segment_synth(req)

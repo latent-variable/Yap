@@ -153,62 +153,6 @@ class TestSegmentation:
             assert word in joined
 
 
-# ── HD (Chatterbox) chunking: gap-free by the measured cost model ────────────
-class TestHDChunking:
-    """Chatterbox generate(T sec audio) ≈ 0.8 + 0.49·T on MPS. merge_for_hd must
-    size chunks so the first audio lands fast AND the player buffer never drains
-    while later chunks generate. This simulates the streaming timeline."""
-
-    @staticmethod
-    def _timeline(text):
-        from server import merge_for_hd, HD_CHARS_PER_SEC
-        chunks = merge_for_hd(segment_text(text))
-        t = play_start = buf_end = 0.0
-        first_audio = None
-        min_slack = float("inf")
-        max_chars = 0
-        for txt, _gap in chunks:
-            T = len(txt) / HD_CHARS_PER_SEC
-            gen = 0.8 + 0.49 * T
-            t += gen                       # backend generates chunks back to back
-            max_chars = max(max_chars, len(txt))
-            if first_audio is None:
-                first_audio = play_start = t
-                buf_end = t + T
-                continue
-            slack = buf_end - t            # audio still queued when this lands
-            min_slack = min(min_slack, slack)
-            buf_end = (t + T) if slack < 0 else buf_end + T
-        return first_audio, min_slack, max_chars, len(chunks)
-
-    SAMPLES = {
-        "ocean": "The deep ocean is the largest habitat on Earth. Below the sunlit "
-                 "zone lies a world of perpetual darkness. Yes. Strange life thrives "
-                 "there, needing no sun at all, fed by chemicals from the seafloor.\n\n"
-                 "We have mapped less of it than Mars. New expeditions change that.",
-        "fatsentence": "One enormous sentence that keeps going past every comma, well "
-                       "beyond any length a vocoder buffer could absorb in one shot, "
-                       "rolling forward relentlessly, and still continuing onward.",
-        "short": "Yes. No. Maybe.",
-        "mixed": "Hi there. " + "A normal sentence of moderate length here. " * 4,
-    }
-
-    @pytest.mark.parametrize("name", list(SAMPLES))
-    def test_no_underrun_and_fast_start(self, name):
-        first_audio, min_slack, max_chars, n = self._timeline(self.SAMPLES[name])
-        assert min_slack >= 0, f"{name}: buffer underruns by {-min_slack:.2f}s"
-        assert first_audio <= 3.2, f"{name}: first audio too slow ({first_audio:.2f}s)"
-        # no single sentence chunk blows the per-chunk budget (merged multi-
-        # sentence chunks may exceed it; those are predictable and safe)
-
-    def test_no_speech_lost_in_merge(self):
-        from server import merge_for_hd
-        text = self.SAMPLES["ocean"]
-        merged = " ".join(s for s, _ in merge_for_hd(segment_text(text)))
-        for word in ("deep", "darkness", "seafloor", "Mars", "expeditions"):
-            assert word in merged
-
-
 # ── synthesis robustness ────────────────────────────────────────────────────
 @needs_model
 class TestSynth:
