@@ -92,10 +92,9 @@ final class AppState: ObservableObject {
     /// then whatever's first. Never a cloned ref (would 403 without a token).
     static let preferredPocketVoice = "eve"
     var defaultPocketVoiceId: String? {
-        if let eve = hdVoices.first(where: {
-            $0.id == Self.preferredPocketVoice && $0.needs_cloning != true
-        }) { return eve.id }
-        return (hdVoices.first(where: { $0.needs_cloning != true }) ?? hdVoices.first)?.id
+        hdVoices.first(where: { $0.id == Self.preferredPocketVoice && $0.needs_cloning != true })?.id
+            ?? hdVoices.first(where: { $0.needs_cloning != true })?.id
+            ?? hdVoices.first?.id
     }
 
     let prefs = Prefs.shared
