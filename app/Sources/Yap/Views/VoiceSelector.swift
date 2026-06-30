@@ -21,21 +21,28 @@ struct EngineVoice: Identifiable, Hashable {
     var id: String { "\(engine):\(voiceId)" }
 }
 
-/// Scrollable, searchable picker spanning both engines. Kokoro voices are
-/// grouped by language; HD voices sit in their own section. Picking a voice
-/// also switches the engine — one place to choose everything.
+/// Scrollable, searchable picker. A segmented control at the top switches the
+/// active engine (Kokoro ↔ Pocket); the list below shows ONLY that engine's
+/// voices — Kokoro grouped by language, Pocket as built-in catalog + cloned. One
+/// engine is active at a time, so its voices aren't buried among the other's.
 struct VoicePickerList: View {
     let voices: [EngineVoice]
     let selectionId: String
+    let engine: String                 // currently active engine
+    let pocketAvailable: Bool          // show the Pocket segment?
+    var onSelectEngine: (String) -> Void
     var onPick: (EngineVoice) -> Void
     @State private var query = ""
 
+    // Only the active engine's voices.
+    private var scoped: [EngineVoice] { voices.filter { $0.engine == engine } }
+
     private var grouped: [(String, [EngineVoice])] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let filtered = q.isEmpty ? voices : voices.filter {
+        let filtered = q.isEmpty ? scoped : scoped.filter {
             $0.label.lowercased().contains(q) || $0.section.lowercased().contains(q)
         }
-        // HD section first, then languages alphabetically.
+        // ✨ Cloned first, then other sections (catalog / languages) alphabetically.
         return Dictionary(grouping: filtered, by: \.section)
             .sorted { ($0.key.hasPrefix("✨") ? "0" : "1") + $0.key < ($1.key.hasPrefix("✨") ? "0" : "1") + $1.key }
             .map { ($0.key, $0.value.sorted { $0.label < $1.label }) }
@@ -43,9 +50,16 @@ struct VoicePickerList: View {
 
     var body: some View {
         VStack(spacing: 6) {
+            if pocketAvailable {
+                Picker("", selection: Binding(get: { engine }, set: { onSelectEngine($0) })) {
+                    Text("Kokoro").tag("kokoro")
+                    Text("Pocket").tag("pocket")
+                }
+                .labelsHidden().pickerStyle(.segmented)
+            }
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.caption)
-                TextField("Search \(voices.count) voices", text: $query).textFieldStyle(.plain)
+                TextField("Search \(scoped.count) voices", text: $query).textFieldStyle(.plain)
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -88,6 +102,9 @@ struct VoicePickerList: View {
 struct VoiceMenuButton: View {
     let voices: [EngineVoice]
     let selectionId: String
+    let engine: String
+    let pocketAvailable: Bool
+    var onSelectEngine: (String) -> Void
     var onPick: (EngineVoice) -> Void
     @State private var open = false
 
@@ -113,9 +130,12 @@ struct VoiceMenuButton: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $open, arrowEdge: .bottom) {
-            VoicePickerList(voices: voices, selectionId: selectionId) { v in onPick(v); open = false }
-                .frame(width: 280, height: 360)
-                .padding(8)
+            VoicePickerList(voices: voices, selectionId: selectionId, engine: engine,
+                            pocketAvailable: pocketAvailable, onSelectEngine: onSelectEngine) { v in
+                onPick(v); open = false
+            }
+            .frame(width: 280, height: pocketAvailable ? 392 : 360)
+            .padding(8)
         }
     }
 }

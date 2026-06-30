@@ -78,7 +78,9 @@ private struct VoiceTab: View {
                 Button { state.testVoice() } label: { Label("Test", systemImage: "speaker.wave.2.fill") }
                     .controlSize(.small)
             }
-            VoicePickerList(voices: state.combinedVoices, selectionId: state.currentVoiceId) {
+            VoicePickerList(voices: state.combinedVoices, selectionId: state.currentVoiceId,
+                            engine: prefs.engine, pocketAvailable: state.hdInstalled,
+                            onSelectEngine: { state.selectEngine($0) }) {
                 state.selectVoice($0)
             }
                 .frame(minHeight: 220)
@@ -122,6 +124,7 @@ private struct EngineTab: View {
     @State private var fetchLog = ""
     @State private var hfToken = ""
     @State private var savingToken = false
+    @State private var tokenSaved = false
 
     private var nameReady: Bool { !newName.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -254,26 +257,37 @@ private struct EngineTab: View {
                      destination: URL(string: "https://huggingface.co/kyutai/pocket-tts")!)
                     .font(.caption)
             }
-            SecureField("hf_… (read token)", text: $hfToken)
+            // We never read the saved secret back into the field (that made it
+            // look locked / un-editable). Just show that one is saved; typing a
+            // new token and saving replaces it.
+            if tokenSaved {
+                Label("A token is saved. Type a new one below to replace it.",
+                      systemImage: "key.fill").font(.caption).foregroundStyle(.secondary)
+            }
+            SecureField(tokenSaved ? "Enter a new token to replace" : "hf_… (read token)",
+                        text: $hfToken)
                 .textFieldStyle(.roundedBorder)
             HStack {
-                Button(savingToken ? "Applying…" : "Save token & enable cloning") {
+                Button(savingToken ? "Applying…" : (tokenSaved ? "Replace token" : "Save token & enable cloning")) {
                     savingToken = true
-                    Task { await state.applyHFToken(hfToken); savingToken = false }
+                    Task { await state.applyHFToken(hfToken); hfToken = ""; tokenSaved = HFToken.isSet; savingToken = false }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(savingToken || hfToken.trimmingCharacters(in: .whitespaces).isEmpty)
-                if HFToken.isSet {
+                if tokenSaved {
                     Button("Remove token") {
+                        savingToken = true
                         hfToken = ""
-                        Task { await state.applyHFToken("") }
-                    }.buttonStyle(.bordered)
+                        Task { await state.applyHFToken(""); tokenSaved = HFToken.isSet; savingToken = false }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(savingToken)   // guard against double-fire (backend restart)
                 }
             }
             Text("Stored only in your macOS Keychain and sent only to the local engine. Never uploaded by Yap.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
-        .onAppear { if hfToken.isEmpty, let t = HFToken.value { hfToken = t } }
+        .onAppear { tokenSaved = HFToken.isSet }
     }
 
     // MARK: add a voice

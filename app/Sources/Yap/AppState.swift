@@ -75,6 +75,19 @@ final class AppState: ObservableObject {
         if v.engine == "pocket" { prefs.hdVoice = v.voiceId } else { prefs.voice = v.voiceId }
     }
 
+    /// Switch the active engine (the picker's segment toggle). Mutually exclusive
+    /// — exactly one engine is active. Ensures the engine has a usable voice
+    /// selected (Pocket defaults to a catalog voice). Switching to Pocket warms it
+    /// via the prefs.$engine subscriber.
+    func selectEngine(_ e: String) {
+        guard e != prefs.engine else { return }
+        if e == "pocket", prefs.hdVoice.isEmpty,
+           let first = hdVoices.first(where: { $0.needs_cloning != true }) ?? hdVoices.first {
+            prefs.hdVoice = first.id
+        }
+        prefs.engine = e
+    }
+
     let prefs = Prefs.shared
     let backend = BackendManager()
     let audio = AudioPlayer()
