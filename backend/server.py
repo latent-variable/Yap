@@ -593,18 +593,20 @@ def _segment_synth(req: SynthReq):
     if req.engine == "pocket":
         if not pk_engine.load():
             raise HTTPException(503, pk_engine.error or "Pocket engine not available")
-        # A catalog name speaks directly; anything else is treated as a cloned
-        # reference clip, which requires the gated cloning model.
-        if req.voice in CATALOG_NAMES:
-            target = req.voice
-        else:
-            ref = hd_voice_path(req.voice)
-            if ref is None:
-                raise HTTPException(400, f"voice '{req.voice}' not found")
-            if not pk_engine.has_cloning:
-                raise HTTPException(403, "voice cloning unavailable — add a Hugging "
-                                    "Face token and accept the Pocket TTS terms")
+        # Resolve voice id. A user's explicit clone wins over a same-named catalog
+        # voice when cloning is usable; otherwise fall back to the catalog (so a
+        # clone named like a catalog voice still speaks when cloning is off),
+        # and only 403 when a clone is the sole match but cloning isn't loaded.
+        ref = hd_voice_path(req.voice)
+        if ref is not None and pk_engine.has_cloning:
             target = str(ref)
+        elif req.voice in CATALOG_NAMES:
+            target = req.voice
+        elif ref is not None:
+            raise HTTPException(403, "voice cloning unavailable — add a Hugging "
+                                "Face token and accept the Pocket TTS terms")
+        else:
+            raise HTTPException(400, f"voice '{req.voice}' not found")
         return lambda text: pk_engine.synth(text, target, req.speed)
     # default: Kokoro
     if engine.kokoro is None:

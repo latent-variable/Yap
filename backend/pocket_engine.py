@@ -111,7 +111,10 @@ class PocketEngine:
                 # unlocks the gated cloning weights.
                 tok = _hf_token()
                 if tok:
-                    os.environ.setdefault("HF_TOKEN", tok)
+                    # Direct assignment, not setdefault: an inherited but EMPTY
+                    # HF_TOKEN ("") would otherwise survive and block auth even
+                    # though we resolved a real token from another alias.
+                    os.environ["HF_TOKEN"] = tok
                 from pocket_tts import TTSModel
                 log.info("loading Pocket TTS (token=%s)", bool(tok))
                 # With a valid token AND accepted terms this pulls the cloning
