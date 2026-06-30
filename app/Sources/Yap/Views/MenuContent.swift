@@ -68,7 +68,9 @@ struct MenuContent: View {
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                VoiceMenuButton(voices: state.combinedVoices, selectionId: state.currentVoiceId) {
+                VoiceMenuButton(voices: state.combinedVoices, selectionId: state.currentVoiceId,
+                                engine: prefs.engine, pocketAvailable: state.hdInstalled,
+                                onSelectEngine: { state.selectEngine($0) }) {
                     state.selectVoice($0)
                 }
                 Button { state.testVoice() } label: {
