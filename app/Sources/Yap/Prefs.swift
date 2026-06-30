@@ -89,9 +89,6 @@ final class Prefs: ObservableObject {
     // Only acts when the Pocket engine is installed (so it's a no-op — "off" —
     // for the default Kokoro-only setup).
     @Published var autoLoadHD: Bool { didSet { d.set(autoLoadHD, forKey: "autoLoadHD") } }
-    // Play a short cue when a Pocket read starts buffering — its first segment
-    // takes a moment, so this gives immediate "it's working" feedback.
-    @Published var hdBufferChime: Bool { didSet { d.set(hdBufferChime, forKey: "hdBufferChime") } }
     // Play a short error cue when a read can't start — empty/stale capture, wrong
     // (unfocused) window, or missing Accessibility. Without it a failed trigger is
     // just silence, so you wait for audio that never comes.
@@ -135,7 +132,6 @@ final class Prefs: ObservableObject {
         stopOnNewTrigger = d.object(forKey: "stopOnNewTrigger") as? Bool ?? true
         keepWarm = d.object(forKey: "keepWarm") as? Bool ?? true
         autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
-        hdBufferChime = d.object(forKey: "hdBufferChime") as? Bool ?? true
         failChime = d.object(forKey: "failChime") as? Bool ?? true
         voiceEnabled = d.object(forKey: "voiceEnabled") as? Bool ?? true
         dictationEnabled = d.object(forKey: "dictationEnabled") as? Bool ?? true

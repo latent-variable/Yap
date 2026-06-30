@@ -145,9 +145,6 @@ private struct EngineTab: View {
                     Toggle("Pre-load Pocket model at launch", isOn: $prefs.autoLoadHD)
                     Text("Loads the Pocket voice in the background when the app starts, so your first read plays right away instead of a cold start.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Toggle("Play a cue while audio buffers", isOn: $prefs.hdBufferChime)
-                    Text("A short ping confirms it's working before speech begins.")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
