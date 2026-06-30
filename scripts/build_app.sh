@@ -38,7 +38,7 @@ if [ -d "$ROOT/app/Resources/hd-voices" ]; then
 fi
 
 # Bundle backend sources + launcher so a packaged app can run self-contained.
-# Copy every .py + requirements so new modules (e.g. chatterbox_engine) ship too.
+# Copy every .py + requirements so new modules (e.g. pocket_engine) ship too.
 mkdir -p "$APP/Contents/Resources/repo/backend" "$APP/Contents/Resources/repo/scripts"
 cp "$ROOT/backend/"*.py "$ROOT/backend/"requirements*.txt "$APP/Contents/Resources/repo/backend/"
 cp "$ROOT/scripts/run_backend.sh" "$APP/Contents/Resources/repo/scripts/"

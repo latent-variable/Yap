@@ -184,10 +184,30 @@ Accessibility permission and a real focused app; audio needs an output device.
 
 ## Contributing / PRs
 
-Workflow, commit style, and the review/merge cycle follow the user-scope **`review-cycle`** skill (`~/.agents/skills/review-cycle/`) — branch off `main`, validate + test, PR, automated review (`/gemini review` first), severity-gated loop, merge per the gating tiers. Project-specific only:
+Workflow, commit style, and the review/merge cycle follow the user-scope **`review-cycle`** skill (`~/.agents/skills/review-cycle/`) — branch off `main`, validate + test, PR, automated review, severity-gated loop, merge per the gating tiers. Project-specific only:
 
+- **Trigger BOTH reviewers on every PR**, don't merge on one. Post `/gemini review` *and* `/dais review` (the in-house `latent-git-agents` reviewer). Gemini Code Assist sunsets **2026-07-17**, so the DAIS reviewer is its successor — don't skip it. The auto-monitor can lag, so trigger `/dais review` explicitly and wait for its verdict before merging; gate on zero high/critical across both.
 - If you change the backend payload shape, update `BackendClient` and `AudioPlayer` together and re-run the validation list above.
 - Keep the README ~100 lines; long design prose goes in `docs/`. Don't hand-maintain lists `/voices` can print live.
+
+## Local test builds (after every merge — standing)
+
+A merged code change is invisible to Lino until it's a running build on his Mac.
+So **after merging any code change, cut a fresh local build and install it** so
+he can test the actual behavior — don't leave him on the old bundle. This is the
+default, not a thing to ask about. (A public release — DMG + Homebrew — stays a
+separate, gated step; this is only the local install for testing.)
+
+```bash
+bash scripts/build_app.sh                 # -> dist/Yap.app (stable-signed; grant persists)
+trash /Applications/Yap.app 2>/dev/null   # NEVER rm -rf; trash, per user constraint
+ditto dist/Yap.app /Applications/Yap.app  # install the fresh bundle
+open /Applications/Yap.app
+```
+
+Bump `CFBundleShortVersionString` + `CFBundleVersion` in `app/Resources/Info.plist`
+first, so Settings shows the new version and Lino can confirm he's on the new
+build (the install grant survives via the "Yap Local Signing" identity).
 
 ## Releases
 
