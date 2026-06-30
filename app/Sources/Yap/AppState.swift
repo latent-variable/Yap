@@ -48,20 +48,22 @@ final class AppState: ObservableObject {
     private var hdWarm = false          // HD model loaded since backend start
 
     /// The voice id for the currently selected engine.
-    var activeVoice: String { prefs.engine == "chatterbox" ? prefs.hdVoice : prefs.voice }
+    var activeVoice: String { prefs.engine == "pocket" ? prefs.hdVoice : prefs.voice }
 
     /// One id space across engines for the unified voice picker.
     var currentVoiceId: String { "\(prefs.engine):\(activeVoice)" }
 
-    /// Kokoro voices (grouped by language) + HD voices (own section), as one
-    /// list. HD voices appear only once the HD engine is installed.
+    /// Kokoro voices (grouped by language) + Pocket voices (catalog + cloned, in
+    /// their own server-labelled sections), as one list. Pocket voices appear
+    /// only once the Pocket engine is installed.
     var combinedVoices: [EngineVoice] {
         var out: [EngineVoice] = voices.map {
             EngineVoice(engine: "kokoro", voiceId: $0.id, label: $0.shortName, section: $0.lang_label)
         }
         if hdInstalled {
             out += hdVoices.map {
-                EngineVoice(engine: "chatterbox", voiceId: $0.id, label: $0.id, section: "✨ HD Engine")
+                EngineVoice(engine: "pocket", voiceId: $0.id, label: $0.id,
+                            section: $0.section ?? "Pocket Voices")
             }
         }
         return out
@@ -70,7 +72,7 @@ final class AppState: ObservableObject {
     /// Pick a voice from the unified list — sets the engine and its voice.
     func selectVoice(_ v: EngineVoice) {
         prefs.engine = v.engine
-        if v.engine == "chatterbox" { prefs.hdVoice = v.voiceId } else { prefs.voice = v.voiceId }
+        if v.engine == "pocket" { prefs.hdVoice = v.voiceId } else { prefs.voice = v.voiceId }
     }
 
     let prefs = Prefs.shared
@@ -106,9 +108,9 @@ final class AppState: ObservableObject {
                                                             pitchCents: Float(self?.prefs.pitch ?? 0)) }.store(in: &cancellables)
         // Pre-warm the HD model when the user switches to it / changes voice, so
         // the first read isn't a cold ~8s wait.
-        prefs.$engine.dropFirst().sink { [weak self] in if $0 == "chatterbox" { self?.warmHD() } }.store(in: &cancellables)
+        prefs.$engine.dropFirst().sink { [weak self] in if $0 == "pocket" { self?.warmHD() } }.store(in: &cancellables)
         prefs.$hdVoice.dropFirst().sink { [weak self] _ in
-            if self?.prefs.engine == "chatterbox" { self?.warmHD() }
+            if self?.prefs.engine == "pocket" { self?.warmHD() }
         }.store(in: &cancellables)
     }
 
@@ -120,7 +122,7 @@ final class AppState: ObservableObject {
         warming = true
         let voice = prefs.hdVoice
         Task {
-            await backend.client.warmChatterbox(voice: voice)
+            await backend.client.warmPocket(voice: voice)
             warming = false
             hdWarm = true
         }
@@ -304,11 +306,11 @@ final class AppState: ObservableObject {
         playingText = cleaned
         lastReadCleaned = cleaned   // remember for the stale-selection guard (covers Services reads too)
         status = .reading
-        preparing = true   // first audio not here yet (HD can take a few seconds)
+        preparing = true   // first audio not here yet (Pocket cold-load takes a moment)
         preparingDetail = prepDetail()
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
-                    cushionSeconds: prefs.engine == "chatterbox" ? 0.8 : 0.35)
-        playBufferCue()   // immediate cue: HD first audio is a few seconds out
+                    cushionSeconds: 0.35)   // Pocket is ~10x realtime; Kokoro is instant
+        playBufferCue()   // immediate cue while the first Pocket segment generates
         do {
             // Speed is applied at playback (real-time, both engines), so the
             // backend synthesizes at 1.0 and pauses stretch along with it.
@@ -321,7 +323,7 @@ final class AppState: ObservableObject {
                 // callback runs off-main); doing it here crashed the menu bar.
                 Task { @MainActor in
                     if self.preparing { self.preparing = false }
-                    if self.prefs.engine == "chatterbox" { self.hdWarm = true }
+                    if self.prefs.engine == "pocket" { self.hdWarm = true }
                 }
             }
             audio.flush()   // stream ended — play any sub-cushion remainder
@@ -361,12 +363,12 @@ final class AppState: ObservableObject {
         Preprocess.clean(raw, options: Preprocess.options(for: prefs.profile), custom: prefs.customRules)
     }
 
-    /// Audible "working on it" cue for the premium HD engine, whose first audio
-    /// lags a few seconds. Played the moment an HD synth starts buffering so you
-    /// get immediate feedback before speech begins — mirrors the dictation chimes.
+    /// Audible "working on it" cue for the Pocket engine while its first segment
+    /// generates. Played the moment a Pocket synth starts buffering so you get
+    /// immediate feedback before speech begins — mirrors the dictation chimes.
     /// No-op for Kokoro (near-instant) or when the user turns it off.
     private func playBufferCue() {
-        guard !prefs.muteAllSounds, prefs.engine == "chatterbox", prefs.hdBufferChime else { return }
+        guard !prefs.muteAllSounds, prefs.engine == "pocket", prefs.hdBufferChime else { return }
         NSSound(named: "Ping")?.play()
     }
 
@@ -379,10 +381,10 @@ final class AppState: ObservableObject {
         NSSound(named: "Funk")?.play()
     }
 
-    /// What to show while waiting for first audio — flags the slow HD cold-load.
+    /// What to show while waiting for first audio — flags the Pocket cold-load.
     private func prepDetail() -> String {
-        if prefs.engine == "chatterbox" {
-            return hdWarm ? "Generating HD audio…" : "Loading HD voice — first use, ~10 sec…"
+        if prefs.engine == "pocket" {
+            return hdWarm ? "Generating Pocket audio…" : "Loading Pocket voice — first use, a few sec…"
         }
         return "Preparing voice…"
     }
@@ -412,10 +414,10 @@ final class AppState: ObservableObject {
             preparing = true
             preparingDetail = prepDetail()
             audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
-                        cushionSeconds: prefs.engine == "chatterbox" ? 0.8 : 0.35)
-            playBufferCue()   // same HD buffering cue on the voice preview
-            let sample = prefs.engine == "chatterbox"
-                ? "This is a preview of the selected high definition voice."
+                        cushionSeconds: 0.35)
+            playBufferCue()   // same buffering cue on the voice preview
+            let sample = prefs.engine == "pocket"
+                ? "This is a preview of the selected Pocket voice."
                 : Self.sampleText(for: prefs.voice)
             try? await backend.client.streamPCM(text: sample, voice: activeVoice, speed: 1.0,
                                                 pauseScale: prefs.pauseScale, engine: prefs.engine) { [weak self] d in
@@ -431,7 +433,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - HD engine (Chatterbox)
+    // MARK: - Pocket engine (HD / cloning)
 
     var hdVoicesDir: URL {
         let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -440,25 +442,33 @@ final class AppState: ObservableObject {
         return d
     }
 
-    /// On-demand HD engine + weights (torch, chatterbox-tts, model files) — not
+    /// On-demand Pocket engine + weights (torch, pocket-tts, model files) — not
     /// bundled; installed here via the Engine tab. Used by the Models tab to
-    /// report HD status alongside Kokoro. Sibling of hd-voices, so derive it from
-    /// hdVoicesDir to reuse that base (no duplicate Application Support lookup).
+    /// report Pocket status alongside Kokoro. Sibling of hd-voices, so derive it
+    /// from hdVoicesDir to reuse that base (no duplicate Application Support lookup).
     var hdPackagesDir: URL {
         hdVoicesDir.deletingLastPathComponent().appending(path: "hd-packages")
     }
 
+    /// Whether the gated cloning model is loaded (token present + terms accepted).
+    @Published var cloningReady = false
+
     func refreshHD() {
         Task {
             let e = await backend.client.engines()
-            hdInstalled = e.chatterbox?.installed ?? false
-            hdWarm = e.chatterbox?.loaded ?? false
-            hdVoices = await backend.client.voices(engine: "chatterbox")
-            if prefs.hdVoice.isEmpty, let first = hdVoices.first { prefs.hdVoice = first.id }
-            // Auto pre-load the HD model so the first HD read isn't a cold ~10s
-            // wait. Fires once per backend session (until loaded) when HD is
-            // installed and either it's the active engine or auto-load is on.
-            if hdInstalled && !hdWarm && (prefs.autoLoadHD || prefs.engine == "chatterbox") {
+            hdInstalled = e.pocket?.installed ?? false
+            hdWarm = e.pocket?.loaded ?? false
+            cloningReady = e.pocket?.cloning ?? false
+            hdVoices = await backend.client.voices(engine: "pocket")
+            // Default to a catalog voice (always usable) rather than a cloned ref.
+            if prefs.hdVoice.isEmpty,
+               let first = hdVoices.first(where: { $0.needs_cloning != true }) ?? hdVoices.first {
+                prefs.hdVoice = first.id
+            }
+            // Auto pre-load the Pocket model so the first read isn't a cold wait.
+            // Fires once per backend session (until loaded) when installed and
+            // either it's the active engine or auto-load is on.
+            if hdInstalled && !hdWarm && (prefs.autoLoadHD || prefs.engine == "pocket") {
                 warmHD()
             }
         }
@@ -519,16 +529,16 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Delete the on-demand HD engine + weights (~1.3 GB) to reclaim disk. Falls
-    /// back to Kokoro if HD was the active engine. Re-installable from this tab or
-    /// the Engine tab. Callers should confirm first.
+    /// Delete the on-demand Pocket engine + weights (~1 GB) to reclaim disk. Falls
+    /// back to Kokoro if Pocket was the active engine. Re-installable from this tab
+    /// or the Engine tab. Callers should confirm first.
     func deleteHDModel() {
         guard backend.ownsProcess else { return }  // unsafe against a reused backend
         guard !deletingKokoro, !deletingHD else { return }  // one delete at a time
         stop()                  // stop playback
         deletingHD = true       // block install/re-trigger until the bounce finishes
         hdInstalled = false     // reflect immediately
-        if prefs.engine == "chatterbox" { prefs.engine = "kokoro" }
+        if prefs.engine == "pocket" { prefs.engine = "kokoro" }
         let dir = hdPackagesDir
         Task {
             // Terminate the backend PROCESS and wait for it to exit so it isn't
@@ -554,7 +564,7 @@ final class AppState: ObservableObject {
         installingHD = true
         defer { installingHD = false }
         do {
-            try await backend.client.installChatterbox { line in
+            try await backend.client.installPocket { line in
                 Task { @MainActor in onLine(line) }
             }
         } catch {
@@ -563,10 +573,21 @@ final class AppState: ObservableObject {
         onLine("restarting engine…")
         await backend.restart()
         refreshHD()
-        onLine("HD ready: \(hdInstalled)")
+        onLine("Pocket ready: \(hdInstalled)")
     }
 
-    /// Import an audio file as a Chatterbox reference voice (converted to a
+    /// Reapply the Hugging Face token: persist to the Keychain and restart the
+    /// backend so it reloads Pocket with (or without) the gated cloning weights.
+    func applyHFToken(_ token: String) {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { HFToken.clear() } else { HFToken.set(trimmed) }
+        Task {
+            await backend.restart()   // relaunch carries HF_TOKEN in the env
+            refreshHD()
+        }
+    }
+
+    /// Import an audio file as a Pocket reference voice (converted to a
     /// mono 24 kHz WAV, trimmed to ~20s).
     func addHDVoice(from src: URL, name: String) {
         let safe = name.replacingOccurrences(of: "/", with: "-")
