@@ -546,10 +546,14 @@ def install_pocket():
 def voices(engine_name: str = Query("kokoro", alias="engine")):
     if engine_name == "pocket":
         items = []
-        # Built-in catalog speakers — always available, no account.
+        # Built-in catalog speakers — always available, no account. Pocket uses
+        # short lang codes (en/fr/de/…) not in LANG_LABEL's en-us/fr-fr keys, so
+        # map them to display names here.
+        pocket_lang = {"en": "English", "fr": "French", "de": "German",
+                       "es": "Spanish", "it": "Italian", "pt": "Portuguese"}
         for name, lang in pk_engine.voices():
             items.append({"id": name, "lang": lang,
-                          "lang_label": LANG_LABEL.get(lang, lang),
+                          "lang_label": pocket_lang.get(lang, lang),
                           "gender": "catalog", "section": "Pocket Voices"})
         # Cloned reference clips — only usable when the gated cloning model is
         # loaded (user supplied a token + accepted terms). Listed either way so

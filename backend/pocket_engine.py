@@ -78,7 +78,10 @@ class PocketEngine:
         self.model = None
         self.error: Optional[str] = None
         self.has_cloning = False          # set True only if the gated model loaded
-        self._states: dict[str, object] = {}   # voice key -> cached conditioning
+        # voice key -> cached conditioning. Catalog voices key by name (str);
+        # cloned refs key by (path, mtime) so re-recording a voice under the same
+        # name busts the stale conditioning instead of reusing the old clip's.
+        self._states: dict[object, object] = {}
         # Serializes model access: pocket_tts/torch inference is not guaranteed
         # thread-safe and FastAPI sync endpoints run in a threadpool, so a warm
         # (voice switch) and a synth (read) can land concurrently. load() is only
@@ -139,11 +142,18 @@ class PocketEngine:
     def _state_for(self, voice: str):
         """Resolve + cache the conditioning state for a voice. `voice` is either a
         catalog name (e.g. 'michael') or an absolute .wav path (cloning). Caller
-        must hold the lock."""
-        st = self._states.get(voice)
+        must hold the lock. Cloned refs are keyed by (path, mtime) so replacing a
+        clip under the same name busts the cache."""
+        key: object = voice
+        if voice not in CATALOG_NAMES:
+            try:
+                key = (voice, os.path.getmtime(voice))
+            except OSError:
+                pass
+        st = self._states.get(key)
         if st is None:
             st = self.model.get_state_for_audio_prompt(voice)
-            self._states[voice] = st
+            self._states[key] = st
         return st
 
     def warm(self, voice: str) -> bool:

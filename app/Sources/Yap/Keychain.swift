@@ -10,7 +10,6 @@ enum Keychain {
     private static let service = "dev.latentvariable.yap"
 
     static func set(_ value: String, account: String) {
-        let acct = account.data(using: .utf8)!
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -19,7 +18,7 @@ enum Keychain {
         // Delete-then-add keeps it idempotent and avoids SecItemUpdate edge cases.
         SecItemDelete(base as CFDictionary)
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { _ = acct; return }   // empty = just clear it
+        guard !trimmed.isEmpty else { return }   // empty = just clear it
         var add = base
         add[kSecValueData as String] = trimmed.data(using: .utf8)!
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock

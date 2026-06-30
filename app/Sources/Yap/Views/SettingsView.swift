@@ -259,16 +259,15 @@ private struct EngineTab: View {
             HStack {
                 Button(savingToken ? "Applying…" : "Save token & enable cloning") {
                     savingToken = true
-                    state.applyHFToken(hfToken)
-                    // refreshHD (triggered by applyHFToken) flips cloningReady when
-                    // the backend reloads; clear the spinner shortly after.
-                    Task { try? await Task.sleep(nanoseconds: 6_000_000_000); savingToken = false }
+                    Task { await state.applyHFToken(hfToken); savingToken = false }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(savingToken || hfToken.trimmingCharacters(in: .whitespaces).isEmpty)
                 if HFToken.isSet {
-                    Button("Remove token") { hfToken = ""; state.applyHFToken("") }
-                        .buttonStyle(.bordered)
+                    Button("Remove token") {
+                        hfToken = ""
+                        Task { await state.applyHFToken("") }
+                    }.buttonStyle(.bordered)
                 }
             }
             Text("Stored only in your macOS Keychain and sent only to the local engine. Never uploaded by Yap.")

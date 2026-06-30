@@ -578,13 +578,12 @@ final class AppState: ObservableObject {
 
     /// Reapply the Hugging Face token: persist to the Keychain and restart the
     /// backend so it reloads Pocket with (or without) the gated cloning weights.
-    func applyHFToken(_ token: String) {
+    /// Async so the caller can await the restart instead of guessing with a sleep.
+    func applyHFToken(_ token: String) async {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { HFToken.clear() } else { HFToken.set(trimmed) }
-        Task {
-            await backend.restart()   // relaunch carries HF_TOKEN in the env
-            refreshHD()
-        }
+        await backend.restart()   // relaunch carries HF_TOKEN in the env
+        refreshHD()
     }
 
     /// Import an audio file as a Pocket reference voice (converted to a
