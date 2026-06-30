@@ -81,11 +81,21 @@ final class AppState: ObservableObject {
     /// via the prefs.$engine subscriber.
     func selectEngine(_ e: String) {
         guard e != prefs.engine else { return }
-        if e == "pocket", prefs.hdVoice.isEmpty,
-           let first = hdVoices.first(where: { $0.needs_cloning != true }) ?? hdVoices.first {
-            prefs.hdVoice = first.id
+        if e == "pocket", prefs.hdVoice.isEmpty, let v = defaultPocketVoiceId {
+            prefs.hdVoice = v
         }
         prefs.engine = e
+    }
+
+    /// The voice a first-time Pocket switch lands on. Prefer **Eve** (catalog,
+    /// en) — the nicest-sounding default — then any other usable catalog voice,
+    /// then whatever's first. Never a cloned ref (would 403 without a token).
+    static let preferredPocketVoice = "eve"
+    var defaultPocketVoiceId: String? {
+        if let eve = hdVoices.first(where: {
+            $0.id == Self.preferredPocketVoice && $0.needs_cloning != true
+        }) { return eve.id }
+        return (hdVoices.first(where: { $0.needs_cloning != true }) ?? hdVoices.first)?.id
     }
 
     let prefs = Prefs.shared
@@ -467,8 +477,8 @@ final class AppState: ObservableObject {
             // (which would 403 on synth — e.g. the user removed their token).
             let selectedIsCloned = hdVoices.first(where: { $0.id == prefs.hdVoice })?.needs_cloning == true
             if prefs.hdVoice.isEmpty || (!cloningReady && selectedIsCloned),
-               let first = hdVoices.first(where: { $0.needs_cloning != true }) ?? hdVoices.first {
-                prefs.hdVoice = first.id
+               let v = defaultPocketVoiceId {
+                prefs.hdVoice = v
             }
             // Auto pre-load the Pocket model so the first read isn't a cold wait.
             // Fires once per backend session (until loaded) when installed and
