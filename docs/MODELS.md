@@ -6,20 +6,25 @@ Yap's hard constraints, in priority order:
    requirement (Kokoro on CPU benchmarks even-to-faster than CoreML; see AGENTS).
 2. **Self-contained / ONNX** — no PyTorch/CUDA at runtime, bundles into the app.
 3. **Permissive license** — Apache/MIT (this ships in a distributable app).
-4. **Multiple natural English voices** out of the box. Voice cloning is a
-   non-goal.
+4. **Multiple natural English voices** out of the box. (Voice cloning was a
+   non-goal for the default; the opt-in engine now provides it.)
 
 A replacement has to **beat Kokoro on quality without losing 1–3.** Nothing does
-on the CPU axis. So instead of replacing Kokoro, we **added a second, opt-in
-engine** for when quality matters more than instant/light:
+on the CPU axis for the *bundled* path. So instead of replacing Kokoro, we
+**added a second, opt-in engine** for when quality matters more than instant/light:
 
 - **Kokoro** stays the default — instant, CPU, bundled, 54 voices.
-- **Chatterbox Turbo HD** is the opt-in engine — GPU (MPS), ~1.3 GB on-demand
-  download, voice cloning from a ~10s reference. Measured on Apple Silicon: warm
-  per-sentence RTF ~0.7 (streams fine), cold first load ~8s. Watermarked. See
-  AGENTS.md "Two engines" for the integration details.
+- **Pocket TTS** (Kyutai) is the opt-in engine — and it upended the assumption
+  below that "HD = GPU." It's **CPU**, ~10× realtime on Apple Silicon, ~1 GB
+  on-demand download. 26 natural built-in voices (ungated, no account) plus
+  **voice cloning** from a ~20s reference (gated model — the user supplies their
+  own Hugging Face token + accepts the Pocket terms; no watermark). It replaced
+  Chatterbox Turbo HD, which needed the GPU (MPS) and stuttered under contention.
+  See AGENTS.md "Two engines" for integration details.
 
-The rest of this file remains the watchlist for future candidates.
+The rest of this file remains the watchlist for future candidates. **Note:**
+several sections below predate the Pocket decision and assume an HD engine must
+be GPU-class; Pocket disproved that. Kept as historical survey.
 
 ## Current
 
@@ -40,11 +45,13 @@ The rest of this file remains the watchlist for future candidates.
 | **Kitten TTS** | ~25 MB (int8) | Apache-2.0 | Tiny; slower than Piper, quality ≈ or < Kokoro | **Watch** — promising footprint, immature |
 | **MatchaTTS** | small | MIT | CPU ONNX; quality sidegrade | Watch |
 
-### Quality leaders (GPU-class) — specs
-Reference for an optional "HD mode" (opt-in download + GPU), never the bundled default.
+### Quality leaders — specs
+Reference for the opt-in "HD" engine. We assumed this tier needed a GPU; **Pocket
+TTS shipped as the choice and runs on CPU**, so the "GPU-class" label is historical.
 
 | Model | Params | Weights size | Quality | Extras | License |
 |---|---|---|---|---|---|
+| **Pocket TTS** ✅ *chosen* | ~100M | ~1 GB (torch) | excellent, ~10× RT on CPU | 26 voices + clone; gated cloning model | MIT (catalog); cloning weights gated |
 | Kokoro (baseline) | 82M | ~310 MB ONNX | good | 54 voices, no clone | Apache-2.0 |
 | **Chatterbox** | 0.5B | ~1–2 GB | SoTA open, expressive | emotion control, zero-shot clone, 23 langs | MIT |
 | **Chatterbox-Turbo** | 350M | smaller | high (distilled 1-step decoder) | clone; RTF ~0.5 on RTX 4090 | Resemble |
@@ -58,14 +65,18 @@ VRAM/latency quotes are NVIDIA (e.g. Chatterbox ~2–3 GB VRAM, sub-200ms; Turbo
 ### Apple Silicon reality (this is our GPU)
 - "GPU" on a Mac = Metal. The fast path is **MLX** (`mlx-audio`, Blaizzy) — highest sustained TTS throughput on Apple Silicon; supports Kokoro and others. PyTorch **MPS** works but is memory-constrained and slower; CUDA-only optimizations don't apply.
 - These models are PyTorch/transformers, **not ONNX** → can't bundle cleanly, need a multi-GB download, slower cold start. That's why they're "HD mode, opt-in," not the default.
-- If we add HD mode, the two to prototype first: **Chatterbox** (MIT, best quality+emotion+clone, has community Apple-Silicon ports) and **Qwen3-TTS** (Apache, expressive, GGUF/quantized builds). Route them through MLX if a port exists, else PyTorch MPS.
+- HD mode shipped: **Pocket TTS** (Kyutai), and it sidesteps this section's GPU framing entirely by running fast on **CPU** (~10× realtime). The earlier prototype shortlist (Chatterbox, Qwen3-TTS) is moot; Pocket won on speed, quality, and packaging (no MPS contention).
 
 ## What would make us switch
 
+The "optional higher-quality mode" question is **resolved** — we shipped Pocket
+TTS as the opt-in HD engine (CPU, cloning, no watermark). Remaining triggers to
+revisit:
+
 - A CPU/ONNX model with a permissive license that clearly out-naturals Kokoro at
-  comparable speed, **or**
-- We decide to offer an optional "GPU / higher-quality" mode — then Chatterbox or
-  Qwen3-TTS become viable as a second engine (not a replacement).
+  comparable speed (would upgrade the *default*), **or**
+- A higher-quality opt-in engine that drops Pocket's cloning gate (no HF token /
+  terms) while matching its CPU speed and fidelity.
 
 ## How a swap would actually work (low cost)
 
@@ -80,4 +91,4 @@ app only speaks the HTTP contract (int16 PCM stream). Adding a model =
 No app changes needed beyond a picker. So tracking is cheap and migrating is a
 backend-local change — revisit this file when a candidate graduates from "watch."
 
-_Last reviewed: 2026-06._
+_Last reviewed: 2026-06-30 (Pocket TTS shipped as the HD engine)._
