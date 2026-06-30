@@ -323,7 +323,6 @@ final class AppState: ObservableObject {
         preparingDetail = prepDetail()
         audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
                     cushionSeconds: 0.35)   // Pocket is ~10x realtime; Kokoro is instant
-        playBufferCue()   // immediate cue while the first Pocket segment generates
         do {
             // Speed is applied at playback (real-time, both engines), so the
             // backend synthesizes at 1.0 and pauses stretch along with it.
@@ -376,15 +375,6 @@ final class AppState: ObservableObject {
         Preprocess.clean(raw, options: Preprocess.options(for: prefs.profile), custom: prefs.customRules)
     }
 
-    /// Audible "working on it" cue for the Pocket engine while its first segment
-    /// generates. Played the moment a Pocket synth starts buffering so you get
-    /// immediate feedback before speech begins — mirrors the dictation chimes.
-    /// No-op for Kokoro (near-instant) or when the user turns it off.
-    private func playBufferCue() {
-        guard !prefs.muteAllSounds, prefs.engine == "pocket", prefs.hdBufferChime else { return }
-        NSSound(named: "Ping")?.play()
-    }
-
     /// Audible "that didn't work" cue when a read can't start — nothing captured,
     /// a stale/wrong-window selection, or no Accessibility. You're already waiting
     /// for speech, so silence reads as "still working"; this distinct error sound
@@ -428,7 +418,6 @@ final class AppState: ObservableObject {
             preparingDetail = prepDetail()
             audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
                         cushionSeconds: 0.35)
-            playBufferCue()   // same buffering cue on the voice preview
             let sample = prefs.engine == "pocket"
                 ? "This is a preview of the selected Pocket voice."
                 : Self.sampleText(for: prefs.voice)
