@@ -276,9 +276,12 @@ private struct EngineTab: View {
                 .disabled(savingToken || hfToken.trimmingCharacters(in: .whitespaces).isEmpty)
                 if tokenSaved {
                     Button("Remove token") {
+                        savingToken = true
                         hfToken = ""
-                        Task { await state.applyHFToken(""); tokenSaved = HFToken.isSet }
-                    }.buttonStyle(.bordered)
+                        Task { await state.applyHFToken(""); tokenSaved = HFToken.isSet; savingToken = false }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(savingToken)   // guard against double-fire (backend restart)
                 }
             }
             Text("Stored only in your macOS Keychain and sent only to the local engine. Never uploaded by Yap.")
