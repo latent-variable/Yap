@@ -163,6 +163,12 @@ class PocketEngine:
         try:
             with self._lock:
                 if voice:
+                    # A cloned ref needs the gated model; if cloning isn't loaded,
+                    # warm a catalog voice instead so the engine is still primed
+                    # (and we don't log a spurious failure).
+                    if voice not in CATALOG_NAMES and not self.has_cloning:
+                        log.warning("Pocket cloning unavailable; warming catalog voice 'alba'")
+                        voice = "alba"
                     st = self._state_for(voice)
                     self.model.generate_audio(st, "Ready.")
             return True

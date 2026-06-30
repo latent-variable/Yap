@@ -460,8 +460,11 @@ final class AppState: ObservableObject {
             hdWarm = e.pocket?.loaded ?? false
             cloningReady = e.pocket?.cloning ?? false
             hdVoices = await backend.client.voices(engine: "pocket")
-            // Default to a catalog voice (always usable) rather than a cloned ref.
-            if prefs.hdVoice.isEmpty,
+            // Default to a catalog voice (always usable) when nothing is selected,
+            // OR when cloning isn't ready but the selected voice is a cloned one
+            // (which would 403 on synth — e.g. the user removed their token).
+            let selectedIsCloned = hdVoices.first(where: { $0.id == prefs.hdVoice })?.needs_cloning == true
+            if prefs.hdVoice.isEmpty || (!cloningReady && selectedIsCloned),
                let first = hdVoices.first(where: { $0.needs_cloning != true }) ?? hdVoices.first {
                 prefs.hdVoice = first.id
             }
