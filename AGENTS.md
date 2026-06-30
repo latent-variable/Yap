@@ -199,15 +199,26 @@ default, not a thing to ask about. (A public release — DMG + Homebrew — stay
 separate, gated step; this is only the local install for testing.)
 
 ```bash
-bash scripts/build_app.sh                 # -> dist/Yap.app (stable-signed; grant persists)
+bash scripts/build_app.sh                 # -> dist/Yap.app (stable-signed; TCC/Accessibility grant persists)
 trash /Applications/Yap.app 2>/dev/null   # NEVER rm -rf; trash, per user constraint
 ditto dist/Yap.app /Applications/Yap.app  # install the fresh bundle
 open /Applications/Yap.app
 ```
 
-Bump `CFBundleShortVersionString` + `CFBundleVersion` in `app/Resources/Info.plist`
-first, so Settings shows the new version and Lino can confirm he's on the new
-build (the install grant survives via the "Yap Local Signing" identity).
+**Do NOT bump the version for interim test builds** — only bump
+`CFBundleShortVersionString` + `CFBundleVersion` when cutting a public
+release/deploy. Burning a version number per throwaway build is churn; keep test
+builds on the current dev version and tell Lino verbally that it's fresh.
+
+Note on the Keychain prompt: re-signing any fresh build changes the binary hash,
+so macOS may re-prompt **once** for the HF-token Keychain item ("Yap wants to
+access dev.latentvariable.yap") on install — a single "Always Allow". This is
+the re-sign, NOT the version bump, so not bumping won't suppress it. The
+Accessibility/Mic (TCC) grants persist across rebuilds because they key off the
+stable "Yap Local Signing" *certificate*; the Keychain item's access rule
+doesn't bind to that cert (the one gap). A real fix — cert-binding the Keychain
+ACL — exists but uses deprecated Keychain APIs, so do it only as its own
+validated change if the prompt ever becomes a nuisance on actual updates.
 
 ## Releases
 
