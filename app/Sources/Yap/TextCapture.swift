@@ -160,10 +160,14 @@ enum TextCapture {
         // on one miss is what made captures flaky unless the user manually copied
         // first. So re-clear modifiers and re-post instead. The clipboard is
         // restored by the defer regardless of how many attempts we make.
+        // Baseline the change counter ONCE, before any attempt. A copy that lands
+        // late (after its own attempt's short window) still advances this same
+        // baseline and is caught by a later poll — a per-attempt baseline would
+        // absorb that late change and then miss it if the next ⌘C did nothing.
+        let beforeCount = pb.changeCount
         var changed = false
         retry: for attempt in 0..<3 {
             if attempt > 0 { await waitForModifiersToClear() }
-            let beforeCount = pb.changeCount
             await sendCopyHeld()
             // Short per-attempt window: a copy that's going to land does so in tens
             // of ms, so 0.2s × 3 tries (~0.6s worst case) catches dropped events

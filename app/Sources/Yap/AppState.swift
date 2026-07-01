@@ -170,7 +170,7 @@ final class AppState: ObservableObject {
         Log.write("bootstrap: axTrusted=\(Permissions.axTrusted) readSource=\(prefs.readSource.rawValue) captureMode=\(prefs.captureMode.rawValue) voiceEnabled=\(prefs.voiceEnabled)")
         // Selection capture needs Accessibility. Prompt up front so the user
         // isn't met with a silent "No text captured" later.
-        if prefs.readSource == .selection && !Permissions.axTrusted {
+        if prefs.readSource != .clipboard && !Permissions.axTrusted {
             Permissions.requestAX()
         }
         // Keep the published trust flag fresh (granting happens out of process).
@@ -219,11 +219,26 @@ final class AppState: ObservableObject {
         if !wasPlaying { status = .capturing }
 
         let capture: Capture
-        if prefs.readSource == .clipboard {
+        switch prefs.readSource {
+        case .clipboard:
             let pb = NSPasteboard.general.string(forType: .string) ?? ""
             capture = Capture(text: pb, method: .clipboard)
-        } else {
+        case .selection:
             capture = await TextCapture.capture(mode: prefs.captureMode)
+        case .auto:
+            // Grab the live selection (AX / synthetic ⌘C). If the app won't hand
+            // it over — iTerm exposes no AX selection and drops/blocks a synthetic
+            // ⌘C — fall back to whatever's on the clipboard. That's exactly right
+            // for copy-on-select terminals, where selecting already put the text
+            // there; the tradeoff is that with nothing selected it may read a
+            // stale clipboard (use "Selected text" for strict selection-only).
+            let grabbed = await TextCapture.capture(mode: prefs.captureMode)
+            if !grabbed.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                capture = grabbed
+            } else {
+                let pb = NSPasteboard.general.string(forType: .string) ?? ""
+                capture = Capture(text: pb, method: .clipboard)
+            }
         }
         // A newer trigger may have superseded us during the await — bail so we
         // don't desync state (the stale run would set .reading but its stream is
@@ -273,7 +288,7 @@ final class AppState: ObservableObject {
         lastCleaned = cleaned
         guard !trimmed.isEmpty else {
             // Distinguish "nothing selected" from "can't capture because no permission".
-            if prefs.readSource == .selection && !Permissions.axTrusted {
+            if prefs.readSource != .clipboard && !Permissions.axTrusted {
                 Log.write("read aborted: no capture and Accessibility not granted")
                 status = .error("Grant Accessibility to capture")
                 Permissions.requestAX()
