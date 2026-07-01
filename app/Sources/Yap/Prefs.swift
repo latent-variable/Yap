@@ -16,9 +16,15 @@ enum CaptureMode: String, CaseIterable, Identifiable {
 
 /// What the read action targets.
 enum ReadSource: String, CaseIterable, Identifiable {
-    case selection, clipboard
+    case auto, selection, clipboard
     var id: String { rawValue }
-    var label: String { self == .selection ? "Selected text" : "Clipboard" }
+    var label: String {
+        switch self {
+        case .auto: return "Auto (selection, fall back to clipboard)"
+        case .selection: return "Selected text"
+        case .clipboard: return "Clipboard"
+        }
+    }
 }
 
 /// Preprocessing profile presets.

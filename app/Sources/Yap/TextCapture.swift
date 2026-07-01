@@ -151,25 +151,42 @@ enum TextCapture {
         let pb = NSPasteboard.general
         let saved = snapshot(pb)
         defer { restore(pb, saved) }   // always put the user's clipboard back
+
+        // Post ⌘C and wait for the pasteboard to actually change — but retry a
+        // few times before giving up. A single synthetic Copy is unreliable: on
+        // the first try a hotkey modifier (the ⇧ in ⌘⇧R) may still be physically
+        // held, turning ⌘C into ⌘⇧C (not Copy), and apps that expose no AX
+        // selection (iTerm) can also just drop the event. Aborting the whole read
+        // on one miss is what made captures flaky unless the user manually copied
+        // first. So re-clear modifiers and re-post instead. The clipboard is
+        // restored by the defer regardless of how many attempts we make.
+        // Baseline the change counter ONCE, before any attempt. A copy that lands
+        // late (after its own attempt's short window) still advances this same
+        // baseline and is caught by a later poll — a per-attempt baseline would
+        // absorb that late change and then miss it if the next ⌘C did nothing.
         let beforeCount = pb.changeCount
-
-        sendCopy()
-
         var changed = false
-        // Monotonic clock — immune to NTP/manual clock changes and sleep/wake.
-        let deadline = ProcessInfo.processInfo.systemUptime + 0.8
-        while ProcessInfo.processInfo.systemUptime < deadline {
-            if pb.changeCount != beforeCount { changed = true; break }
-            // On cancellation, bail immediately (the defers still restore the
-            // clipboard and reset the flag) — don't fall through to the
-            // "no change" log, and don't spin hot as a swallowed error would.
-            do { try await Task.sleep(nanoseconds: 15_000_000) } catch { return nil } // 15 ms
+        retry: for attempt in 0..<3 {
+            if attempt > 0 { await waitForModifiersToClear() }
+            await sendCopyHeld()
+            // Short per-attempt window: a copy that's going to land does so in tens
+            // of ms, so 0.2s × 3 tries (~0.6s worst case) catches dropped events
+            // without the multi-second stall a single long timeout would add on a
+            // genuine no-selection. Monotonic clock — immune to clock/sleep changes.
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.2
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                if pb.changeCount != beforeCount { changed = true; break retry }
+                // On cancellation, bail immediately (the defers still restore the
+                // clipboard and reset the flag) — don't fall through to the
+                // "no change" log, and don't spin hot as a swallowed error would.
+                do { try await Task.sleep(for: .milliseconds(15)) } catch { return nil }
+            }
         }
 
         let text = changed ? pb.string(forType: .string) : nil
         if !changed {
             Log.write(Permissions.axTrusted
-                ? "clipboard: ⌘C produced no change (no selection?)"
+                ? "clipboard: ⌘C produced no change after retries (no selection?)"
                 : "clipboard: ⌘C produced no change AND Accessibility NOT granted — synthetic Copy is likely blocked")
         }
 
@@ -194,7 +211,7 @@ enum TextCapture {
         let deadline = ProcessInfo.processInfo.systemUptime + 0.5
         while ProcessInfo.processInfo.systemUptime < deadline {
             if CGEventSource.flagsState(.combinedSessionState).intersection(chordMods).isEmpty { return }
-            do { try await Task.sleep(nanoseconds: 10_000_000) } catch { return }  // 10 ms
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
         }
     }
 
@@ -226,13 +243,29 @@ enum TextCapture {
         pb.writeObjects(newItems)
     }
 
-    private static func sendCopy() {
+    private static func copyEvents() -> (down: CGEvent?, up: CGEvent?) {
         let src = CGEventSource(stateID: .combinedSessionState)
         let cKey: CGKeyCode = 8 // 'c'
         let down = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: true)
         down?.flags = .maskCommand
         let up = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: false)
         up?.flags = .maskCommand
+        return (down, up)
+    }
+
+    /// Post ⌘C with an ~8ms key-hold — some apps (iTerm) miss a zero-duration
+    /// synthetic press. Async so the hold yields the main actor (`Task.sleep`)
+    /// instead of blocking it with `usleep`. This is the live capture path.
+    @MainActor private static func sendCopyHeld() async {
+        let (down, up) = copyEvents()
+        down?.post(tap: .cghidEventTap)
+        try? await Task.sleep(for: .milliseconds(8))   // non-blocking key-hold
+        up?.post(tap: .cghidEventTap)
+    }
+
+    /// Synchronous ⌘C (used only by the sync diagnostics path). No key-hold.
+    private static func sendCopy() {
+        let (down, up) = copyEvents()
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
     }
