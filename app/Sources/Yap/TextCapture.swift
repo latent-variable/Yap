@@ -179,7 +179,7 @@ enum TextCapture {
                 // On cancellation, bail immediately (the defers still restore the
                 // clipboard and reset the flag) — don't fall through to the
                 // "no change" log, and don't spin hot as a swallowed error would.
-                do { try await Task.sleep(nanoseconds: 15_000_000) } catch { return nil } // 15 ms
+                do { try await Task.sleep(for: .milliseconds(15)) } catch { return nil }
             }
         }
 
@@ -211,7 +211,7 @@ enum TextCapture {
         let deadline = ProcessInfo.processInfo.systemUptime + 0.5
         while ProcessInfo.processInfo.systemUptime < deadline {
             if CGEventSource.flagsState(.combinedSessionState).intersection(chordMods).isEmpty { return }
-            do { try await Task.sleep(nanoseconds: 10_000_000) } catch { return }  // 10 ms
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
         }
     }
 
@@ -259,7 +259,7 @@ enum TextCapture {
     @MainActor private static func sendCopyHeld() async {
         let (down, up) = copyEvents()
         down?.post(tap: .cghidEventTap)
-        try? await Task.sleep(nanoseconds: 8_000_000)   // 8ms, non-blocking
+        try? await Task.sleep(for: .milliseconds(8))   // non-blocking key-hold
         up?.post(tap: .cghidEventTap)
     }
 
