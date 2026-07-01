@@ -164,9 +164,12 @@ enum TextCapture {
         retry: for attempt in 0..<3 {
             if attempt > 0 { await waitForModifiersToClear() }
             let beforeCount = pb.changeCount
-            sendCopy()
-            // Monotonic clock — immune to NTP/manual clock changes and sleep/wake.
-            let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+            await sendCopyHeld()
+            // Short per-attempt window: a copy that's going to land does so in tens
+            // of ms, so 0.2s × 3 tries (~0.6s worst case) catches dropped events
+            // without the multi-second stall a single long timeout would add on a
+            // genuine no-selection. Monotonic clock — immune to clock/sleep changes.
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.2
             while ProcessInfo.processInfo.systemUptime < deadline {
                 if pb.changeCount != beforeCount { changed = true; break retry }
                 // On cancellation, bail immediately (the defers still restore the
@@ -236,15 +239,30 @@ enum TextCapture {
         pb.writeObjects(newItems)
     }
 
-    private static func sendCopy() {
+    private static func copyEvents() -> (down: CGEvent?, up: CGEvent?) {
         let src = CGEventSource(stateID: .combinedSessionState)
         let cKey: CGKeyCode = 8 // 'c'
         let down = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: true)
         down?.flags = .maskCommand
         let up = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: false)
         up?.flags = .maskCommand
+        return (down, up)
+    }
+
+    /// Post ⌘C with an ~8ms key-hold — some apps (iTerm) miss a zero-duration
+    /// synthetic press. Async so the hold yields the main actor (`Task.sleep`)
+    /// instead of blocking it with `usleep`. This is the live capture path.
+    @MainActor private static func sendCopyHeld() async {
+        let (down, up) = copyEvents()
         down?.post(tap: .cghidEventTap)
-        usleep(8_000)   // brief key-hold: some apps (iTerm) miss a zero-duration ⌘C
+        try? await Task.sleep(nanoseconds: 8_000_000)   // 8ms, non-blocking
+        up?.post(tap: .cghidEventTap)
+    }
+
+    /// Synchronous ⌘C (used only by the sync diagnostics path). No key-hold.
+    private static func sendCopy() {
+        let (down, up) = copyEvents()
+        down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
     }
 }
