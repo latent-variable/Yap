@@ -151,25 +151,35 @@ enum TextCapture {
         let pb = NSPasteboard.general
         let saved = snapshot(pb)
         defer { restore(pb, saved) }   // always put the user's clipboard back
-        let beforeCount = pb.changeCount
 
-        sendCopy()
-
+        // Post ⌘C and wait for the pasteboard to actually change — but retry a
+        // few times before giving up. A single synthetic Copy is unreliable: on
+        // the first try a hotkey modifier (the ⇧ in ⌘⇧R) may still be physically
+        // held, turning ⌘C into ⌘⇧C (not Copy), and apps that expose no AX
+        // selection (iTerm) can also just drop the event. Aborting the whole read
+        // on one miss is what made captures flaky unless the user manually copied
+        // first. So re-clear modifiers and re-post instead. The clipboard is
+        // restored by the defer regardless of how many attempts we make.
         var changed = false
-        // Monotonic clock — immune to NTP/manual clock changes and sleep/wake.
-        let deadline = ProcessInfo.processInfo.systemUptime + 0.8
-        while ProcessInfo.processInfo.systemUptime < deadline {
-            if pb.changeCount != beforeCount { changed = true; break }
-            // On cancellation, bail immediately (the defers still restore the
-            // clipboard and reset the flag) — don't fall through to the
-            // "no change" log, and don't spin hot as a swallowed error would.
-            do { try await Task.sleep(nanoseconds: 15_000_000) } catch { return nil } // 15 ms
+        retry: for attempt in 0..<3 {
+            if attempt > 0 { await waitForModifiersToClear() }
+            let beforeCount = pb.changeCount
+            sendCopy()
+            // Monotonic clock — immune to NTP/manual clock changes and sleep/wake.
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                if pb.changeCount != beforeCount { changed = true; break retry }
+                // On cancellation, bail immediately (the defers still restore the
+                // clipboard and reset the flag) — don't fall through to the
+                // "no change" log, and don't spin hot as a swallowed error would.
+                do { try await Task.sleep(nanoseconds: 15_000_000) } catch { return nil } // 15 ms
+            }
         }
 
         let text = changed ? pb.string(forType: .string) : nil
         if !changed {
             Log.write(Permissions.axTrusted
-                ? "clipboard: ⌘C produced no change (no selection?)"
+                ? "clipboard: ⌘C produced no change after retries (no selection?)"
                 : "clipboard: ⌘C produced no change AND Accessibility NOT granted — synthetic Copy is likely blocked")
         }
 
@@ -234,6 +244,7 @@ enum TextCapture {
         let up = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: false)
         up?.flags = .maskCommand
         down?.post(tap: .cghidEventTap)
+        usleep(8_000)   // brief key-hold: some apps (iTerm) miss a zero-duration ⌘C
         up?.post(tap: .cghidEventTap)
     }
 }
