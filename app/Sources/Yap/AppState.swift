@@ -148,7 +148,13 @@ final class AppState: ObservableObject {
     func offloadInactiveEngine() {
         let inactive = prefs.engine == "pocket" ? "kokoro" : "pocket"
         if inactive == "pocket" && prefs.autoLoadHD { return }
-        Task { await backend.client.unloadEngine(inactive) }
+        Task {
+            // Re-check on execution (still on the main actor): a rapid switch back
+            // could have re-activated `inactive` between scheduling and now — never
+            // unload the engine that's currently active.
+            guard prefs.engine != inactive else { return }
+            await backend.client.unloadEngine(inactive)
+        }
     }
 
     private var warming = false
@@ -162,11 +168,12 @@ final class AppState: ObservableObject {
             await backend.client.warmPocket(voice: voice)
             warming = false
             hdWarm = true
-            // Warming loads the model, which may pull the gated cloning weights —
-            // reflect that so the UI + demote guard see cloning as ready (a cold
-            // start reports cloning=false until this point).
-            let e = await backend.client.engines()
-            cloningReady = e.pocket?.cloning ?? cloningReady
+            // Warming loads the model, which may pull the gated cloning weights.
+            // refreshHD re-reads engine status (flips cloningReady) AND re-runs the
+            // demote guard — so if the token turned out invalid and cloning is
+            // genuinely unavailable, the selected clone is demoted now instead of
+            // 403-ing on the next read. Cheaper than duplicating the fetch here.
+            refreshHD()
             // Only the active engine need stay resident; reclaim the other's RAM.
             offloadInactiveEngine()
         }

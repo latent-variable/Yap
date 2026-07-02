@@ -14,6 +14,7 @@ import pytest
 from server import (chunk_text, split_sentences, segment_text, Engine, SAMPLE_RATE,
                     resolve_provider, GAP_SENTENCE, GAP_LINE, GAP_PARAGRAPH,
                     hd_voice_path)
+from pocket_engine import PocketEngine
 from pathlib import Path
 
 
@@ -293,11 +294,23 @@ class TestUnload:
 
     def test_pocket_unload_noop_when_not_loaded(self):
         # Must not import torch or load anything when the model was never resident.
-        from pocket_engine import PocketEngine
         pk = PocketEngine()
         assert pk.model is None
         assert pk.unload() is False
         assert pk.has_cloning is False
+
+    @pytest.mark.skipif(not PocketEngine().available(),
+                        reason="Pocket deps (torch) not installed")
+    def test_pocket_unload_then_lazy_reload(self):
+        # The offload safety claim: unloading a loaded Pocket model, then reading,
+        # transparently reloads it (catalog voice — no HF token/cloning needed).
+        pk = PocketEngine()
+        assert pk.load(), pk.error
+        assert pk.model is not None
+        assert pk.unload() is True
+        assert pk.model is None and pk.has_cloning is False
+        out = pk.synth("Reload.", "alba", 1.0)
+        assert pk.model is not None and out.size > 0
 
 
 # ── WAV export ──────────────────────────────────────────────────────────────
