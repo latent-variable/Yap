@@ -133,7 +133,7 @@ final class AppState: ObservableObject {
         // Pocket (the memory hog) so only the active engine stays resident.
         prefs.$engine.dropFirst().sink { [weak self] engine in
             if engine == "pocket" { self?.warmHD() }   // warmHD offloads Kokoro after warming
-            else { self?.offloadInactiveEngine() }     // now on Kokoro: drop Pocket
+            else { self?.offloadInactiveEngine(activeEngine: engine) }  // now on Kokoro: drop Pocket
         }.store(in: &cancellables)
         prefs.$hdVoice.dropFirst().sink { [weak self] _ in
             if self?.prefs.engine == "pocket" { self?.warmHD() }
@@ -145,8 +145,12 @@ final class AppState: ObservableObject {
     /// switching engines re-warms the target. Exception: if the user opted to keep
     /// Pocket pre-loaded ("Pre-load Pocket at launch"), don't offload it while on
     /// Kokoro — that toggle explicitly trades memory for zero cold start.
-    func offloadInactiveEngine() {
-        let inactive = prefs.engine == "pocket" ? "kokoro" : "pocket"
+    func offloadInactiveEngine(activeEngine: String? = nil) {
+        // The $engine sink fires inside `willSet`, where `prefs.engine` still holds
+        // the OLD value — so that caller passes the new engine explicitly. Other
+        // callers (deferred Tasks, post-warm) run after the store and can read it.
+        let active = activeEngine ?? prefs.engine
+        let inactive = active == "pocket" ? "kokoro" : "pocket"
         if inactive == "pocket" && prefs.autoLoadHD { return }
         Task {
             // Re-check on execution (still on the main actor): a rapid switch back

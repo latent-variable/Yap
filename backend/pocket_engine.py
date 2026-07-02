@@ -166,6 +166,8 @@ class PocketEngine:
             return False
         try:
             with self._lock:
+                if self.model is None:      # unloaded between load() and here
+                    return False
                 if voice:
                     # A cloned ref needs the gated model; if cloning isn't loaded,
                     # warm a catalog voice instead so the engine is still primed
@@ -206,6 +208,10 @@ class PocketEngine:
         if self.model is None and not self.load():
             raise RuntimeError(self.error or "Pocket engine not loaded")
         with self._lock:
+            # Re-check inside the lock: a concurrent unload() could have nulled the
+            # model between load() above and here (same guard as Engine.synth).
+            if self.model is None:
+                raise RuntimeError(self.error or "Pocket engine not loaded")
             st = self._state_for(voice)
             audio = self.model.generate_audio(st, text)
         if hasattr(audio, "detach"):
