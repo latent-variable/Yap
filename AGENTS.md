@@ -258,11 +258,24 @@ as the implicit fallback so a CoreML session failure never hard-fails. If you
 ## Capture (the reliability gotcha)
 
 Default capture mode is **clipboard**, not Accessibility — AX selected-text is
-inconsistent across apps. The clipboard path saves the pasteboard, sends ⌘C,
-and **only accepts text if `changeCount` actually advanced**, then restores the
-original clipboard. It must never return the pre-existing clipboard on a failed
-copy — that's what made Yap "read text I didn't select." The
-clipboard-restore invariant is covered by `--selftest`; keep it green.
+inconsistent across apps. The clipboard path saves the pasteboard, sends ⌘C
+(retried up to 3× with modifiers re-cleared, ~8ms key-hold — a single synthetic
+Copy is unreliable), and **only accepts text if `changeCount` actually
+advanced**, then restores the original clipboard. It must never return the
+pre-existing clipboard on a failed copy — that's what made Yap "read text I
+didn't select." The clipboard-restore invariant is covered by `--selftest`; keep
+it green.
+
+**`readSource` has three modes** (`Prefs.ReadSource`): `selection` (AX + ⌘C
+only, strict — keeps the no-stale-clipboard invariant), `clipboard` (reads the
+current clipboard directly, the no-Accessibility path), and **`auto`** (try the
+live selection, and if it comes back empty fall back to reading the clipboard).
+Auto exists for apps that expose **no** AX selection **and** block the synthetic
+⌘C — **iTerm and other terminals**. Retries can't help there (the Copy never
+lands), but iTerm's copy-on-select means the selection is already on the
+clipboard, so the fallback reads it. Tradeoff, documented in the UI + PRIVACY:
+in Auto, a read with nothing selected can speak a stale clipboard. `auto` and
+`selection` both need Accessibility; only `clipboard` needs none.
 
 ## Services menu ("Read with Yap")
 

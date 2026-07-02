@@ -12,6 +12,11 @@ it touches, and why — so you don't have to take "private" on faith.
   GitHub release). You can verify with Little Snitch / `nettop` — idle Yap
   makes no outbound connections.
 - Open source. Every capability described here is in this repo.
+- Don't trust the prose? It's 2026. Point your coding agent (Claude Code or
+  similar) at this repo and let it confirm these claims, or read the source
+  yourself. Start with [`TextCapture.swift`](../app/Sources/Yap/TextCapture.swift)
+  (capture) and [`server.py`](../backend/server.py) (the only thing that touches
+  the TTS model). Or build your own and use these binaries as a reference.
 
 ## Why Accessibility is the one permission asked for
 
@@ -42,6 +47,23 @@ actually does with it is narrow and visible in
 - No clipboard hijacking. The fallback restores whatever was on your clipboard.
 - No data leaves the machine. There is no server, no API key, no upload path in
   the code.
+
+## The Auto read source and your clipboard
+
+The default **Auto** read source grabs your selection directly where it can.
+Some apps (iTerm and other terminals) don't expose their selection to the
+Accessibility API and also block the synthetic ⌘C, so in those apps Yap reads
+your clipboard instead. Two things worth knowing:
+
+- **Yap never overwrites your clipboard doing this.** The synthetic-⌘C path
+  saves and restores it; the plain clipboard read only reads.
+- **The one clipboard change you'll see in a terminal is its own doing.** iTerm's
+  copy-on-select feature replaces your clipboard the moment you highlight text.
+  That's the terminal, not Yap. So after reading in iTerm, your previous
+  clipboard contents are gone, replaced by what you selected.
+
+It's a small quirk you get used to. For strict selection-only behavior with no
+clipboard involvement, set **Read source → Selected text**.
 
 ## The no-permission option
 
