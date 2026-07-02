@@ -190,6 +190,8 @@ Workflow, commit style, and the review/merge cycle follow the user-scope **`revi
 - If you change the backend payload shape, update `BackendClient` and `AudioPlayer` together and re-run the validation list above.
 - Keep the README ~100 lines; long design prose goes in `docs/`. Don't hand-maintain lists `/voices` can print live.
 
+**Don't flag (reviewers): `Task {}` inside `AppState` is already on the main actor.** `AppState` is a `@MainActor` class, so every method is main-actor-isolated and a plain `Task { … }` created inside one **inherits main-actor isolation** — its body, including `@Published` reads/writes (`prefs.*`, `hdWarm`, `cloningReady`, `warming`), runs on the main actor. This is **not** the off-main audio-stream callback the "hop to `@MainActor`" note in the Pocket section warns about (that's a real-time AVFoundation thread). Shipped precedent: `refreshHD`. So "off-main `@Published` access / data race" on such a `Task {}` is a false positive — don't raise it.
+
 ## Local test builds (after every merge — standing)
 
 A merged code change is invisible to Lino until it's a running build on his Mac.

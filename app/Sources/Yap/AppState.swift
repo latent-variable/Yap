@@ -155,8 +155,11 @@ final class AppState: ObservableObject {
         Task {
             // Re-check on execution (still on the main actor): a rapid switch back
             // could have re-activated `inactive` between scheduling and now — never
-            // unload the engine that's currently active.
-            guard prefs.engine != inactive else { return }
+            // unload the engine that's currently active. Also never unload mid-read:
+            // a read may still be streaming from it (mirrors warmHD's guard), which
+            // is what would otherwise race the backend synth. Memory reclaims on the
+            // next offload trigger instead.
+            guard prefs.engine != inactive, status != .reading, status != .paused else { return }
             await backend.client.unloadEngine(inactive)
         }
     }
