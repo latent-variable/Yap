@@ -126,6 +126,15 @@ struct BackendClient {
         _ = try? await session.data(for: req)
     }
 
+    /// Offload an engine's model to reclaim memory (only the active engine need
+    /// stay resident). No-op if already unloaded; the next read lazily reloads.
+    func unloadEngine(_ name: String) async {
+        var req = authed(base.appending(path: "engines/\(name)/unload"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        _ = try? await session.data(for: req)
+    }
+
     /// Download the curated starter reference voices.
     func fetchStarterVoices(onLine: @escaping (String) -> Void) async throws {
         var req = authed(base.appending(path: "voices/hd/starters"))

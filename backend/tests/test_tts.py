@@ -275,6 +275,31 @@ class TestProvider:
         assert "CPUExecutionProvider" in e.active_providers
 
 
+# ── engine offload (memory reclaim) ─────────────────────────────────────────
+class TestUnload:
+    @needs_model
+    def test_kokoro_unload_is_idempotent_and_lazily_reloads(self):
+        # Fresh engine so we don't strand the shared session fixture unloaded.
+        e = Engine(MODELS)
+        e.load()
+        assert e.kokoro is not None, e.error
+        assert e.unload() is True          # frees the resident session
+        assert e.kokoro is None
+        assert e.active_providers == []
+        assert e.unload() is False         # already unloaded -> no-op
+        # A read must transparently reload — offload safety hinges on this.
+        out = e.synth("Reload.", "am_puck", 1.0, None)
+        assert e.kokoro is not None and out.size > 0
+
+    def test_pocket_unload_noop_when_not_loaded(self):
+        # Must not import torch or load anything when the model was never resident.
+        from pocket_engine import PocketEngine
+        pk = PocketEngine()
+        assert pk.model is None
+        assert pk.unload() is False
+        assert pk.has_cloning is False
+
+
 # ── WAV export ──────────────────────────────────────────────────────────────
 @needs_model
 class TestExport:

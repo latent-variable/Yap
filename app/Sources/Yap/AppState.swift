@@ -129,11 +129,26 @@ final class AppState: ObservableObject {
         prefs.$volume.sink { [weak self] in self?.audio.set(volume: Float($0),
                                                             pitchCents: Float(self?.prefs.pitch ?? 0)) }.store(in: &cancellables)
         // Pre-warm the HD model when the user switches to it / changes voice, so
-        // the first read isn't a cold ~8s wait.
-        prefs.$engine.dropFirst().sink { [weak self] in if $0 == "pocket" { self?.warmHD() } }.store(in: &cancellables)
+        // the first read isn't a cold ~8s wait. Switching *away* to Kokoro offloads
+        // Pocket (the memory hog) so only the active engine stays resident.
+        prefs.$engine.dropFirst().sink { [weak self] engine in
+            if engine == "pocket" { self?.warmHD() }   // warmHD offloads Kokoro after warming
+            else { self?.offloadInactiveEngine() }     // now on Kokoro: drop Pocket
+        }.store(in: &cancellables)
         prefs.$hdVoice.dropFirst().sink { [weak self] _ in
             if self?.prefs.engine == "pocket" { self?.warmHD() }
         }.store(in: &cancellables)
+    }
+
+    /// Keep only the active engine resident, freeing the other's memory (Pocket +
+    /// torch is ~700MB). Safe: both synth paths lazily reload on the next read, and
+    /// switching engines re-warms the target. Exception: if the user opted to keep
+    /// Pocket pre-loaded ("Pre-load Pocket at launch"), don't offload it while on
+    /// Kokoro — that toggle explicitly trades memory for zero cold start.
+    func offloadInactiveEngine() {
+        let inactive = prefs.engine == "pocket" ? "kokoro" : "pocket"
+        if inactive == "pocket" && prefs.autoLoadHD { return }
+        Task { await backend.client.unloadEngine(inactive) }
     }
 
     private var warming = false
@@ -147,6 +162,13 @@ final class AppState: ObservableObject {
             await backend.client.warmPocket(voice: voice)
             warming = false
             hdWarm = true
+            // Warming loads the model, which may pull the gated cloning weights —
+            // reflect that so the UI + demote guard see cloning as ready (a cold
+            // start reports cloning=false until this point).
+            let e = await backend.client.engines()
+            cloningReady = e.pocket?.cloning ?? cloningReady
+            // Only the active engine need stay resident; reclaim the other's RAM.
+            offloadInactiveEngine()
         }
     }
 
@@ -486,11 +508,19 @@ final class AppState: ObservableObject {
             hdWarm = e.pocket?.loaded ?? false
             cloningReady = e.pocket?.cloning ?? false
             hdVoices = await backend.client.voices(engine: "pocket")
-            // Default to a catalog voice (always usable) when nothing is selected,
-            // OR when cloning isn't ready but the selected voice is a cloned one
-            // (which would 403 on synth — e.g. the user removed their token).
+            // Demote a cloned selection to a safe catalog voice ONLY when cloning
+            // is *genuinely* unavailable — no HF token, or the model loaded but
+            // cloning stayed off (terms not accepted). If the model just isn't
+            // warm yet while a token IS present, cloning is merely *pending*: the
+            // Pocket engine is lazy, so at cold start `cloning` reads false before
+            // warmHD() loads it. Demoting on pending is what silently dropped the
+            // user's cloned voice on every restart. Leave it; warmHD() below loads
+            // the model and a follow-up refreshHD() flips cloningReady true.
+            let hasToken = e.pocket?.has_token ?? false
+            let modelLoaded = e.pocket?.loaded ?? false
+            let cloningUnavailable = !hasToken || (modelLoaded && !cloningReady)
             let selectedIsCloned = hdVoices.first(where: { $0.id == prefs.hdVoice })?.needs_cloning == true
-            if prefs.hdVoice.isEmpty || (!cloningReady && selectedIsCloned),
+            if prefs.hdVoice.isEmpty || (selectedIsCloned && cloningUnavailable),
                let v = defaultPocketVoiceId {
                 prefs.hdVoice = v
             }

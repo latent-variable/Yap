@@ -21,6 +21,7 @@ on the backend's PYTHONPATH), same as the old HD engine.
 """
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import sys
@@ -178,6 +179,20 @@ class PocketEngine:
         except Exception as e:  # noqa: BLE001
             log.warning("Pocket warm failed: %s", e)
             return False
+
+    def unload(self) -> bool:
+        """Drop the loaded model + cached conditioning to free memory (torch is the
+        heavy resident). Idempotent; a later synth/warm lazily reloads. Resets
+        has_cloning so status reflects "not loaded", not a stale cloning verdict."""
+        with self._lock:
+            if self.model is None:
+                return False
+            self.model = None
+            self._states.clear()
+            self.has_cloning = False
+        gc.collect()
+        log.info("Pocket TTS unloaded")
+        return True
 
     def voices(self) -> list[tuple[str, str]]:
         """Catalog voices (name, lang). Cloned reference clips are listed by the

@@ -17,6 +17,7 @@ Endpoints:
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import hmac
 import io
@@ -278,6 +279,18 @@ class Engine:
             log.exception("failed to load Kokoro on %s", provider)
             return False
 
+    def unload(self) -> bool:
+        """Drop the loaded Kokoro session to free memory. Idempotent; synth()
+        lazily reloads on the next read. Files stay on disk (files_present holds),
+        so readiness/health don't read as broken."""
+        if self.kokoro is None:
+            return False
+        self.kokoro = None
+        self.active_providers = []
+        gc.collect()
+        log.info("Kokoro unloaded")
+        return True
+
     def available_providers(self) -> list[str]:
         try:
             import onnxruntime as ort
@@ -486,6 +499,18 @@ def engines_status() -> dict:
 @app.get("/engines")
 def engines():
     return engines_status()
+
+
+@app.post("/engines/{name}/unload")
+def unload_engine(name: str):
+    """Free a resident engine's model to reclaim memory. The app offloads the
+    inactive engine on switch (only the active engine need stay warm). No-op if
+    already unloaded; the next read lazily reloads. Unknown name -> 404."""
+    if name == "kokoro":
+        return {"unloaded": engine.unload(), "loaded": engine.kokoro is not None}
+    if name == "pocket":
+        return {"unloaded": pk_engine.unload(), "loaded": pk_engine.model is not None}
+    raise HTTPException(404, f"unknown engine {name!r}")
 
 
 @app.post("/engines/pocket/install")
