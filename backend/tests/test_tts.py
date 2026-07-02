@@ -14,6 +14,7 @@ import pytest
 from server import (chunk_text, split_sentences, segment_text, Engine, SAMPLE_RATE,
                     resolve_provider, GAP_SENTENCE, GAP_LINE, GAP_PARAGRAPH,
                     hd_voice_path)
+from pocket_engine import PocketEngine
 from pathlib import Path
 
 
@@ -273,6 +274,43 @@ class TestProvider:
         e.load()
         assert e.kokoro is not None, e.error
         assert "CPUExecutionProvider" in e.active_providers
+
+
+# ── engine offload (memory reclaim) ─────────────────────────────────────────
+class TestUnload:
+    @needs_model
+    def test_kokoro_unload_is_idempotent_and_lazily_reloads(self):
+        # Fresh engine so we don't strand the shared session fixture unloaded.
+        e = Engine(MODELS)
+        e.load()
+        assert e.kokoro is not None, e.error
+        assert e.unload() is True          # frees the resident session
+        assert e.kokoro is None
+        assert e.active_providers == []
+        assert e.unload() is False         # already unloaded -> no-op
+        # A read must transparently reload — offload safety hinges on this.
+        out = e.synth("Reload.", "am_puck", 1.0, None)
+        assert e.kokoro is not None and out.size > 0
+
+    def test_pocket_unload_noop_when_not_loaded(self):
+        # Must not import torch or load anything when the model was never resident.
+        pk = PocketEngine()
+        assert pk.model is None
+        assert pk.unload() is False
+        assert pk.has_cloning is False
+
+    @pytest.mark.skipif(not PocketEngine().available(),
+                        reason="Pocket deps (torch) not installed")
+    def test_pocket_unload_then_lazy_reload(self):
+        # The offload safety claim: unloading a loaded Pocket model, then reading,
+        # transparently reloads it (catalog voice — no HF token/cloning needed).
+        pk = PocketEngine()
+        assert pk.load(), pk.error
+        assert pk.model is not None
+        assert pk.unload() is True
+        assert pk.model is None and pk.has_cloning is False
+        out = pk.synth("Reload.", "alba", 1.0)
+        assert pk.model is not None and out.size > 0
 
 
 # ── WAV export ──────────────────────────────────────────────────────────────

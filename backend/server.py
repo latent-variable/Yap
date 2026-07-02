@@ -17,6 +17,7 @@ Endpoints:
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import hmac
 import io
@@ -26,6 +27,7 @@ import re
 import secrets
 import stat
 import sys
+import threading
 import wave
 from pathlib import Path
 from typing import Iterator, Optional
@@ -243,23 +245,30 @@ class Engine:
         self.error: Optional[str] = None
         self.provider_mode = provider_mode
         self.active_providers: list[str] = []
+        # Serialize load/unload/synth: FastAPI sync endpoints run in a threadpool,
+        # so /synthesize and /engines/kokoro/unload can land concurrently. Without
+        # this, unload() nulling self.kokoro mid-synth is a use-after-free race.
+        # load() is only ever called OUTSIDE a held lock (no locked section
+        # re-enters it), mirroring PocketEngine's contract.
+        self._lock = threading.Lock()
 
     def files_present(self) -> bool:
         return self.model_path.exists() and self.voices_path.exists()
 
     def load(self) -> None:
-        if self.kokoro is not None:
-            return
-        if not self.files_present():
-            self.error = "model files missing"
-            return
-        chosen = resolve_provider(self.provider_mode)
-        if self._try_load(chosen):
-            return
-        # fall back to CPU if the requested provider failed to build a session
-        if chosen != "CPUExecutionProvider":
-            log.warning("provider %s failed, falling back to CPU", chosen)
-            self._try_load("CPUExecutionProvider")
+        with self._lock:
+            if self.kokoro is not None:
+                return
+            if not self.files_present():
+                self.error = "model files missing"
+                return
+            chosen = resolve_provider(self.provider_mode)
+            if self._try_load(chosen):
+                return
+            # fall back to CPU if the requested provider failed to build a session
+            if chosen != "CPUExecutionProvider":
+                log.warning("provider %s failed, falling back to CPU", chosen)
+                self._try_load("CPUExecutionProvider")
 
     def _try_load(self, provider: str) -> bool:
         try:
@@ -278,6 +287,20 @@ class Engine:
             log.exception("failed to load Kokoro on %s", provider)
             return False
 
+    def unload(self) -> bool:
+        """Drop the loaded Kokoro session to free memory. Idempotent; synth()
+        lazily reloads on the next read. Files stay on disk (files_present holds),
+        so readiness/health don't read as broken. Locked so it can't null the
+        session out from under an in-flight synth()."""
+        with self._lock:
+            if self.kokoro is None:
+                return False
+            self.kokoro = None
+            self.active_providers = []
+        gc.collect()
+        log.info("Kokoro unloaded")
+        return True
+
     def available_providers(self) -> list[str]:
         try:
             import onnxruntime as ort
@@ -292,11 +315,14 @@ class Engine:
 
     def synth(self, text: str, voice: str, speed: float, lang: Optional[str]) -> np.ndarray:
         if self.kokoro is None:
-            self.load()
-        if self.kokoro is None:
-            raise RuntimeError(self.error or "engine not loaded")
+            self.load()  # called outside the lock; load() takes it itself
         lang = lang or lang_for_voice(voice)
-        samples, _sr = self.kokoro.create(text, voice=voice, speed=speed, lang=lang)
+        with self._lock:
+            # Re-check inside the lock: a concurrent unload() could have nulled
+            # the session between load() above and here.
+            if self.kokoro is None:
+                raise RuntimeError(self.error or "engine not loaded")
+            samples, _sr = self.kokoro.create(text, voice=voice, speed=speed, lang=lang)
         return np.asarray(samples, dtype=np.float32)
 
 
@@ -486,6 +512,18 @@ def engines_status() -> dict:
 @app.get("/engines")
 def engines():
     return engines_status()
+
+
+@app.post("/engines/{name}/unload")
+def unload_engine(name: str):
+    """Free a resident engine's model to reclaim memory. The app offloads the
+    inactive engine on switch (only the active engine need stay warm). No-op if
+    already unloaded; the next read lazily reloads. Unknown name -> 404."""
+    if name == "kokoro":
+        return {"unloaded": engine.unload(), "loaded": engine.kokoro is not None}
+    if name == "pocket":
+        return {"unloaded": pk_engine.unload(), "loaded": pk_engine.model is not None}
+    raise HTTPException(404, f"unknown engine {name!r}")
 
 
 @app.post("/engines/pocket/install")

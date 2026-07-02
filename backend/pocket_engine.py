@@ -21,6 +21,7 @@ on the backend's PYTHONPATH), same as the old HD engine.
 """
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import sys
@@ -165,6 +166,8 @@ class PocketEngine:
             return False
         try:
             with self._lock:
+                if self.model is None:      # unloaded between load() and here
+                    return False
                 if voice:
                     # A cloned ref needs the gated model; if cloning isn't loaded,
                     # warm a catalog voice instead so the engine is still primed
@@ -179,6 +182,20 @@ class PocketEngine:
             log.warning("Pocket warm failed: %s", e)
             return False
 
+    def unload(self) -> bool:
+        """Drop the loaded model + cached conditioning to free memory (torch is the
+        heavy resident). Idempotent; a later synth/warm lazily reloads. Resets
+        has_cloning so status reflects "not loaded", not a stale cloning verdict."""
+        with self._lock:
+            if self.model is None:
+                return False
+            self.model = None
+            self._states.clear()
+            self.has_cloning = False
+        gc.collect()
+        log.info("Pocket TTS unloaded")
+        return True
+
     def voices(self) -> list[tuple[str, str]]:
         """Catalog voices (name, lang). Cloned reference clips are listed by the
         server from hd-voices/, gated on has_cloning."""
@@ -191,6 +208,10 @@ class PocketEngine:
         if self.model is None and not self.load():
             raise RuntimeError(self.error or "Pocket engine not loaded")
         with self._lock:
+            # Re-check inside the lock: a concurrent unload() could have nulled the
+            # model between load() above and here (same guard as Engine.synth).
+            if self.model is None:
+                raise RuntimeError(self.error or "Pocket engine not loaded")
             st = self._state_for(voice)
             audio = self.model.generate_audio(st, text)
         if hasattr(audio, "detach"):

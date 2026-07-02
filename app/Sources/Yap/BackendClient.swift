@@ -117,12 +117,27 @@ struct BackendClient {
     }
 
     /// Pre-load the Pocket model + a voice so the first read isn't a cold wait.
-    func warmPocket(voice: String) async {
+    /// Returns whether the model is loaded afterward — `false` on failure, so the
+    /// caller must not loop re-warming (a failed warm that re-triggered itself
+    /// would spin the backend).
+    func warmPocket(voice: String) async -> Bool {
         var url = base.appending(path: "engines/pocket/warm")
         url.append(queryItems: [URLQueryItem(name: "voice", value: voice)])
         var req = authed(url)
         req.httpMethod = "POST"
         req.timeoutInterval = 60
+        struct R: Decodable { let loaded: Bool? }
+        guard let (data, _) = try? await session.data(for: req),
+              let r = try? JSONDecoder().decode(R.self, from: data) else { return false }
+        return r.loaded ?? false
+    }
+
+    /// Offload an engine's model to reclaim memory (only the active engine need
+    /// stay resident). No-op if already unloaded; the next read lazily reloads.
+    func unloadEngine(_ name: String) async {
+        var req = authed(base.appending(path: "engines/\(name)/unload"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
         _ = try? await session.data(for: req)
     }
 
