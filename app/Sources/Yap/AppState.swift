@@ -152,14 +152,17 @@ final class AppState: ObservableObject {
         let active = activeEngine ?? prefs.engine
         let inactive = active == "pocket" ? "kokoro" : "pocket"
         if inactive == "pocket" && prefs.autoLoadHD { return }
+        // Don't offload mid-read — a streaming read belongs to whatever engine was
+        // active when it started, which may be `inactive` after a switch. Evaluate
+        // this SYNCHRONOUSLY: a read that begins after this point runs on the (now)
+        // active engine, so unloading the inactive one stays safe. Deferring the
+        // check into the Task would see `.reading` in the common switch-then-read
+        // flow and wrongly skip the offload, defeating the memory reclaim.
+        guard status != .reading, status != .paused else { return }
         Task {
-            // Re-check on execution (still on the main actor): a rapid switch back
-            // could have re-activated `inactive` between scheduling and now — never
-            // unload the engine that's currently active. Also never unload mid-read:
-            // a read may still be streaming from it (mirrors warmHD's guard), which
-            // is what would otherwise race the backend synth. Memory reclaims on the
-            // next offload trigger instead.
-            guard prefs.engine != inactive, status != .reading, status != .paused else { return }
+            // Re-check the target is still inactive: a rapid switch-back could have
+            // re-activated it between scheduling and now.
+            guard prefs.engine != inactive else { return }
             await backend.client.unloadEngine(inactive)
         }
     }
@@ -172,14 +175,18 @@ final class AppState: ObservableObject {
         warming = true
         let voice = prefs.hdVoice
         Task {
-            await backend.client.warmPocket(voice: voice)
+            let loaded = await backend.client.warmPocket(voice: voice)
             warming = false
-            hdWarm = true
-            // Warming loads the model, which may pull the gated cloning weights.
-            // refreshHD re-reads engine status (flips cloningReady) AND re-runs the
-            // demote guard — so if the token turned out invalid and cloning is
-            // genuinely unavailable, the selected clone is demoted now instead of
-            // 403-ing on the next read. Cheaper than duplicating the fetch here.
+            hdWarm = loaded
+            // Only chase the follow-ups on a SUCCESSFUL load. If the warm failed
+            // (loaded=false), calling refreshHD() would set hdWarm=false and its
+            // own auto-warm would re-fire warmHD() → a tight failing loop that
+            // spams the backend. On failure we stop; the next user action retries.
+            guard loaded else { return }
+            // Warming loaded the model, which may have pulled the gated cloning
+            // weights. refreshHD re-reads engine status (flips cloningReady) AND
+            // re-runs the demote guard — so an invalid token demotes the clone now
+            // instead of 403-ing on the next read.
             refreshHD()
             // Only the active engine need stay resident; reclaim the other's RAM.
             offloadInactiveEngine()
