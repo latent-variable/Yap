@@ -143,6 +143,19 @@ enum Selftest {
         pb.clearContents()
         if let userClipboard { pb.setString(userClipboard, forType: .string) }
 
+        print("AudioPlayer — engine parks when idle (energy)")
+        let ap = AudioPlayer()
+        if ap.isEngineRunning { failures += 1; print("  ✗ engine running before any playback") }
+        else { print("  ✓ engine idle before first playback") }
+        ap.start(volume: 1, pitchCents: 0, rate: 1, cushionSeconds: 0.05)
+        // With an output device the engine runs now; headless (no device) it may
+        // not start — the park invariant below holds either way.
+        print(ap.isEngineRunning ? "  ✓ engine runs during a playback session"
+                                 : "  · engine didn't start (no output device) — park check still valid")
+        ap.stop()
+        if ap.isEngineRunning { failures += 1; print("  ✗ engine STILL running after stop — idle CPU drain") }
+        else { print("  ✓ engine parked after stop") }
+
         print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILURE(S)")
         exit(failures == 0 ? 0 : 1)
     }

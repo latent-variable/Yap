@@ -416,6 +416,7 @@ final class AppState: ObservableObject {
                 do { try await Task.sleep(nanoseconds: 150_000_000) } catch { break }
             }
             if gen == generation && (status == .reading || status == .paused) {
+                audio.stop()   // playback drained — park the audio engine (stop idle CPU spin)
                 status = .idle; playingText = ""; preparing = false
             }
         } catch {
@@ -498,7 +499,7 @@ final class AppState: ObservableObject {
             while gen == generation && audio.hasQueued {
                 do { try await Task.sleep(nanoseconds: 150_000_000) } catch { break }
             }
-            if gen == generation { preparing = false; status = .idle }
+            if gen == generation { audio.stop(); preparing = false; status = .idle }
         }
     }
 
