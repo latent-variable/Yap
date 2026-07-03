@@ -388,9 +388,11 @@ final class AppState: ObservableObject {
         status = .reading
         preparing = true   // first audio not here yet (Pocket cold-load takes a moment)
         preparingDetail = prepDetail()
-        audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
-                    cushionSeconds: 0.35)   // Pocket is ~10x realtime; Kokoro is instant
         do {
+            // Inside the do so an engine-start failure is caught below (park +
+            // error) instead of scheduling into a dead engine and hanging the drain.
+            try audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
+                            cushionSeconds: 0.35)   // Pocket is ~10x realtime; Kokoro is instant
             // Speed is applied at playback (real-time, both engines), so the
             // backend synthesizes at 1.0 and pauses stretch along with it.
             try await backend.client.streamPCM(text: cleaned, voice: activeVoice,
@@ -416,10 +418,13 @@ final class AppState: ObservableObject {
                 do { try await Task.sleep(nanoseconds: 150_000_000) } catch { break }
             }
             if gen == generation && (status == .reading || status == .paused) {
+                audio.stop()   // playback drained — park the audio engine (stop idle CPU spin)
                 status = .idle; playingText = ""; preparing = false
             }
         } catch {
-            if gen == generation { preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3) }
+            // audio.start() already ran, so park the engine here too — otherwise a
+            // mid-stream backend error leaves it running (the very idle drain we fix).
+            if gen == generation { audio.stop(); preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3) }
         }
     }
 
@@ -462,7 +467,7 @@ final class AppState: ObservableObject {
     // MARK: - transport
 
     func pause() { if status == .reading { audio.pause(); status = .paused } }
-    func resume() { if status == .paused { audio.resume(); status = .reading } }
+    func resume() { if status == .paused, audio.resume() { status = .reading } }
     func togglePlayPause() { status == .paused ? resume() : pause() }
 
     func stop() {
@@ -483,8 +488,12 @@ final class AppState: ObservableObject {
             status = .reading
             preparing = true
             preparingDetail = prepDetail()
-            audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
-                        cushionSeconds: 0.35)
+            do {
+                try audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
+                                cushionSeconds: 0.35)
+            } catch {
+                status = .error("Audio output unavailable"); preparing = false; resetToIdle(after: 3); return
+            }
             let sample = prefs.engine == "pocket"
                 ? "This is a preview of the selected Pocket voice."
                 : Self.sampleText(for: prefs.voice)
@@ -498,7 +507,7 @@ final class AppState: ObservableObject {
             while gen == generation && audio.hasQueued {
                 do { try await Task.sleep(nanoseconds: 150_000_000) } catch { break }
             }
-            if gen == generation { preparing = false; status = .idle }
+            if gen == generation { audio.stop(); preparing = false; status = .idle }
         }
     }
 

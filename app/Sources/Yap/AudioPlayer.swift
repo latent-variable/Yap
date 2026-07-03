@@ -32,6 +32,16 @@ final class AudioPlayer {
     // (let feed re-prime, preserving the cushion) from "paused after the stream
     // ended" (play the sub-cushion remainder now, since no more audio is coming).
     private var ended = false
+    // Is a playback session live? The engine's render thread + its
+    // AUScheduledParameterRefresher spin continuously while the engine runs, so we
+    // STOP the engine when idle (see stop()) to stop burning CPU/energy between
+    // reads. `active` guards the config-change recovery from restarting a parked
+    // engine on a route change while nothing is playing.
+    // Main-thread-confined, like the engine calls it guards: start()/stop()/
+    // resume() are invoked from @MainActor AppState, and the config observer runs
+    // on queue:.main. It is deliberately NOT `q`-owned (that queue owns node/buffer
+    // state); there is no cross-thread access, so no lock is needed.
+    private var active = false
     // Bumped on every start()/stop(). A scheduleBuffer completion from a previous
     // session carries the old epoch and is ignored, so it can't decrement (and
     // underflow, since the count is unsigned) the new session's frame counter.
@@ -63,7 +73,10 @@ final class AudioPlayer {
     private func recoverFromConfigChange() {
         engine.connect(player, to: pitchUnit, format: inFormat)
         engine.connect(pitchUnit, to: engine.mainMixerNode, format: inFormat)
-        if !engine.isRunning { try? engine.start() }
+        // Only restart if we're actually mid-playback. Restarting a parked engine
+        // on an idle route change would put its render thread right back to
+        // spinning — the very drain we stop the engine to avoid.
+        if active && !engine.isRunning { try? engine.start() }
     }
 
     func set(volume: Float, pitchCents: Float) {
@@ -79,7 +92,7 @@ final class AudioPlayer {
 
     /// Begin a fresh playback session. `cushionSeconds` of audio is buffered
     /// before playback starts (larger for slower engines = smoother streaming).
-    func start(volume: Float, pitchCents: Float, rate: Float, cushionSeconds: Double = 0.35) {
+    func start(volume: Float, pitchCents: Float, rate: Float, cushionSeconds: Double = 0.35) throws {
         set(volume: volume, pitchCents: pitchCents)
         setRate(rate)
         q.sync {
@@ -93,12 +106,19 @@ final class AudioPlayer {
             player.stop()
             player.reset()
         }
-        do {
-            if !engine.isRunning { try engine.start() }
-            // engine running but the node waits for the cushion (see feed/flush)
-        } catch {
-            NSLog("audio engine start failed: \(error)")
+        active = true
+        if !engine.isRunning {
+            do { try engine.start() }
+            catch {
+                // Surface the failure instead of swallowing it: with the engine
+                // dead, scheduled buffers never play, so scheduledFrames never
+                // decrements and the caller's drain loop would spin forever. Let the
+                // caller park + show an error instead.
+                active = false
+                throw error
+            }
         }
+        // engine running but the node waits for the cushion (see feed/flush)
     }
 
     /// Start playback now even if the cushion isn't full (call when the stream
@@ -175,8 +195,19 @@ final class AudioPlayer {
         }
     }
 
-    func resume() {
-        if !engine.isRunning { try? engine.start() }
+    /// Returns whether playback actually resumed — `false` if the engine couldn't
+    /// restart, so the caller can avoid showing a "reading" state with no audio.
+    @discardableResult
+    func resume() -> Bool {
+        active = true
+        do {
+            if !engine.isRunning { try engine.start() }
+        } catch {
+            // Don't unpause the node behind a dead engine — leave it consistent.
+            active = false
+            NSLog("audio engine resume failed: \(error)")
+            return false
+        }
         q.async {
             self.paused = false
             if self.primed {
@@ -188,6 +219,7 @@ final class AudioPlayer {
             // else paused mid-prime, stream still live: leave unprimed so feed()
             // refills the cushion before starting — avoids an undersized buffer.
         }
+        return true
     }
 
     func stop() {
@@ -201,8 +233,17 @@ final class AudioPlayer {
             player.stop()
             player.reset()
         }
+        // Park the engine so its render thread stops spinning while idle. start()/
+        // resume() restart it for the next read (the cushion hides the ~ms restart
+        // latency). Engine calls stay off `q`, on the calling thread, per the graph
+        // ownership contract above.
+        active = false
+        if engine.isRunning { engine.stop() }
     }
 
     /// Approximate: is anything still queued?
     var hasQueued: Bool { q.sync { scheduledFrames > 0 } }
+
+    /// Test hook (`--selftest`): observe engine run state to verify idle-parking.
+    var isEngineRunning: Bool { engine.isRunning }
 }
