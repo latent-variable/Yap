@@ -188,7 +188,14 @@ final class AudioPlayer {
 
     func resume() {
         active = true
-        if !engine.isRunning { try? engine.start() }
+        do {
+            if !engine.isRunning { try engine.start() }
+        } catch {
+            // Don't unpause the node behind a dead engine — leave it consistent.
+            active = false
+            NSLog("audio engine resume failed: \(error)")
+            return
+        }
         q.async {
             self.paused = false
             if self.primed {
