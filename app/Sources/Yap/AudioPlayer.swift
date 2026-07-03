@@ -92,7 +92,7 @@ final class AudioPlayer {
 
     /// Begin a fresh playback session. `cushionSeconds` of audio is buffered
     /// before playback starts (larger for slower engines = smoother streaming).
-    func start(volume: Float, pitchCents: Float, rate: Float, cushionSeconds: Double = 0.35) {
+    func start(volume: Float, pitchCents: Float, rate: Float, cushionSeconds: Double = 0.35) throws {
         set(volume: volume, pitchCents: pitchCents)
         setRate(rate)
         q.sync {
@@ -106,14 +106,19 @@ final class AudioPlayer {
             player.stop()
             player.reset()
         }
-        do {
-            active = true
-            if !engine.isRunning { try engine.start() }
-            // engine running but the node waits for the cushion (see feed/flush)
-        } catch {
-            active = false
-            NSLog("audio engine start failed: \(error)")
+        active = true
+        if !engine.isRunning {
+            do { try engine.start() }
+            catch {
+                // Surface the failure instead of swallowing it: with the engine
+                // dead, scheduled buffers never play, so scheduledFrames never
+                // decrements and the caller's drain loop would spin forever. Let the
+                // caller park + show an error instead.
+                active = false
+                throw error
+            }
         }
+        // engine running but the node waits for the cushion (see feed/flush)
     }
 
     /// Start playback now even if the cushion isn't full (call when the stream
@@ -190,7 +195,10 @@ final class AudioPlayer {
         }
     }
 
-    func resume() {
+    /// Returns whether playback actually resumed — `false` if the engine couldn't
+    /// restart, so the caller can avoid showing a "reading" state with no audio.
+    @discardableResult
+    func resume() -> Bool {
         active = true
         do {
             if !engine.isRunning { try engine.start() }
@@ -198,7 +206,7 @@ final class AudioPlayer {
             // Don't unpause the node behind a dead engine — leave it consistent.
             active = false
             NSLog("audio engine resume failed: \(error)")
-            return
+            return false
         }
         q.async {
             self.paused = false
@@ -211,6 +219,7 @@ final class AudioPlayer {
             // else paused mid-prime, stream still live: leave unprimed so feed()
             // refills the cushion before starting — avoids an undersized buffer.
         }
+        return true
     }
 
     func stop() {

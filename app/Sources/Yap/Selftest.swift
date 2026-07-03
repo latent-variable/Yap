@@ -147,7 +147,7 @@ enum Selftest {
         let ap = AudioPlayer()
         if ap.isEngineRunning { failures += 1; print("  ✗ engine running before any playback") }
         else { print("  ✓ engine idle before first playback") }
-        ap.start(volume: 1, pitchCents: 0, rate: 1, cushionSeconds: 0.05)
+        try? ap.start(volume: 1, pitchCents: 0, rate: 1, cushionSeconds: 0.05)
         // With an output device the engine runs now; headless (no device) it may
         // not start — the park invariant below holds either way.
         print(ap.isEngineRunning ? "  ✓ engine runs during a playback session"
