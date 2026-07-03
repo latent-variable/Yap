@@ -37,6 +37,10 @@ final class AudioPlayer {
     // STOP the engine when idle (see stop()) to stop burning CPU/energy between
     // reads. `active` guards the config-change recovery from restarting a parked
     // engine on a route change while nothing is playing.
+    // Main-thread-confined, like the engine calls it guards: start()/stop()/
+    // resume() are invoked from @MainActor AppState, and the config observer runs
+    // on queue:.main. It is deliberately NOT `q`-owned (that queue owns node/buffer
+    // state); there is no cross-thread access, so no lock is needed.
     private var active = false
     // Bumped on every start()/stop(). A scheduleBuffer completion from a previous
     // session carries the old epoch and is ignored, so it can't decrement (and

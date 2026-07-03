@@ -420,7 +420,9 @@ final class AppState: ObservableObject {
                 status = .idle; playingText = ""; preparing = false
             }
         } catch {
-            if gen == generation { preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3) }
+            // audio.start() already ran, so park the engine here too — otherwise a
+            // mid-stream backend error leaves it running (the very idle drain we fix).
+            if gen == generation { audio.stop(); preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3) }
         }
     }
 
