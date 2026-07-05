@@ -72,12 +72,35 @@ Key facts an agent must keep straight:
   old Chatterbox). Starter voices are CMU ARCTIC (free); `/voices/hd/starters`
   fetches them. (Internal Swift identifiers still use the `hd*` prefix — `hdVoice`,
   `hdInstalled`, `installHD` — they now denote the Pocket engine.)
+- **A selected cloned voice must survive restart.** `refreshHD` demotes a cloned
+  `hdVoice` to a catalog default ONLY when cloning is *genuinely* unavailable —
+  `has_token == false`, or the model loaded and cloning is still off (terms not
+  accepted). It must NOT demote during the lazy warm-up window (Pocket loads on
+  first use, so `cloning` reads false before `warmHD` loads it) — that silently
+  reset the user's clone on every launch. Caveat: a freshly re-signed build
+  re-prompts for the Keychain HF token; until "Always Allow" is granted the backend
+  sees `has_token=false`, so a cold-start demote can still happen once on a new
+  build. In steady state (token readable) the selection is sticky.
 - Speed is applied at **playback** (AVAudioUnitTimePitch rate, live-adjustable),
   not the backend — parity across engines. The player pre-buffers a 0.35s cushion
   (both engines now; Pocket is fast enough not to need the old HD buffer logic).
 - Pocket is fast enough for the plain per-segment pipeline — the Chatterbox
   buffer-aware HD chunking (`merge_for_hd` + cost model) and its tools/tests were
   removed.
+- **Memory: only the active engine stays resident.** Both engines used to sit
+  loaded at once (~1 GB with Pocket/torch). `POST /engines/{name}/unload` frees
+  one; the app offloads the *inactive* engine when you switch (but never mid-read —
+  it guards on `status`). Both synth paths lazily reload on the next read, so
+  offload is safe. The "Pre-load Pocket at launch" pref keeps Pocket hot even on
+  Kokoro (memory-for-latency opt-in), so offload skips it then.
+- **The audio engine is parked when idle.** `AudioPlayer.stop()` (and read
+  completion + the error path) call `engine.stop()`, not just `player.stop()` —
+  otherwise the `AVAudioEngine` render thread + its `AUScheduledParameterRefresher`
+  spin **continuously at ~7-8% CPU** after the first read, forever. `start()`/
+  `resume()` restart it (the 0.35s cushion hides the latency); `start()` **throws**
+  on engine-start failure so a dead engine can't schedule buffers that never play
+  and hang the drain loop in "Reading". `active` stops a route change from waking a
+  parked engine. Regression test: `--selftest` "engine parks when idle".
 - @Published writes from the audio-stream callback **must** hop to the main actor
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.
