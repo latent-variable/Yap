@@ -385,6 +385,10 @@ final class AppState: ObservableObject {
 
         playingText = cleaned
         lastReadCleaned = cleaned   // remember for the stale-selection guard (covers Services reads too)
+        // Log what we're about to speak (both hotkey + Services reads land here,
+        // past the empty/failed-capture guards) so it's recoverable from History.
+        HistoryStore.shared.recordSpoken(cleaned,
+            detail: "\(prefs.engine == "pocket" ? "Pocket" : "Kokoro") · \(activeVoice)")
         status = .reading
         preparing = true   // first audio not here yet (Pocket cold-load takes a moment)
         preparingDetail = prepDetail()
