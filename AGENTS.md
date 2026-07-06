@@ -223,11 +223,28 @@ he can test the actual behavior — don't leave him on the old bundle. This is t
 default, not a thing to ask about. (A public release — DMG + Homebrew — stays a
 separate, gated step; this is only the local install for testing.)
 
+**Use `scripts/install_local.sh` — do NOT hand-run build + ditto + open.** The
+naive recipe silently installs stale code and litters Launchpad with duplicate
+icons, because:
+
+- **`open` re-focuses a still-running old instance** instead of launching the new
+  bundle. `ditto`/`trash` swap the bundle on disk, but the old *process* keeps
+  running the old binary, so `open` (which matches by bundle id) just activates
+  it. You test 3-day-old code and wonder why your change isn't there. (This
+  actually bit us — a Jul-3 process survived under a replaced Jul-6 bundle.)
+- **The old backend keeps `:8766`**, so the new app reuses a stale sidecar.
+- **Every build leaves LaunchServices registrations** (the Trash copy, `dist/`,
+  `dist/dmg-stage/`), and Launchpad renders each as its own Yap icon.
+
+The script fixes all three deterministically: quit every running instance
+(SIGTERM → SIGKILL), free the backend port (only if it's our `server.py`), trash
+the old bundle, install + register the new one, launch it, then — as the final
+step, so nothing re-registers them — unregister every non-`/Applications` bundle
+and refresh the Dock. It verifies the running process is actually the new build.
+
 ```bash
-bash scripts/build_app.sh                 # -> dist/Yap.app (stable-signed; TCC/Accessibility grant persists)
-trash /Applications/Yap.app 2>/dev/null   # NEVER rm -rf; trash, per user constraint
-ditto dist/Yap.app /Applications/Yap.app  # install the fresh bundle
-open /Applications/Yap.app
+bash scripts/install_local.sh              # build (release) + clean install + relaunch + verify
+bash scripts/install_local.sh --no-build   # reinstall the existing dist/Yap.app (skip the build)
 ```
 
 **Do NOT bump the version for interim test builds** — only bump

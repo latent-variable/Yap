@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Clean local install of Yap for testing — the ONLY correct way to put a fresh
+# build on this Mac. Fixes the recurring edge conditions of a naive
+# build + ditto + open:
+#
+#   1. A Yap process is already running, so macOS `open` just re-focuses the OLD
+#      instance instead of launching the new bundle. You test stale code and
+#      wonder why your change isn't there. (This bit us: a 3-day-old process kept
+#      running under a replaced bundle.)
+#   2. The old backend keeps its port, so the new app reuses a stale sidecar.
+#   3. Every build leaves LaunchServices registrations behind (Trash copies, dist
+#      and dmg-stage bundles), so Launchpad shows DUPLICATE Yap icons.
+#
+# This script quits every running instance, frees the backend port, unregisters
+# stale bundles, installs the fresh one, and launches it — then verifies the
+# running process is actually the new build.
+#
+# Usage:
+#   bash scripts/install_local.sh            # build (release) + clean install
+#   bash scripts/install_local.sh --no-build # install the existing dist/Yap.app
+#
+# Never bumps the version — that's a release-only step (see AGENTS.md).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$ROOT/dist/Yap.app"
+DEST="/Applications/Yap.app"
+PORT=8766
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+# trash, never rm, for anything the user might want back (per repo constraint).
+if ! command -v trash >/dev/null 2>&1; then
+  echo "[install] ERROR: 'trash' not found. Aborting rather than fall back to rm." >&2
+  exit 1
+fi
+
+# 1. Build unless told not to.
+if [ "${1:-}" != "--no-build" ]; then
+  echo "[install] building fresh bundle"
+  bash "$ROOT/scripts/build_app.sh"
+fi
+[ -d "$SRC" ] || { echo "[install] ERROR: $SRC missing — build first." >&2; exit 1; }
+
+# 2. Quit every running Yap instance. SIGTERM first so applicationWillTerminate
+#    stops its backend; escalate to SIGKILL only if it refuses to exit.
+pids="$(pgrep -f "/Yap.app/Contents/MacOS/Yap" || true)"
+if [ -n "$pids" ]; then
+  echo "[install] quitting running Yap (pids: $pids)"
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f "/Yap.app/Contents/MacOS/Yap" >/dev/null 2>&1 || break
+    sleep 0.5
+  done
+  leftover="$(pgrep -f "/Yap.app/Contents/MacOS/Yap" || true)"
+  if [ -n "$leftover" ]; then
+    echo "[install] force-killing stubborn Yap (pids: $leftover)"
+    # shellcheck disable=SC2086
+    kill -9 $leftover 2>/dev/null || true
+  fi
+fi
+
+# 3. Free the backend port — kill an orphaned sidecar the quit didn't reap.
+#    Only touch it if it's actually our server.py, never an unrelated process.
+bpid="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true)"
+if [ -n "$bpid" ]; then
+  if ps -o command= -p "$bpid" 2>/dev/null | grep -q "server.py"; then
+    echo "[install] freeing orphaned backend on :$PORT (pid $bpid)"
+    kill "$bpid" 2>/dev/null || true
+    sleep 1
+    kill -0 "$bpid" 2>/dev/null && kill -9 "$bpid" 2>/dev/null || true
+  else
+    echo "[install] WARNING: :$PORT held by a non-Yap process (pid $bpid) — leaving it."
+  fi
+fi
+
+# 4. Remove the currently installed app (recoverable — goes to Trash).
+if [ -e "$DEST" ]; then
+  echo "[install] trashing old $DEST"
+  trash "$DEST"
+fi
+
+# 5. Install the fresh bundle and register it.
+echo "[install] installing $SRC -> $DEST"
+ditto "$SRC" "$DEST"
+"$LSREGISTER" -f "$DEST" >/dev/null 2>&1 || true
+
+# 6. Launch — nothing is running now, so this launches the NEW binary.
+echo "[install] launching"
+open "$DEST"
+sleep 5
+
+# 7. FINAL cleanup: unregister every Yap.app LaunchServices knows about EXCEPT
+#    the one we just installed. Must be last — trashing the old bundle (step 4)
+#    and installing (step 5) both make LaunchServices re-scan, which resurrects
+#    stale paths (the Trash copy, dist, dmg-stage). Doing this after launch, with
+#    nothing left to trigger a rescan, is what actually keeps Launchpad to a
+#    single icon. Then refresh the Dock so the phantom tiles drop.
+echo "[install] clearing stale LaunchServices registrations (Trash / dist / dmg-stage)"
+"$LSREGISTER" -dump 2>/dev/null | grep -oE "/[^ ]*Yap\.app" | sort -u | while read -r p; do
+  [ "$p" = "$DEST" ] && continue
+  "$LSREGISTER" -u "$p" >/dev/null 2>&1 || true
+done
+killall Dock 2>/dev/null || true
+
+# 8. Verify the running process is genuinely the just-installed build.
+echo "[install] --- verification ---"
+run="$(ps axo pid,lstart,command | grep "/Yap.app/Contents/MacOS/Yap" | grep -v grep || true)"
+ver="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$DEST/Contents/Info.plist" 2>/dev/null || echo '?')"
+bundles="$("$LSREGISTER" -dump 2>/dev/null | grep -oE "/[^ ]*Yap\.app" | sort -u | tr '\n' ' ')"
+echo "[install] version:            $ver"
+echo "[install] running process:    ${run:-<none>}"
+echo "[install] registered bundles:  $bundles"
+if [ -z "$run" ]; then
+  echo "[install] WARNING: no running Yap process detected — launch may have failed." >&2
+  exit 1
+fi
+echo "[install] done — fresh build is live. (Version unchanged by design; test builds don't bump.)"
