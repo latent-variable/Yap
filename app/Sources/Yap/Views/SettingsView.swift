@@ -10,6 +10,7 @@ struct SettingsView: View {
             CaptureTab().tabItem { Label("Capture", systemImage: "text.viewfinder") }
             CleanupTab().tabItem { Label("Cleanup", systemImage: "wand.and.stars") }
             ShortcutTab().tabItem { Label("Shortcut", systemImage: "command") }
+            HistoryTab().tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
             ModelsTab().tabItem { Label("Models", systemImage: "cube.box") }
             DiagnosticsTab().tabItem { Label("Diagnostics", systemImage: "stethoscope") }
         }
@@ -558,6 +559,157 @@ private struct HotKeyRecorder: View {
     private func stopMonitor() {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
         peakMods = 0
+    }
+}
+
+// MARK: - History
+
+private struct HistoryTab: View {
+    @ObservedObject private var history = HistoryStore.shared
+    @State private var kind: HistoryEntry.Kind = .spoken
+    @State private var query = ""
+    @State private var expanded: Set<UUID> = []
+    @State private var confirmClear = false
+
+    private var entries: [HistoryEntry] {
+        let all = kind == .spoken ? history.spoken : history.dictated
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return all }
+        return all.filter { $0.text.localizedCaseInsensitiveContains(q) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("", selection: $kind) {
+                Text("Spoken (\(history.spoken.count))").tag(HistoryEntry.Kind.spoken)
+                Text("Dictated (\(history.dictated.count))").tag(HistoryEntry.Kind.dictated)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            HStack {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search", text: $query).textFieldStyle(.plain)
+                Spacer()
+                Button(role: .destructive) { confirmClear = true } label: {
+                    Label("Clear", systemImage: "trash")
+                }
+                .controlSize(.small)
+                // Clear wipes the whole list (not the filtered view), so gate only
+                // on the underlying list — a search query must not re-enable it.
+                .disabled((kind == .spoken ? history.spoken : history.dictated).isEmpty)
+            }
+
+            if entries.isEmpty {
+                emptyState
+            } else {
+                List {
+                    ForEach(entries) { entry in
+                        HistoryRow(entry: entry,
+                                   isExpanded: expanded.contains(entry.id),
+                                   toggle: { toggleExpand(entry.id) },
+                                   delete: { delete(entry) })
+                    }
+                }
+                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .frame(minHeight: 240)
+            }
+
+            Text(kind == .spoken
+                 ? "Everything Yap has read aloud, newest first. Kept locally so a passage is never lost; copy any entry to re-read it."
+                 : "Everything you've dictated, newest first. If a paste ever fails, recover the text here.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .confirmationDialog(
+            kind == .spoken ? "Clear spoken history?" : "Clear dictated history?",
+            isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("Clear", role: .destructive) {
+                kind == .spoken ? history.clearSpoken() : history.clearDictated()
+                expanded.removeAll()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Removes all \(kind == .spoken ? "spoken" : "dictated") entries. This can't be undone.")
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: query.isEmpty ? "clock" : "magnifyingglass")
+                .font(.largeTitle).foregroundStyle(.tertiary)
+            Text(query.isEmpty
+                 ? (kind == .spoken ? "Nothing read aloud yet." : "Nothing dictated yet.")
+                 : "No matches.")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 240)
+    }
+
+    private func toggleExpand(_ id: UUID) {
+        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+    }
+
+    private func delete(_ entry: HistoryEntry) {
+        expanded.remove(entry.id)
+        history.delete(entry)
+    }
+}
+
+/// One history entry: timestamp + context, the text (tap to expand), and
+/// copy / delete actions.
+private struct HistoryRow: View {
+    let entry: HistoryEntry
+    let isExpanded: Bool
+    let toggle: () -> Void
+    let delete: () -> Void
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Tap-to-expand lives only on the timestamp/chevron cluster — not the
+            // whole header (which would swallow the Copy/Delete button taps) and
+            // not the body text (which would fight `.textSelection`).
+            HStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Text(entry.date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !entry.detail.isEmpty {
+                        Text("· \(entry.detail)").font(.caption).foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { toggle() }
+
+                Spacer()
+                Button { copy() } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.borderless).help("Copy")
+                Button(role: .destructive) { delete() } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless).help("Delete")
+            }
+
+            Text(entry.text)
+                .font(.callout)
+                .lineLimit(isExpanded ? nil : 2)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func copy() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(entry.text, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
     }
 }
 

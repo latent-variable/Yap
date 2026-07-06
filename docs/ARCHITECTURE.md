@@ -12,6 +12,7 @@ Pocket TTS opt-in) behind one int16-PCM contract.
 | macOS Services provider ("Read with Yap") | `YapApp.swift` (`ServiceProvider`) + `Resources/Info.plist` (`NSServices`) |
 | Central state + read pipeline | `AppState.swift` |
 | Preferences (UserDefaults) | `Prefs.swift` |
+| History log (spoken + dictated, JSON-backed) | `History.swift` + `Views/SettingsView.swift` (History tab) |
 | Global hotkey (Carbon) | `HotKey.swift` |
 | Text capture (AX + clipboard) | `TextCapture.swift` |
 | Accessibility permission | `Permissions.swift` |

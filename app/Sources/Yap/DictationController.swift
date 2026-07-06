@@ -65,6 +65,9 @@ final class DictationController: ObservableObject {
             Task {
                 let text = await dictation.stopAndTranscribe()
                 guard let text else { hideHUD(); return }
+                // Log before we try to paste — a dictation that fails to insert
+                // (no Accessibility, dropped ⌘V) is exactly what History rescues.
+                HistoryStore.shared.recordDictated(text, detail: targetName)
                 // Pasting fires a synthetic ⌘V, which needs Accessibility. Without
                 // it the keystroke is dropped. Don't run the normal paste path then:
                 // it would set the clipboard, fail to paste, and 0.6s later RESTORE
