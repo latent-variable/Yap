@@ -173,6 +173,21 @@ enum Selftest {
             } else {
                 failures += 1; print("  ✗ entry failed to encode/decode")
             }
+            // Load-window merge: window entries lead; a cleared list drops restored;
+            // a deleted id isn't resurrected by the restore.
+            let id0 = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+            let id1 = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+            let win = [HistoryEntry(kind: .spoken, text: "new")]
+            let old = [HistoryEntry(id: id0, kind: .spoken, text: "old1"),
+                       HistoryEntry(id: id1, kind: .spoken, text: "old2")]
+            let plain = HistoryStore.merged(window: win, restored: old, cleared: false, deleted: [])
+            checkBool("merge keeps window ahead of restored",
+                      plain.map(\.text) == ["new", "old1", "old2"], true)
+            let cleared = HistoryStore.merged(window: win, restored: old, cleared: true, deleted: [])
+            checkBool("merge honors a cleared list", cleared.map(\.text) == ["new"], true)
+            let deleted = HistoryStore.merged(window: win, restored: old, cleared: false, deleted: [id0])
+            checkBool("merge doesn't resurrect a deleted entry",
+                      deleted.map(\.text) == ["new", "old2"], true)
         }
 
         print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILURE(S)")

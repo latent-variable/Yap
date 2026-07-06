@@ -52,6 +52,12 @@ final class HistoryStore: ObservableObject {
     // ahead of the restored history when the load lands, so nothing is lost.
     private var loaded = false
     private var pendingSave = false
+    // Mutations during the load window must survive the merge: an entry deleted
+    // (or a list cleared) before the on-disk history lands must not be resurrected
+    // by it. Recorded here, then applied when the snapshot merges.
+    private var deletedDuringLoad: Set<UUID> = []
+    private var clearedSpokenDuringLoad = false
+    private var clearedDictatedDuringLoad = false
 
     private struct Snapshot: Codable, Sendable { var spoken: [HistoryEntry]; var dictated: [HistoryEntry] }
 
@@ -62,8 +68,9 @@ final class HistoryStore: ObservableObject {
     }
 
     private static var defaultURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Yap").appending(path: "history.json")
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appending(path: "Yap").appending(path: "history.json")
     }
 
     // MARK: - Record
@@ -85,19 +92,31 @@ final class HistoryStore: ObservableObject {
     // MARK: - Mutate
 
     func delete(_ entry: HistoryEntry) {
+        if !loaded { deletedDuringLoad.insert(entry.id) }
         spoken.removeAll { $0.id == entry.id }
         dictated.removeAll { $0.id == entry.id }
         save()
     }
 
-    func clearSpoken()   { spoken = [];   save() }
-    func clearDictated() { dictated = []; save() }
+    func clearSpoken()   { if !loaded { clearedSpokenDuringLoad = true };   spoken = [];   save() }
+    func clearDictated() { if !loaded { clearedDictatedDuringLoad = true }; dictated = []; save() }
 
     // MARK: - Persistence
 
     /// Newest-first, bounded to `cap`. Pure so `--selftest` can verify it.
     nonisolated static func capped(_ entries: [HistoryEntry], cap: Int = HistoryStore.cap) -> [HistoryEntry] {
         entries.count > cap ? Array(entries.prefix(cap)) : entries
+    }
+
+    /// Reconcile the on-disk `restored` history with `window` entries recorded
+    /// during the async load, honoring window mutations: a cleared list wins
+    /// (restored is dropped), and entries deleted in the window aren't resurrected.
+    /// Window entries stay ahead (newest-first). Pure so `--selftest` can verify it.
+    nonisolated static func merged(window: [HistoryEntry], restored: [HistoryEntry],
+                                   cleared: Bool, deleted: Set<UUID>) -> [HistoryEntry] {
+        guard !cleared else { return capped(window) }
+        let kept = restored.filter { !deleted.contains($0.id) }
+        return capped(window + kept)
     }
 
     /// Decode off-main so a large file never blocks the main actor at launch,
@@ -112,10 +131,13 @@ final class HistoryStore: ObservableObject {
                 return try? JSONDecoder().decode(Snapshot.self, from: data)
             }.value
             if let snap {
-                spoken = Self.capped(spoken + snap.spoken)
-                dictated = Self.capped(dictated + snap.dictated)
+                spoken = Self.merged(window: spoken, restored: snap.spoken,
+                                     cleared: clearedSpokenDuringLoad, deleted: deletedDuringLoad)
+                dictated = Self.merged(window: dictated, restored: snap.dictated,
+                                       cleared: clearedDictatedDuringLoad, deleted: deletedDuringLoad)
             }
             loaded = true
+            deletedDuringLoad = []
             if pendingSave { pendingSave = false; save() }
         }
     }

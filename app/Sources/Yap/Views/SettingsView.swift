@@ -667,18 +667,23 @@ private struct HistoryRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Tap-to-expand lives on the header only. Putting it on the whole row
-            // would fight `.textSelection` on the body — a click-drag to select
-            // text would register as a tap and collapse the row.
+            // Tap-to-expand lives only on the timestamp/chevron cluster — not the
+            // whole header (which would swallow the Copy/Delete button taps) and
+            // not the body text (which would fight `.textSelection`).
             HStack(spacing: 6) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption2).foregroundStyle(.secondary)
-                Text(entry.date.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption).foregroundStyle(.secondary)
-                if !entry.detail.isEmpty {
-                    Text("· \(entry.detail)").font(.caption).foregroundStyle(.tertiary)
-                        .lineLimit(1)
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Text(entry.date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !entry.detail.isEmpty {
+                        Text("· \(entry.detail)").font(.caption).foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
                 }
+                .contentShape(Rectangle())
+                .onTapGesture { toggle() }
+
                 Spacer()
                 Button { copy() } label: {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
@@ -689,8 +694,6 @@ private struct HistoryRow: View {
                 }
                 .buttonStyle(.borderless).help("Delete")
             }
-            .contentShape(Rectangle())
-            .onTapGesture { toggle() }
 
             Text(entry.text)
                 .font(.callout)
