@@ -566,7 +566,8 @@ private struct HotKeyRecorder: View {
 
 private struct HistoryTab: View {
     @ObservedObject private var history = HistoryStore.shared
-    @State private var kind: HistoryEntry.Kind = .spoken
+    // Dictation is the more-used half, so it leads and is the default view.
+    @State private var kind: HistoryEntry.Kind = .dictated
     @State private var query = ""
     @State private var expanded: Set<UUID> = []
     @State private var confirmClear = false
@@ -581,8 +582,8 @@ private struct HistoryTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Picker("", selection: $kind) {
-                Text("Spoken (\(history.spoken.count))").tag(HistoryEntry.Kind.spoken)
                 Text("Dictated (\(history.dictated.count))").tag(HistoryEntry.Kind.dictated)
+                Text("Spoken (\(history.spoken.count))").tag(HistoryEntry.Kind.spoken)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
