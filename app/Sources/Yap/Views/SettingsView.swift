@@ -595,8 +595,9 @@ private struct HistoryTab: View {
                     Label("Clear", systemImage: "trash")
                 }
                 .controlSize(.small)
-                .disabled(entries.isEmpty && query.isEmpty
-                          && (kind == .spoken ? history.spoken : history.dictated).isEmpty)
+                // Clear wipes the whole list (not the filtered view), so gate only
+                // on the underlying list — a search query must not re-enable it.
+                .disabled((kind == .spoken ? history.spoken : history.dictated).isEmpty)
             }
 
             if entries.isEmpty {
@@ -615,7 +616,7 @@ private struct HistoryTab: View {
             }
 
             Text(kind == .spoken
-                 ? "Everything Yap has read aloud, newest first. Kept locally so a passage is never lost — copy any entry to re-read it."
+                 ? "Everything Yap has read aloud, newest first. Kept locally so a passage is never lost; copy any entry to re-read it."
                  : "Everything you've dictated, newest first. If a paste ever fails, recover the text here.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -666,7 +667,12 @@ private struct HistoryRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // Tap-to-expand lives on the header only. Putting it on the whole row
+            // would fight `.textSelection` on the body — a click-drag to select
+            // text would register as a tap and collapse the row.
             HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption2).foregroundStyle(.secondary)
                 Text(entry.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption).foregroundStyle(.secondary)
                 if !entry.detail.isEmpty {
@@ -683,6 +689,9 @@ private struct HistoryRow: View {
                 }
                 .buttonStyle(.borderless).help("Delete")
             }
+            .contentShape(Rectangle())
+            .onTapGesture { toggle() }
+
             Text(entry.text)
                 .font(.callout)
                 .lineLimit(isExpanded ? nil : 2)
@@ -690,8 +699,6 @@ private struct HistoryRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 2)
-        .contentShape(Rectangle())
-        .onTapGesture { toggle() }
     }
 
     private func copy() {

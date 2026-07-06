@@ -42,11 +42,18 @@ final class HistoryStore: ObservableObject {
     @Published private(set) var dictated: [HistoryEntry] = []
 
     private let fileURL: URL
-    // Writes hop off the main thread; encoding stays on main (cheap for ≤1000
-    // short entries) so only the Sendable `Data` crosses the boundary.
+    // Both encode and write hop off the main thread (arrays are COW + Sendable, so
+    // the snapshot copy is cheap and safe to hand across).
     private let io = DispatchQueue(label: "com.yap.history.io", qos: .utility)
+    // The initial decode runs off-main, so there's a window before the on-disk
+    // history is in memory. `loaded` gates save() during that window: a save is
+    // deferred (not run against a half-populated list) so we never overwrite the
+    // file with less than it holds. Any entry recorded in the window is prepended
+    // ahead of the restored history when the load lands, so nothing is lost.
+    private var loaded = false
+    private var pendingSave = false
 
-    private struct Snapshot: Codable { var spoken: [HistoryEntry]; var dictated: [HistoryEntry] }
+    private struct Snapshot: Codable, Sendable { var spoken: [HistoryEntry]; var dictated: [HistoryEntry] }
 
     /// `fileURL` is injectable so `--selftest` can exercise a temp file.
     init(fileURL: URL? = nil) {
@@ -93,17 +100,34 @@ final class HistoryStore: ObservableObject {
         entries.count > cap ? Array(entries.prefix(cap)) : entries
     }
 
+    /// Decode off-main so a large file never blocks the main actor at launch,
+    /// then merge on the main actor. Entries recorded during the load window sit
+    /// ahead of the restored history (both newest-first), so a fast first read is
+    /// preserved rather than clobbered.
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
-        spoken = Self.capped(snap.spoken)
-        dictated = Self.capped(snap.dictated)
+        let url = fileURL
+        Task {
+            let snap = await Task.detached(priority: .userInitiated) { () -> Snapshot? in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return try? JSONDecoder().decode(Snapshot.self, from: data)
+            }.value
+            if let snap {
+                spoken = Self.capped(spoken + snap.spoken)
+                dictated = Self.capped(dictated + snap.dictated)
+            }
+            loaded = true
+            if pendingSave { pendingSave = false; save() }
+        }
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(Snapshot(spoken: spoken, dictated: dictated)) else { return }
-        let url = fileURL
+        // Don't persist until the initial load has merged in the on-disk history,
+        // or an early save would truncate the file to just the in-window entries.
+        guard loaded else { pendingSave = true; return }
+        let spokenCopy = spoken, dictatedCopy = dictated, url = fileURL
         io.async {
+            guard let data = try? JSONEncoder().encode(
+                Snapshot(spoken: spokenCopy, dictated: dictatedCopy)) else { return }
             try? FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: url, options: .atomic)
