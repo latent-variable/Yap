@@ -56,6 +56,13 @@ the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
     catalog-only if the token is absent OR terms aren't accepted (403), so
     `engine.has_cloning` is the source of truth, surfaced as `/engines` →
     `pocket.cloning`. A cloned-voice request with cloning off returns **403**.
+    **The token is a ONE-TIME download key.** Once the gated weights are cached,
+    `pocket_engine.gated_weights_cached()` is true and `load()` loads them with
+    `HF_HUB_OFFLINE=1` (scoped to that call) — cloning works with **no token**
+    (`has_token=false` yet `cloning=true`). Loading *online* without a token 403s
+    on the gated repo and silently drops to catalog-only, so offline-when-cached
+    is what keeps cloning alive token-free after setup — and it lets the app skip
+    the Keychain read entirely (no launch-time password prompt).
   Lazy — no torch import until first Pocket use; per-voice conditioning cached;
   inference serialized by a lock.
 
@@ -65,8 +72,10 @@ Key facts an agent must keep straight:
   **also** installs kokoro-onnx + onnxruntime there so ONE process serves both
   engines. Pocket pulls numpy ≥2; kokoro-onnx imports fine on it (verified).
 - `BackendManager` adds `hd-packages` to the backend's `PYTHONPATH` when present
-  (FIRST, so its torch/numpy win), and injects `HF_TOKEN` from the Keychain.
-  Restart the backend after install — or after a token change — to reload.
+  (FIRST, so its torch/numpy win), and injects `HF_TOKEN` from the Keychain **only
+  when the gated weights are NOT yet cached** (`pocketCloningWeightsCached` false)
+  — i.e. only when a first-time download actually needs it. Cached ⇒ no Keychain
+  read ⇒ no password prompt. Restart the backend after install or a token change.
 - Cloning. **Never source or ship celebrity / non-consented voices.** The UI says
   clone only what you have rights to (Pocket has no built-in watermark, unlike the
   old Chatterbox). Starter voices are CMU ARCTIC (free); `/voices/hd/starters`
@@ -74,10 +83,13 @@ Key facts an agent must keep straight:
   `hdInstalled`, `installHD` — they now denote the Pocket engine.)
 - **A selected cloned voice must survive restart.** `refreshHD` demotes a cloned
   `hdVoice` to a catalog default ONLY when cloning is *genuinely* unavailable —
-  `has_token == false`, or the model loaded and cloning is still off (terms not
-  accepted). It must NOT demote during the lazy warm-up window (Pocket loads on
-  first use, so `cloning` reads false before `warmHD` loads it) — that silently
-  reset the user's clone on every launch. Caveat: a freshly re-signed build
+  the model **loaded** and `cloning` still came back off (weights absent + no
+  usable token, or terms not accepted). It keys on the loaded `cloning` verdict,
+  **NOT** `has_token`: once the gated weights are cached, cloning loads offline
+  with no token (`has_token=false` yet `cloning=true`), so a token check would
+  wrongly demote a working clone. It must NOT demote during the lazy warm-up
+  window (Pocket loads on first use, so `cloning` reads false before `warmHD`
+  loads it) — that silently reset the user's clone on every launch. Caveat: a freshly re-signed build
   re-prompts for the Keychain HF token; until "Always Allow" is granted the backend
   sees `has_token=false`, so a cold-start demote can still happen once on a new
   build. In steady state (token readable) the selection is sticky.
@@ -253,14 +265,16 @@ release/deploy. Burning a version number per throwaway build is churn; keep test
 builds on the current dev version and tell Lino verbally that it's fresh.
 
 Note on the Keychain prompt: re-signing any fresh build changes the binary hash,
-so macOS may re-prompt **once** for the HF-token Keychain item ("Yap wants to
-access dev.latentvariable.yap") on install — a single "Always Allow". This is
-the re-sign, NOT the version bump, so not bumping won't suppress it. The
-Accessibility/Mic (TCC) grants persist across rebuilds because they key off the
-stable "Yap Local Signing" *certificate*; the Keychain item's access rule
-doesn't bind to that cert (the one gap). A real fix — cert-binding the Keychain
-ACL — exists but uses deprecated Keychain APIs, so do it only as its own
-validated change if the prompt ever becomes a nuisance on actual updates.
+so macOS may re-prompt for the HF-token Keychain item ("Yap wants to access
+dev.latentvariable.yap") — the re-signed binary isn't in the item's ACL (which
+doesn't bind to the stable "Yap Local Signing" cert; TCC Accessibility/Mic grants
+DO, so those persist). **This prompt now only fires when the token is actually
+read, which is only during first-time cloning setup** (gated weights not yet
+cached — see the Pocket section). Once the weights are cached, the app never reads
+the Keychain, so a fresh build no longer nags on launch. A user who doesn't clone
+never has a token stored, so they never see it at all. The deeper cert-binding-the-
+ACL fix (deprecated Keychain APIs) is now unnecessary for the common case; only
+revisit it if the one-time download-setup prompt itself becomes a nuisance.
 
 ## Releases
 

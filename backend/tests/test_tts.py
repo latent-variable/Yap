@@ -299,6 +299,62 @@ class TestUnload:
         assert pk.unload() is False
         assert pk.has_cloning is False
 
+    def test_gated_weights_cached_detection(self, tmp_path, monkeypatch):
+        # gated_weights_cached() drives the token-free offline load + the app
+        # skipping the Keychain read. It must be true ONLY when the COMPLETED
+        # weights (a weights-sized file, in a subdir) sit in the HF cache — an
+        # incomplete download (only small files) must read False so the backend
+        # stays online and can finish it. No torch needed.
+        import pocket_engine
+        monkeypatch.setattr(pocket_engine, "_hf_hub_cache", lambda: str(tmp_path))
+        # Shrink the weights threshold so the test writes bytes, not 10 MB.
+        monkeypatch.setattr(pocket_engine, "_MIN_WEIGHT_BYTES", 100)
+
+        assert pocket_engine.gated_weights_cached() is False   # empty cache
+
+        snaps = tmp_path / "models--kyutai--pocket-tts" / "snapshots"
+        (snaps / "abc123").mkdir(parents=True)
+        assert pocket_engine.gated_weights_cached() is False   # snapshot dir empty
+
+        # Interrupted download: only small files present -> NOT cached.
+        (snaps / "abc123" / "config.json").write_text("{}")
+        assert pocket_engine.gated_weights_cached() is False
+
+        # Completed: a weights-sized file in a subdir (mirrors languages/<lang>/…).
+        weights = snaps / "abc123" / "languages" / "english" / "model.safetensors"
+        weights.parent.mkdir(parents=True)
+        weights.write_bytes(b"\0" * 200)                       # > threshold (100)
+        assert pocket_engine.gated_weights_cached() is True
+
+        # The ungated catalog repo must NOT count as cloning weights.
+        import shutil
+        shutil.rmtree(tmp_path / "models--kyutai--pocket-tts")
+        catalog = tmp_path / "models--kyutai--pocket-tts-without-voice-cloning" / "snapshots" / "z"
+        catalog.mkdir(parents=True)
+        (catalog / "big.safetensors").write_bytes(b"\0" * 200)
+        assert pocket_engine.gated_weights_cached() is False
+
+    def test_hf_hub_offline_restored_when_load_fails(self, monkeypatch):
+        # If load() sets HF_HUB_OFFLINE=1 (cached weights) but the pocket_tts import
+        # or model load then fails, the env MUST be restored — a leaked offline flag
+        # would wedge a later first-time download offline. No torch needed.
+        import os, sys, types, pocket_engine
+        monkeypatch.setattr(pocket_engine, "gated_weights_cached", lambda: True)
+        eng = pocket_engine.PocketEngine()
+        monkeypatch.setattr(eng, "available", lambda: True)
+        # A stand-in pocket_tts module with no TTSModel -> the from-import raises,
+        # simulating a broken/half-installed Pocket environment.
+        monkeypatch.setitem(sys.modules, "pocket_tts", types.ModuleType("pocket_tts"))
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+
+        assert eng.load() is False                          # import failed
+        assert "HF_HUB_OFFLINE" not in os.environ           # restored (was unset)
+
+        # And when a prior value existed, it's put back verbatim (not clobbered).
+        monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+        assert eng.load() is False
+        assert os.environ.get("HF_HUB_OFFLINE") == "0"
+
     @pytest.mark.skipif(not PocketEngine().available(),
                         reason="Pocket deps (torch) not installed")
     def test_pocket_unload_then_lazy_reload(self):

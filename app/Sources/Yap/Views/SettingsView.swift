@@ -246,8 +246,10 @@ private struct EngineTab: View {
                 Label("Voice cloning is active — add your own voices below.",
                       systemImage: "checkmark.seal.fill")
                     .font(.caption).foregroundStyle(.green)
+                Text("The gated weights are downloaded, so the token isn't needed anymore — you can remove it below and cloning keeps working, fully offline. Removing it also stops any Keychain password prompt on launch.")
+                    .font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("Cloning your own voice needs the gated Pocket model. One-time setup, fully local afterwards:")
+                Text("Cloning your own voice needs the gated Pocket weights. The token below is used ONCE, only to download them — afterwards cloning runs fully offline and the token can be removed:")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("1. Accept the terms (opens huggingface.co/kyutai/pocket-tts).\n2. Create a read-only token at huggingface.co/settings/tokens.\n3. Paste it below.")
                     .font(.caption).foregroundStyle(.secondary)
