@@ -399,7 +399,7 @@ private struct CaptureTab: View {
 private struct CleanupTab: View {
     @EnvironmentObject var prefs: Prefs
     @EnvironmentObject var state: AppState
-    @State private var sample = "## Heading\n\nSee **the docs** [here](https://x.com) for `code`.\n- bullet one\n- bullet two\n\n$ echo hi  [1]"
+    @State private var sample = "## Heading\n\nWe show **the result** [1, 2] holds [here](https://x.com), see also [9, 10, 11].\n- bullet one\n- bullet two\n\n$ echo hi  [1]"
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Preview").font(.headline)

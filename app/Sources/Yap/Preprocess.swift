@@ -51,10 +51,21 @@ enum Preprocess {
             r.append((#"^\s*(PS [A-Z]:\\[^>]*>|[A-Z]:\\>|[\$%>])\s+"#, "", false))
         }
         if opt.dropCitations {
-            r += [
-                (#"\[\d+\]"#, "", false),                        // [1]
-                (#"\[\^?\w+\]"#, "", false),                     // [^1] footnotes
-            ]
+            // Bracketed numeric citations — the noise academic papers are full of:
+            // [1] [^1] [1, 2] [9, 10, 11] [1-3] [5; 6]. Handles comma / semicolon
+            // lists and ranges, and ^-footnote refs.
+            //
+            //  - Requires start-of-line or whitespace before "[", so identifier
+            //    subscripts (array[1], x[0]) are left untouched — this rule runs
+            //    in the default profile now, and mangling code prose would be bad.
+            //  - Consumes a whole *run* of adjacent citations ("[1], [2], [3]") in
+            //    one match, so removal never strands stacked commas ("See,, and").
+            //  - Eats the *entire* leading whitespace run (\s+), so even a
+            //    double-space from PDF-to-text extraction ("works  [14].") reads
+            //    "works." with no gap before the period.
+            //  - Non-numeric brackets ([Note], [TODO]) are left intact.
+            let atom = #"\[\^?\s*\d+(?:\s*[-,;]\s*\d+)*\s*\]"#
+            r.append((#"(?:^|\s+)"# + atom + #"(?:\s*,?\s*"# + atom + #")*"#, "", false))
         }
         return r
     }
@@ -105,7 +116,11 @@ enum Preprocess {
         var o = CleanOptions()
         switch profile {
         case .general:
-            break
+            // Drop bracketed numeric citations even in the default profile —
+            // "[1, 2]" mid-sentence is pure noise read aloud (papers, wikis),
+            // and stripping it can't hurt ordinary prose (plain [numbers] carry
+            // no spoken meaning). Non-numeric brackets are left intact.
+            o.dropCitations = true
         case .markdown:
             o.stripMarkdown = true; o.bulletsToPauses = true
         case .code:
