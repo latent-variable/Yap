@@ -53,10 +53,18 @@ enum Preprocess {
         if opt.dropCitations {
             // Bracketed numeric citations — the noise academic papers are full of:
             // [1] [^1] [1, 2] [9, 10, 11] [1-3] [5; 6]. Handles comma / semicolon
-            // lists and ranges, and ^-footnote refs. Eats one leading space so
-            // "shown [1, 2]." reads as "shown." with no stranded gap before the
-            // period. Leaves non-numeric brackets ([Note], [TODO]) untouched.
-            r.append((#"\s?\[\^?\s*\d+(?:\s*[-,;]\s*\d+)*\s*\]"#, "", false))
+            // lists and ranges, and ^-footnote refs.
+            //
+            //  - Requires start-of-line or whitespace before "[", so identifier
+            //    subscripts (array[1], x[0]) are left untouched — this rule runs
+            //    in the default profile now, and mangling code prose would be bad.
+            //  - Consumes a whole *run* of adjacent citations ("[1], [2], [3]") in
+            //    one match, so removal never strands stacked commas ("See,, and").
+            //  - Eats the one leading space, so "shown [1, 2]." reads "shown." with
+            //    no gap before the period.
+            //  - Non-numeric brackets ([Note], [TODO]) are left intact.
+            let atom = #"\[\^?\s*\d+(?:\s*[-,;]\s*\d+)*\s*\]"#
+            r.append((#"(?:^|\s)"# + atom + #"(?:\s*,?\s*"# + atom + #")*"#, "", false))
         }
         return r
     }

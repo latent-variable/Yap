@@ -39,6 +39,15 @@ enum Selftest {
         check("general keeps non-numeric brackets",
               Preprocess.clean("Add a [TODO] note here.", options: Preprocess.options(for: .general), custom: []),
               contains: ["[TODO]"])
+        // Identifier subscripts must survive — the rule only fires after whitespace
+        // or line start, never glued to a word like array[1].
+        check("general keeps identifier subscripts",
+              Preprocess.clean("total = array[1] + x[0] here", options: Preprocess.options(for: .general), custom: []),
+              contains: ["array[1]", "x[0]"])
+        // A run of separate citations collapses without stranding stacked commas.
+        check("general collapses consecutive citations cleanly",
+              Preprocess.clean("See [1], [2], and [3]. Also [4], [5] here.", options: Preprocess.options(for: .general), custom: []),
+              contains: ["See, and.", "Also here."], absent: [",,", ", ,", "[1]", "[5]"])
 
         print("Preprocess — Code profile (prompts + identifiers)")
         let code = "$ runTask\nthe user_name field"
