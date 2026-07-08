@@ -60,11 +60,12 @@ enum Preprocess {
             //    in the default profile now, and mangling code prose would be bad.
             //  - Consumes a whole *run* of adjacent citations ("[1], [2], [3]") in
             //    one match, so removal never strands stacked commas ("See,, and").
-            //  - Eats the one leading space, so "shown [1, 2]." reads "shown." with
-            //    no gap before the period.
+            //  - Eats the *entire* leading whitespace run (\s+), so even a
+            //    double-space from PDF-to-text extraction ("works  [14].") reads
+            //    "works." with no gap before the period.
             //  - Non-numeric brackets ([Note], [TODO]) are left intact.
             let atom = #"\[\^?\s*\d+(?:\s*[-,;]\s*\d+)*\s*\]"#
-            r.append((#"(?:^|\s)"# + atom + #"(?:\s*,?\s*"# + atom + #")*"#, "", false))
+            r.append((#"(?:^|\s+)"# + atom + #"(?:\s*,?\s*"# + atom + #")*"#, "", false))
         }
         return r
     }

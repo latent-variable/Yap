@@ -48,6 +48,11 @@ enum Selftest {
         check("general collapses consecutive citations cleanly",
               Preprocess.clean("See [1], [2], and [3]. Also [4], [5] here.", options: Preprocess.options(for: .general), custom: []),
               contains: ["See, and.", "Also here."], absent: [",,", ", ,", "[1]", "[5]"])
+        // Double space before a citation (a PDF-to-text artifact) must not leave a
+        // stranded gap before the period — the anchor eats the whole space run.
+        check("general handles double-space before citation",
+              Preprocess.clean("works  [14]. next  [1, 2]!", options: Preprocess.options(for: .general), custom: []),
+              contains: ["works. next!"], absent: ["works .", "works  ", "next !"])
 
         print("Preprocess — Code profile (prompts + identifiers)")
         let code = "$ runTask\nthe user_name field"
