@@ -23,10 +23,22 @@ enum Selftest {
         check("bullets removed", mdOut, contains: ["one", "two"], absent: ["- one"])
 
         print("Preprocess — LLM profile (citations + code)")
-        let llm = "Answer [1] with detail [2].\n\n```\nrm -rf /\n```\n\nDone."
+        let llm = "Answer [1] with detail [2, 3] and more [9, 10, 11].\n\n```\nrm -rf /\n```\n\nDone."
         let llmOut = Preprocess.clean(llm, options: Preprocess.options(for: .llm), custom: [])
-        check("drop citations", llmOut, contains: ["Answer", "Done"], absent: ["[1]", "[2]"])
+        check("drop list citations", llmOut, contains: ["Answer", "Done"],
+              absent: ["[1]", "[2, 3]", "[9, 10, 11]", "[", "]"])
         check("skip code block", llmOut, contains: ["Answer"], absent: ["rm -rf"])
+
+        print("Preprocess — citations dropped in general profile too")
+        let paper = "We show [1, 2] that the method [9, 10, 11] works [14]. Range [1-3] holds; see [5; 6]."
+        let paperOut = Preprocess.clean(paper, options: Preprocess.options(for: .general), custom: [])
+        // Also asserts no stranded gap before punctuation (leading space eaten).
+        check("general drops numeric citations", paperOut,
+              contains: ["We show that the method works.", "Range holds; see."],
+              absent: ["[1, 2]", "[9, 10, 11]", "[14]", "[1-3]", "[5; 6]", "works .", "see ."])
+        check("general keeps non-numeric brackets",
+              Preprocess.clean("Add a [TODO] note here.", options: Preprocess.options(for: .general), custom: []),
+              contains: ["[TODO]"])
 
         print("Preprocess — Code profile (prompts + identifiers)")
         let code = "$ runTask\nthe user_name field"

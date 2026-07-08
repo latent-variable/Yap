@@ -51,10 +51,12 @@ enum Preprocess {
             r.append((#"^\s*(PS [A-Z]:\\[^>]*>|[A-Z]:\\>|[\$%>])\s+"#, "", false))
         }
         if opt.dropCitations {
-            r += [
-                (#"\[\d+\]"#, "", false),                        // [1]
-                (#"\[\^?\w+\]"#, "", false),                     // [^1] footnotes
-            ]
+            // Bracketed numeric citations — the noise academic papers are full of:
+            // [1] [^1] [1, 2] [9, 10, 11] [1-3] [5; 6]. Handles comma / semicolon
+            // lists and ranges, and ^-footnote refs. Eats one leading space so
+            // "shown [1, 2]." reads as "shown." with no stranded gap before the
+            // period. Leaves non-numeric brackets ([Note], [TODO]) untouched.
+            r.append((#"\s?\[\^?\s*\d+(?:\s*[-,;]\s*\d+)*\s*\]"#, "", false))
         }
         return r
     }
@@ -105,7 +107,11 @@ enum Preprocess {
         var o = CleanOptions()
         switch profile {
         case .general:
-            break
+            // Drop bracketed numeric citations even in the default profile —
+            // "[1, 2]" mid-sentence is pure noise read aloud (papers, wikis),
+            // and stripping it can't hurt ordinary prose (plain [numbers] carry
+            // no spoken meaning). Non-numeric brackets are left intact.
+            o.dropCitations = true
         case .markdown:
             o.stripMarkdown = true; o.bulletsToPauses = true
         case .code:
