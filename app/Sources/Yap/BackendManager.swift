@@ -288,18 +288,17 @@ final class BackendManager: NSObject, ObservableObject {
     /// pocket_engine.gated_weights_cached on the backend side.
     nonisolated static var pocketCloningWeightsCached: Bool {
         let env = ProcessInfo.processInfo.environment
-        let hubCache: String
-        if let c = env["HF_HUB_CACHE"] {
-            hubCache = c
-        } else if let home = env["HF_HOME"] {
-            hubCache = (home as NSString).appendingPathComponent("hub")
+        // Treat an empty env var as unset (an empty path would resolve to CWD).
+        let hubCache: URL
+        if let c = env["HF_HUB_CACHE"], !c.isEmpty {
+            hubCache = URL(fileURLWithPath: c)
+        } else if let home = env["HF_HOME"], !home.isEmpty {
+            hubCache = URL(fileURLWithPath: home).appendingPathComponent("hub")
         } else {
-            hubCache = (NSHomeDirectory() as NSString)
+            hubCache = URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent(".cache/huggingface/hub")
         }
-        let snaps = (hubCache as NSString)
-            .appendingPathComponent("models--kyutai--pocket-tts/snapshots")
-        let fm = FileManager.default
+        let snaps = hubCache.appendingPathComponent("models--kyutai--pocket-tts/snapshots")
         // Require an actual weights-sized file (>10 MB) somewhere under a snapshot,
         // NOT just a non-empty dir. An interrupted download can leave only small
         // files (config.json, the subdir tree with the big model.safetensors still
@@ -309,10 +308,11 @@ final class BackendManager: NSObject, ObservableObject {
         // so recurse and resolve the link before sizing. Must stay in sync with
         // pocket_engine.gated_weights_cached / _MIN_WEIGHT_BYTES.
         let minBytes = 10 * 1024 * 1024
-        guard let en = fm.enumerator(atPath: snaps) else { return false }
-        for case let rel as String in en {
-            let full = (snaps as NSString).appendingPathComponent(rel)
-            let resolved = URL(fileURLWithPath: full).resolvingSymlinksInPath()
+        guard let en = FileManager.default.enumerator(
+            at: snaps, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]) else { return false }
+        for case let fileURL as URL in en {
+            let resolved = fileURL.resolvingSymlinksInPath()
             guard let vals = try? resolved.resourceValues(
                     forKeys: [.isRegularFileKey, .fileSizeKey]),
                   vals.isRegularFile == true, let size = vals.fileSize else { continue }
