@@ -300,12 +300,25 @@ final class BackendManager: NSObject, ObservableObject {
         let snaps = (hubCache as NSString)
             .appendingPathComponent("models--kyutai--pocket-tts/snapshots")
         let fm = FileManager.default
-        guard let snapshots = try? fm.contentsOfDirectory(atPath: snaps) else { return false }
-        // A completed download leaves at least one non-empty snapshot dir.
-        return snapshots.contains { snap in
-            let dir = (snaps as NSString).appendingPathComponent(snap)
-            return (try? fm.contentsOfDirectory(atPath: dir))?.isEmpty == false
+        // Require an actual weights-sized file (>10 MB) somewhere under a snapshot,
+        // NOT just a non-empty dir. An interrupted download can leave only small
+        // files (config.json, the subdir tree with the big model.safetensors still
+        // missing); treating that as cached would force an offline load that fails
+        // and blocks the re-download, bricking cloning. Weights live in a subdir
+        // (languages/<lang>/model.safetensors ~219 MB) and are symlinks into blobs,
+        // so recurse and resolve the link before sizing. Must stay in sync with
+        // pocket_engine.gated_weights_cached / _MIN_WEIGHT_BYTES.
+        let minBytes = 10 * 1024 * 1024
+        guard let en = fm.enumerator(atPath: snaps) else { return false }
+        for case let rel as String in en {
+            let full = (snaps as NSString).appendingPathComponent(rel)
+            let resolved = URL(fileURLWithPath: full).resolvingSymlinksInPath()
+            guard let vals = try? resolved.resourceValues(
+                    forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  vals.isRegularFile == true, let size = vals.fileSize else { continue }
+            if size > minBytes { return true }
         }
+        return false
     }
 
     /// running `server.py` AND have been reparented to launchd (ppid == 1), the

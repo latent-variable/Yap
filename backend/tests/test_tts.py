@@ -301,14 +301,14 @@ class TestUnload:
 
     def test_gated_weights_cached_detection(self, tmp_path, monkeypatch):
         # gated_weights_cached() drives the token-free offline load + the app
-        # skipping the Keychain read. It must be true ONLY when a non-empty
-        # snapshot of kyutai/pocket-tts sits in the HF cache. No torch needed.
+        # skipping the Keychain read. It must be true ONLY when the COMPLETED
+        # weights (a weights-sized file, in a subdir) sit in the HF cache — an
+        # incomplete download (only small files) must read False so the backend
+        # stays online and can finish it. No torch needed.
         import pocket_engine
-        monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
-        monkeypatch.delenv("HF_HOME", raising=False)
-        # huggingface_hub.constants.HF_HUB_CACHE is read at import; force our helper
-        # to fall back to the env by hiding the constant.
         monkeypatch.setattr(pocket_engine, "_hf_hub_cache", lambda: str(tmp_path))
+        # Shrink the weights threshold so the test writes bytes, not 10 MB.
+        monkeypatch.setattr(pocket_engine, "_MIN_WEIGHT_BYTES", 100)
 
         assert pocket_engine.gated_weights_cached() is False   # empty cache
 
@@ -316,16 +316,22 @@ class TestUnload:
         (snaps / "abc123").mkdir(parents=True)
         assert pocket_engine.gated_weights_cached() is False   # snapshot dir empty
 
+        # Interrupted download: only small files present -> NOT cached.
         (snaps / "abc123" / "config.json").write_text("{}")
-        assert pocket_engine.gated_weights_cached() is True    # has a real file
+        assert pocket_engine.gated_weights_cached() is False
+
+        # Completed: a weights-sized file in a subdir (mirrors languages/<lang>/…).
+        weights = snaps / "abc123" / "languages" / "english" / "model.safetensors"
+        weights.parent.mkdir(parents=True)
+        weights.write_bytes(b"\0" * 200)                       # > threshold (100)
+        assert pocket_engine.gated_weights_cached() is True
 
         # The ungated catalog repo must NOT count as cloning weights.
-        other = tmp_path / "models--kyutai--pocket-tts-without-voice-cloning" / "snapshots" / "z"
-        other.mkdir(parents=True)
-        (other / "x").write_text("y")
-        # still true because the gated one is present; remove gated to confirm.
         import shutil
         shutil.rmtree(tmp_path / "models--kyutai--pocket-tts")
+        catalog = tmp_path / "models--kyutai--pocket-tts-without-voice-cloning" / "snapshots" / "z"
+        catalog.mkdir(parents=True)
+        (catalog / "big.safetensors").write_bytes(b"\0" * 200)
         assert pocket_engine.gated_weights_cached() is False
 
     @pytest.mark.skipif(not PocketEngine().available(),
