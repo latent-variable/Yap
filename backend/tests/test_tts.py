@@ -299,6 +299,35 @@ class TestUnload:
         assert pk.unload() is False
         assert pk.has_cloning is False
 
+    def test_gated_weights_cached_detection(self, tmp_path, monkeypatch):
+        # gated_weights_cached() drives the token-free offline load + the app
+        # skipping the Keychain read. It must be true ONLY when a non-empty
+        # snapshot of kyutai/pocket-tts sits in the HF cache. No torch needed.
+        import pocket_engine
+        monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+        monkeypatch.delenv("HF_HOME", raising=False)
+        # huggingface_hub.constants.HF_HUB_CACHE is read at import; force our helper
+        # to fall back to the env by hiding the constant.
+        monkeypatch.setattr(pocket_engine, "_hf_hub_cache", lambda: str(tmp_path))
+
+        assert pocket_engine.gated_weights_cached() is False   # empty cache
+
+        snaps = tmp_path / "models--kyutai--pocket-tts" / "snapshots"
+        (snaps / "abc123").mkdir(parents=True)
+        assert pocket_engine.gated_weights_cached() is False   # snapshot dir empty
+
+        (snaps / "abc123" / "config.json").write_text("{}")
+        assert pocket_engine.gated_weights_cached() is True    # has a real file
+
+        # The ungated catalog repo must NOT count as cloning weights.
+        other = tmp_path / "models--kyutai--pocket-tts-without-voice-cloning" / "snapshots" / "z"
+        other.mkdir(parents=True)
+        (other / "x").write_text("y")
+        # still true because the gated one is present; remove gated to confirm.
+        import shutil
+        shutil.rmtree(tmp_path / "models--kyutai--pocket-tts")
+        assert pocket_engine.gated_weights_cached() is False
+
     @pytest.mark.skipif(not PocketEngine().available(),
                         reason="Pocket deps (torch) not installed")
     def test_pocket_unload_then_lazy_reload(self):

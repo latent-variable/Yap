@@ -543,16 +543,18 @@ final class AppState: ObservableObject {
             cloningReady = e.pocket?.cloning ?? false
             hdVoices = await backend.client.voices(engine: "pocket")
             // Demote a cloned selection to a safe catalog voice ONLY when cloning
-            // is *genuinely* unavailable — no HF token, or the model loaded but
-            // cloning stayed off (terms not accepted). If the model just isn't
-            // warm yet while a token IS present, cloning is merely *pending*: the
-            // Pocket engine is lazy, so at cold start `cloning` reads false before
-            // warmHD() loads it. Demoting on pending is what silently dropped the
-            // user's cloned voice on every restart. Leave it; warmHD() below loads
-            // the model and a follow-up refreshHD() flips cloningReady true.
-            let hasToken = e.pocket?.has_token ?? false
+            // is *genuinely* unavailable — i.e. the model has loaded and cloning
+            // still came back off (weights absent + no usable token, or terms not
+            // accepted). Key on the *loaded* cloning verdict, NOT the token: once
+            // the gated weights are cached the backend loads cloning offline with
+            // no token (has_token == false yet cloning == true), so a token check
+            // would wrongly demote a perfectly working cloned voice. If the model
+            // just isn't warm yet, cloning is merely *pending* (the engine is lazy,
+            // so `cloning` reads false before warmHD() loads it) — leave it; warmHD()
+            // below loads the model and a follow-up refreshHD() flips it true.
+            // Demoting on pending is what silently dropped the clone on every restart.
             let modelLoaded = e.pocket?.loaded ?? false
-            let cloningUnavailable = !hasToken || (modelLoaded && !cloningReady)
+            let cloningUnavailable = modelLoaded && !cloningReady
             let selectedIsCloned = hdVoices.first(where: { $0.id == prefs.hdVoice })?.needs_cloning == true
             if prefs.hdVoice.isEmpty || (selectedIsCloned && cloningUnavailable),
                let v = defaultPocketVoiceId {

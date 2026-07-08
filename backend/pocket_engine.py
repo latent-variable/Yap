@@ -71,6 +71,37 @@ def _hf_token() -> str:
             or "").strip()
 
 
+def _hf_hub_cache() -> str:
+    """Where huggingface_hub keeps downloaded repos, honoring its env overrides."""
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+        return HF_HUB_CACHE
+    except Exception:
+        if os.environ.get("HF_HUB_CACHE"):
+            return os.environ["HF_HUB_CACHE"]
+        if os.environ.get("HF_HOME"):
+            return os.path.join(os.environ["HF_HOME"], "hub")
+        return os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+
+
+def gated_weights_cached() -> bool:
+    """True once the gated cloning weights (kyutai/pocket-tts) are in the HF cache.
+
+    When they are, they load straight from disk with no network and no token —
+    the token is ONLY ever needed to DOWNLOAD them the first time. Loading online
+    without a token 403s on the gated repo and silently drops to catalog-only, so
+    offline-when-cached is what keeps cloning working token-free after setup."""
+    snaps = os.path.join(_hf_hub_cache(), "models--kyutai--pocket-tts", "snapshots")
+    try:
+        for s in os.listdir(snaps):
+            with os.scandir(os.path.join(snaps, s)) as it:
+                if any(True for _ in it):
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 class PocketEngine:
     name = "pocket"
     label = "Pocket TTS"
@@ -107,21 +138,36 @@ class PocketEngine:
                 return False
             try:
                 _ensure_path()
-                # huggingface_hub reads HF_TOKEN from the env; mirror our accepted
-                # aliases into it so a token set as HUGGINGFACE_HUB_TOKEN still
-                # unlocks the gated cloning weights.
                 tok = _hf_token()
-                if tok:
-                    # Direct assignment, not setdefault: an inherited but EMPTY
-                    # HF_TOKEN ("") would otherwise survive and block auth even
-                    # though we resolved a real token from another alias.
+                cached = gated_weights_cached()
+                offline_prev = os.environ.get("HF_HUB_OFFLINE")
+                if cached:
+                    # Weights already downloaded: load them straight from disk with
+                    # no network and no token. The token is only needed to DOWNLOAD
+                    # the gated weights once; after that this keeps cloning working
+                    # token-free (and stops the app from ever reading the Keychain).
+                    os.environ["HF_HUB_OFFLINE"] = "1"
+                elif tok:
+                    # First-time download path. Direct assignment, not setdefault:
+                    # an inherited but EMPTY HF_TOKEN ("") would otherwise survive
+                    # and block auth even though we resolved a real token elsewhere.
                     os.environ["HF_TOKEN"] = tok
                 from pocket_tts import TTSModel
-                log.info("loading Pocket TTS (token=%s)", bool(tok))
-                # With a valid token AND accepted terms this pulls the cloning
-                # weights; otherwise pocket_tts silently falls back to the ungated
-                # catalog-only weights (has_voice_cloning=False).
-                m = TTSModel.load_model()
+                log.info("loading Pocket TTS (token=%s, cached=%s)", bool(tok), cached)
+                # Cached -> offline load (cloning works with no token). Otherwise a
+                # valid token + accepted terms pulls the gated cloning weights; with
+                # neither, pocket_tts drops to the ungated catalog-only weights
+                # (has_voice_cloning=False).
+                try:
+                    m = TTSModel.load_model()
+                finally:
+                    # Scope HF_HUB_OFFLINE to just this load so it can't wedge other
+                    # hub calls (e.g. a later first-time download after a delete).
+                    if cached:
+                        if offline_prev is None:
+                            os.environ.pop("HF_HUB_OFFLINE", None)
+                        else:
+                            os.environ["HF_HUB_OFFLINE"] = offline_prev
                 self.model = m
                 self.has_cloning = bool(getattr(m, "has_voice_cloning", False))
                 self.error = None

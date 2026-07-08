@@ -178,10 +178,15 @@ final class BackendManager: NSObject, ObservableObject {
         // Hand the spawned backend the same token file we read, so it requires
         // our shared secret on every request (blocks website CSRF + impostors).
         env["YAP_AUTH_TOKEN_FILE"] = BackendAuth.tokenFileURL.path
-        // The user's Hugging Face token (Keychain) unlocks Pocket voice cloning by
-        // letting the backend download the gated cloning weights. Catalog voices
-        // need none of this, so it's set only when present.
-        if let hf = HFToken.value { env["HF_TOKEN"] = hf }
+        // The Hugging Face token unlocks Pocket voice cloning, but ONLY to DOWNLOAD
+        // the gated weights the first time — once they're cached the backend loads
+        // them offline with no token (see pocket_engine.gated_weights_cached). So
+        // read the Keychain (which prompts for the password on a freshly-signed
+        // build) *only* when a download is actually needed. This is what stops the
+        // launch-time Keychain nag for anyone who isn't mid-setup.
+        if !Self.pocketCloningWeightsCached, let hf = HFToken.value {
+            env["HF_TOKEN"] = hf
+        }
         // If the Pocket (HD) engine is installed, run in the combined env (torch +
         // kokoro) so one process serves both engines. hd-packages must be FIRST on
         // PYTHONPATH so its numpy/torch import before the bundled ones.
@@ -275,6 +280,34 @@ final class BackendManager: NSObject, ObservableObject {
     // MARK: Orphan detection (lsof + ps, off the main actor)
 
     /// PID of an orphaned Yap backend listening on `port`: the process must be
+    /// True once the gated Pocket cloning weights (kyutai/pocket-tts) are in the
+    /// Hugging Face cache. When they are, the backend loads cloning offline with no
+    /// token, so we can skip the Keychain read (and its password prompt) entirely.
+    /// Mirrors huggingface_hub's cache resolution: HF_HUB_CACHE, then HF_HOME/hub,
+    /// then ~/.cache/huggingface/hub. Must stay in sync with
+    /// pocket_engine.gated_weights_cached on the backend side.
+    nonisolated static var pocketCloningWeightsCached: Bool {
+        let env = ProcessInfo.processInfo.environment
+        let hubCache: String
+        if let c = env["HF_HUB_CACHE"] {
+            hubCache = c
+        } else if let home = env["HF_HOME"] {
+            hubCache = (home as NSString).appendingPathComponent("hub")
+        } else {
+            hubCache = (NSHomeDirectory() as NSString)
+                .appendingPathComponent(".cache/huggingface/hub")
+        }
+        let snaps = (hubCache as NSString)
+            .appendingPathComponent("models--kyutai--pocket-tts/snapshots")
+        let fm = FileManager.default
+        guard let snapshots = try? fm.contentsOfDirectory(atPath: snaps) else { return false }
+        // A completed download leaves at least one non-empty snapshot dir.
+        return snapshots.contains { snap in
+            let dir = (snaps as NSString).appendingPathComponent(snap)
+            return (try? fm.contentsOfDirectory(atPath: dir))?.isEmpty == false
+        }
+    }
+
     /// running `server.py` AND have been reparented to launchd (ppid == 1), the
     /// signature of a backend whose spawning Yap quit or crashed.
     private nonisolated static func orphanBackendPID(port: Int) async -> pid_t? {
