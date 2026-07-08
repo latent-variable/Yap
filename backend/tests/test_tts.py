@@ -334,6 +334,27 @@ class TestUnload:
         (catalog / "big.safetensors").write_bytes(b"\0" * 200)
         assert pocket_engine.gated_weights_cached() is False
 
+    def test_hf_hub_offline_restored_when_load_fails(self, monkeypatch):
+        # If load() sets HF_HUB_OFFLINE=1 (cached weights) but the pocket_tts import
+        # or model load then fails, the env MUST be restored — a leaked offline flag
+        # would wedge a later first-time download offline. No torch needed.
+        import os, sys, types, pocket_engine
+        monkeypatch.setattr(pocket_engine, "gated_weights_cached", lambda: True)
+        eng = pocket_engine.PocketEngine()
+        monkeypatch.setattr(eng, "available", lambda: True)
+        # A stand-in pocket_tts module with no TTSModel -> the from-import raises,
+        # simulating a broken/half-installed Pocket environment.
+        monkeypatch.setitem(sys.modules, "pocket_tts", types.ModuleType("pocket_tts"))
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+
+        assert eng.load() is False                          # import failed
+        assert "HF_HUB_OFFLINE" not in os.environ           # restored (was unset)
+
+        # And when a prior value existed, it's put back verbatim (not clobbered).
+        monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+        assert eng.load() is False
+        assert os.environ.get("HF_HUB_OFFLINE") == "0"
+
     @pytest.mark.skipif(not PocketEngine().available(),
                         reason="Pocket deps (torch) not installed")
     def test_pocket_unload_then_lazy_reload(self):

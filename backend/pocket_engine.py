@@ -160,28 +160,31 @@ class PocketEngine:
                 tok = _hf_token()
                 cached = gated_weights_cached()
                 offline_prev = os.environ.get("HF_HUB_OFFLINE")
-                if cached:
-                    # Weights already downloaded: load them straight from disk with
-                    # no network and no token. The token is only needed to DOWNLOAD
-                    # the gated weights once; after that this keeps cloning working
-                    # token-free (and stops the app from ever reading the Keychain).
-                    os.environ["HF_HUB_OFFLINE"] = "1"
-                elif tok:
-                    # First-time download path. Direct assignment, not setdefault:
-                    # an inherited but EMPTY HF_TOKEN ("") would otherwise survive
-                    # and block auth even though we resolved a real token elsewhere.
-                    os.environ["HF_TOKEN"] = tok
-                from pocket_tts import TTSModel
-                log.info("loading Pocket TTS (token=%s, cached=%s)", bool(tok), cached)
-                # Cached -> offline load (cloning works with no token). Otherwise a
-                # valid token + accepted terms pulls the gated cloning weights; with
-                # neither, pocket_tts drops to the ungated catalog-only weights
-                # (has_voice_cloning=False).
+                # The offline env mutation and BOTH the import and the load must sit
+                # inside one try/finally: `from pocket_tts import …` can itself fail on
+                # a broken Pocket install, and if it does with HF_HUB_OFFLINE already
+                # set, an un-restored value would wedge later hub calls (e.g. a
+                # first-time download after a delete) offline. Restore on every path.
                 try:
+                    if cached:
+                        # Weights already downloaded: load them straight from disk with
+                        # no network and no token. The token is only needed to DOWNLOAD
+                        # the gated weights once; after that this keeps cloning working
+                        # token-free (and stops the app from ever reading the Keychain).
+                        os.environ["HF_HUB_OFFLINE"] = "1"
+                    elif tok:
+                        # First-time download path. Direct assignment, not setdefault:
+                        # an inherited but EMPTY HF_TOKEN ("") would otherwise survive
+                        # and block auth even though we resolved a real token elsewhere.
+                        os.environ["HF_TOKEN"] = tok
+                    from pocket_tts import TTSModel
+                    log.info("loading Pocket TTS (token=%s, cached=%s)", bool(tok), cached)
+                    # Cached -> offline load (cloning works with no token). Otherwise a
+                    # valid token + accepted terms pulls the gated cloning weights; with
+                    # neither, pocket_tts drops to the ungated catalog-only weights
+                    # (has_voice_cloning=False).
                     m = TTSModel.load_model()
                 finally:
-                    # Scope HF_HUB_OFFLINE to just this load so it can't wedge other
-                    # hub calls (e.g. a later first-time download after a delete).
                     if cached:
                         if offline_prev is None:
                             os.environ.pop("HF_HUB_OFFLINE", None)
