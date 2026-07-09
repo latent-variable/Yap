@@ -21,3 +21,6 @@ backend/models/
 *.log
 .agents/
 .claude/
+
+# Regenerable demo voiceover (scripts/make_voiceover.sh)
+docs/demo-voiceover.wav

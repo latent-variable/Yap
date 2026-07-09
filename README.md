@@ -5,9 +5,9 @@ https://github.com/user-attachments/assets/e4678e5c-a237-4b9b-ba4e-d12af09b62b2
 
 # Yap
 
-**talk to AI. faster. it talks back. both of you yap.**
+**Talk to your Mac. It talks back. You both yap.**
 
-Stop typing. Start yapping. Two-way voice for your Mac and the AI agents you drive — fully local, no cloud, no account, no tracking.
+Your keyboard is slow and your eyes are slower. Give your Mac ears and a voice instead: hold a key and talk, your words type themselves; highlight anything and hear it out loud in a shockingly human voice. Fully local. No cloud, no account, nobody listening but you.
 
 [Install](#install) · [The loop](#the-loop) · [What it does](#what-it-does)
 
@@ -15,7 +15,7 @@ Stop typing. Start yapping. Two-way voice for your Mac and the AI agents you dri
 
 ---
 
-Your keyboard is the bottleneck. So are your eyes. You think faster than you type and faster than you read. **Yap** lets you hold a key and *talk* at your Mac (local [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) types it where your cursor is), and highlight anything to *hear* it in a real [Kokoro](https://github.com/hexgrad/kokoro) voice. Until neuralink wires you straight into Claude Code, this is the shortcut.
+You think faster than you type, and way faster than you read. So stop doing both. **Yap** gives your Mac two things it was missing: **ears** (hold a key, talk, and local [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) drops your words right where the cursor is) and a **voice** (highlight anything, tap a shortcut, hear it read back in a real [Kokoro](https://github.com/hexgrad/kokoro) or Pocket voice). Until Neuralink wires you straight into your coding agent, this is the shortcut: quit typing *at* your computer, start yapping *with* it.
 
 ## Install
 
