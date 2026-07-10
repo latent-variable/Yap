@@ -1,6 +1,6 @@
 <div align="center">
 
-https://raw.githubusercontent.com/latent-variable/Yap/main/docs/yap-readme.mp4
+https://github.com/latent-variable/Yap/blob/main/docs/yap-readme.mp4
 
 # Yap
 
