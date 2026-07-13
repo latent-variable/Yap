@@ -14,6 +14,7 @@ struct CleanRule: Codable, Identifiable, Equatable {
 struct CleanOptions: Equatable {
     var collapseWhitespace = true
     var normalizeQuotes = true
+    var stripSymbols = true            // emoji + decorative box-drawing/symbol glyphs
     var stripMarkdown = true
     var bulletsToPauses = true
     var skipCodeBlocks = false
@@ -80,6 +81,9 @@ enum Preprocess {
         if options.skipURLs {
             text = regexReplace(text, #"https?://\S+"#, "", true)
         }
+        if options.stripSymbols {
+            text = stripSymbols(text)
+        }
 
         // line-anchored rules need multiline mode -> prepend (?m)
         for (pat, rep, ci) in builtinRules(options) {
@@ -109,6 +113,39 @@ enum Preprocess {
             text = regexReplace(text, #"(?m)^[ \t]+|[ \t]+$"#, "", false)
         }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Strip emoji and decorative symbol glyphs that a TTS engine would either
+    /// vocalize by name ("speaker with three sound waves") or turn into noise.
+    /// Targets what leaks in from copied terminal / chat / Markdown output:
+    /// emoji (🔊 ✅ ⚠️), box-drawing separators (────), block + geometric shapes
+    /// (█ ▶ ●), and the invisible glue that binds emoji sequences (ZWJ, variation
+    /// selectors, skin-tone modifiers, keycap combiners).
+    ///
+    /// Deliberately conservative: ordinary letters, digits, punctuation, currency,
+    /// math operators, and arrows (← → ↑, meaningful in prose like "A → B") are
+    /// left untouched. Removing a glyph leaves a bare space; collapseWhitespace
+    /// (which runs afterward) tidies the gaps and drops now-empty decorator lines.
+    static func stripSymbols(_ text: String) -> String {
+        func isStrippable(_ s: Unicode.Scalar) -> Bool {
+            switch s.value {
+            case 0x200D,                       // zero-width joiner (emoji sequences)
+                 0xFE00...0xFE0F,              // variation selectors (e.g. VS16 emoji style)
+                 0x20E3,                       // combining enclosing keycap
+                 0x2300...0x23FF,              // misc technical (⌘ ⌚ ⏰ ⏳ …)
+                 0x2500...0x25FF,              // box drawing, block elements, geometric shapes
+                 0x2600...0x27BF,              // misc symbols + dingbats (☀ ★ ✅ ✂ ❌ …)
+                 0x2B00...0x2BFF,              // misc symbols & arrows (⭐ ⬛ …)
+                 0x1F000...0x1FAFF:            // emoji, pictographs, transport, supplemental
+                return true
+            default:
+                return false
+            }
+        }
+        var out = String.UnicodeScalarView()
+        out.reserveCapacity(text.unicodeScalars.count)
+        for s in text.unicodeScalars where !isStrippable(s) { out.append(s) }
+        return String(out)
     }
 
     /// Profile -> default option set.

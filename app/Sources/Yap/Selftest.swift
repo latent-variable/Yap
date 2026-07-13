@@ -70,6 +70,19 @@ enum Selftest {
         check("normalize quotes", gen, contains: ["\"hi\""], absent: ["“"])
         check("collapse spaces", gen, contains: ["hi\" there"])
 
+        print("Preprocess — strip emoji + decorative symbols (all profiles)")
+        let sym = Preprocess.clean("Speak to me 🔊 now ✅", options: Preprocess.options(for: .general), custom: [])
+        check("drop emoji", sym, contains: ["Speak to me", "now"], absent: ["🔊", "✅"])
+        let box = Preprocess.clean("Header\n────────────────\nBody █ ▶ item", options: Preprocess.options(for: .general), custom: [])
+        check("drop box-drawing + shapes", box, contains: ["Header", "Body", "item"],
+              absent: ["─", "█", "▶"])
+        // ZWJ/skin-tone compound emoji removed whole, no orphaned glue left behind.
+        check("drop compound emoji", Preprocess.clean("team 👨‍👩‍👧 done", options: Preprocess.options(for: .general), custom: []),
+              contains: ["team", "done"], absent: ["👨", "👧", "\u{200D}"])
+        // Arrows and ordinary punctuation survive — they carry spoken meaning.
+        check("keep arrows + text", Preprocess.clean("A → B, 50% off", options: Preprocess.options(for: .general), custom: []),
+              contains: ["A → B", "50% off"])
+
         print("Fillers — strip disfluencies, keep meaningful words")
         check("remove um/uh", Fillers.clean("so um I uh think"), contains: ["so I think"], absent: ["um", "uh"])
         check("runs + caps", Fillers.clean("Well Ummm yeah UH okay"), contains: ["Well yeah okay"], absent: ["Ummm", "UH"])
