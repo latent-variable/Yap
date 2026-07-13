@@ -14,6 +14,7 @@ struct CleanRule: Codable, Identifiable, Equatable {
 struct CleanOptions: Equatable {
     var collapseWhitespace = true
     var normalizeQuotes = true
+    var stripSymbols = true            // emoji + decorative box-drawing/symbol glyphs
     var stripMarkdown = true
     var bulletsToPauses = true
     var skipCodeBlocks = false
@@ -80,6 +81,9 @@ enum Preprocess {
         if options.skipURLs {
             text = regexReplace(text, #"https?://\S+"#, "", true)
         }
+        if options.stripSymbols {
+            text = stripSymbols(text)
+        }
 
         // line-anchored rules need multiline mode -> prepend (?m)
         for (pat, rep, ci) in builtinRules(options) {
@@ -109,6 +113,77 @@ enum Preprocess {
             text = regexReplace(text, #"(?m)^[ \t]+|[ \t]+$"#, "", false)
         }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Strip emoji and decorative symbol glyphs that a TTS engine would either
+    /// vocalize by name ("speaker with three sound waves") or turn into noise.
+    /// Targets what leaks in from copied terminal / chat / Markdown output:
+    /// emoji (🔊 ✅ ⚠️), box-drawing separators (────), block + geometric shapes
+    /// (█ ▶ ●), and the invisible glue that binds emoji sequences (ZWJ, variation
+    /// selectors, skin-tone modifiers, keycap combiners).
+    ///
+    /// Deliberately conservative about text: letters, digits, punctuation, currency,
+    /// math operators and delimiters (⌈ ⌉ ⌊ ⌋ at U+2308–230B, ⟂ …), and the *prose*
+    /// arrow block (← → ↑ ↓, U+2190–21FF) are kept — copied output writes directions
+    /// as "A → B" and formulas with ASCII/math glyphs, never the emoji form. The
+    /// heavy emoji-style lookalikes (⬅ ➡ in U+2B00–2BFF; ➕ ✖ in the dingbats) travel
+    /// with decoration (⭐ ⬛ ✅) and ARE stripped. In the mixed Misc-Technical block
+    /// only the clock/media emoji are stripped, never the neighbouring math delimiters.
+    ///
+    /// Each removed glyph becomes a **space**, not nothing, so adjacent words can't
+    /// fuse ("word🔊word" → "word word"); collapseWhitespace (afterward) tidies the
+    /// gaps. Multi-scalar sequences (ZWJ families, skin-tone modifiers, subdivision-flag
+    /// tags) collapse to a single space the same way. A line whose ENTIRE content was
+    /// decoration (a ──── separator) is dropped outright rather than left blank —
+    /// otherwise server.py's paragraph splitter reads the vanished divider as a
+    /// paragraph boundary and inserts an audible pause. Blank input lines are kept, so
+    /// intentional paragraph breaks survive.
+    static func stripSymbols(_ text: String) -> String {
+        func isStrippable(_ s: Unicode.Scalar) -> Bool {
+            switch s.value {
+            case 0x200D,                       // zero-width joiner (emoji sequences)
+                 0xFE00...0xFE0F,              // variation selectors (e.g. VS16 emoji style)
+                 0x20E3,                       // combining enclosing keycap
+                 0x2318,                       // ⌘ command-key symbol (TTS says "place of interest sign")
+                 0x231A...0x231B,              // ⌚ ⌛ emoji (NOT the 2308–230B ⌈⌉⌊⌋ math delimiters)
+                 0x23E9...0x23FA,              // media-control / clock / timer emoji (⏩ ⏰ ⏳ ⏸ …)
+                 0x2500...0x25FF,              // box drawing, block elements, geometric shapes
+                 0x2600...0x27BF,              // misc symbols + dingbats (☀ ★ ✅ ✂ ❌ …)
+                 0x2B00...0x2BFF,              // misc symbols & arrows (⭐ ⬛ ⬅ ➡ …)
+                 0x1F000...0x1FFFF,            // all of Plane 1's symbol/emoji blocks (no prose letters live above 1F000)
+                 0xE0000...0xE007F,            // tags (subdivision-flag glue: 🏴 Scotland/England)
+                 0xE0100...0xE01EF:            // variation selectors supplement
+                return true
+            default:
+                return false
+            }
+        }
+        // Fast path: plain prose (the common case) has nothing to strip, so skip
+        // the allocation + copy entirely and hand back the original untouched.
+        guard text.unicodeScalars.contains(where: isStrippable) else { return text }
+
+        // Work line by line. Keycap emoji (1️⃣ = ASCII base + VS16 + U+20E3) fall out
+        // for free: the combining marks strip to spaces while the base (1 # *) is KEPT,
+        // so "press 1️⃣ or 2️⃣" reads "press 1 or 2" — the digit carries the meaning. (An
+        // earlier version dropped the whole sequence and silenced it, "press or", which
+        // was unusable. Preserving the base is deliberate; do not re-add a drop pass.)
+        let ws = CharacterSet.whitespaces
+        let kept: [String] = text.split(separator: "\n", omittingEmptySubsequences: false).compactMap { line in
+            let originalHadContent = line.unicodeScalars.contains { !ws.contains($0) }
+            var scalars: [Unicode.Scalar] = []
+            scalars.reserveCapacity(line.unicodeScalars.count)
+            var strippedHasContent = false
+            for s in line.unicodeScalars {
+                if isStrippable(s) { scalars.append(" ") }
+                else { scalars.append(s); if !ws.contains(s) { strippedHasContent = true } }
+            }
+            // A line that HAD content but is now all-whitespace was pure decoration
+            // (a ──── separator); drop it so it can't become a blank-line paragraph
+            // break. Originally-blank lines (no content to begin with) are preserved.
+            if originalHadContent && !strippedHasContent { return nil }
+            return String(String.UnicodeScalarView(scalars))
+        }
+        return kept.joined(separator: "\n")
     }
 
     /// Profile -> default option set.

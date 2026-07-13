@@ -70,6 +70,39 @@ enum Selftest {
         check("normalize quotes", gen, contains: ["\"hi\""], absent: ["“"])
         check("collapse spaces", gen, contains: ["hi\" there"])
 
+        print("Preprocess — strip emoji + decorative symbols (all profiles)")
+        let sym = Preprocess.clean("Speak to me 🔊 now ✅", options: Preprocess.options(for: .general), custom: [])
+        check("drop emoji", sym, contains: ["Speak to me", "now"], absent: ["🔊", "✅"])
+        let box = Preprocess.clean("Header\n────────────────\nBody █ ▶ ⭐ ⌘ item", options: Preprocess.options(for: .general), custom: [])
+        check("drop box-drawing + shapes", box, contains: ["Header", "Body", "item"],
+              absent: ["─", "█", "▶", "⭐", "⌘"])
+        // A separator-only line must vanish, NOT become a blank-line paragraph break
+        // (server.py would pause on it). Header and Body end up adjacent.
+        check("separator line leaves no blank paragraph", box, contains: ["Header\nBody"], absent: ["Header\n\n"])
+        // But a genuinely blank line in the input is preserved as a paragraph break.
+        check("keep intentional blank line", Preprocess.clean("Para one ✅\n\nPara two", options: Preprocess.options(for: .general), custom: []),
+              contains: ["Para one\n\nPara two"])
+        // ZWJ/skin-tone compound emoji removed whole, no orphaned glue left behind.
+        check("drop compound emoji", Preprocess.clean("team 👨‍👩‍👧 done", options: Preprocess.options(for: .general), custom: []),
+              contains: ["team", "done"], absent: ["👨", "👧", "\u{200D}"])
+        // Subdivision flags carry trailing Unicode tag scalars — the whole run must go.
+        check("drop subdivision flag", Preprocess.clean("flag 🏴󠁧󠁢󠁳󠁣󠁴󠁿 done", options: Preprocess.options(for: .general), custom: []),
+              contains: ["flag", "done"], absent: ["🏴", "\u{E0067}", "\u{E007F}"])
+        // Each stripped glyph becomes a space, so words on either side never fuse.
+        check("no word-gluing", Preprocess.clean("word🔊word", options: Preprocess.options(for: .general), custom: []),
+              contains: ["word word"], absent: ["wordword"])
+        // Keycap emoji: the ASCII base (1 # *) is PRESERVED so numbered lists/choices are
+        // still spoken; only the emoji combining marks (VS16, U+20E3) are stripped.
+        check("keep keycap base, drop combiners", Preprocess.clean("press 1️⃣ or #️⃣ now", options: Preprocess.options(for: .general), custom: []),
+              contains: ["press 1 or # now"], absent: ["1️⃣", "#️⃣"])
+        // Prose arrows (U+2190–21FF) and ordinary punctuation survive — they carry meaning.
+        check("keep prose arrows + text", Preprocess.clean("A → B, 50% off", options: Preprocess.options(for: .general), custom: []),
+              contains: ["A → B", "50% off"])
+        // Math delimiters in the Misc-Technical block stay; only its clock/media emoji go.
+        check("keep math delimiters, drop clock emoji",
+              Preprocess.clean("f(x) = ⌈x⌉ ⌊y⌋ ⟂ done ⏳", options: Preprocess.options(for: .general), custom: []),
+              contains: ["⌈x⌉", "⌊y⌋", "⟂", "done"], absent: ["⏳"])
+
         print("Fillers — strip disfluencies, keep meaningful words")
         check("remove um/uh", Fillers.clean("so um I uh think"), contains: ["so I think"], absent: ["um", "uh"])
         check("runs + caps", Fillers.clean("Well Ummm yeah UH okay"), contains: ["Well yeah okay"], absent: ["Ummm", "UH"])
