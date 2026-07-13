@@ -122,10 +122,17 @@ enum Preprocess {
     /// (█ ▶ ●), and the invisible glue that binds emoji sequences (ZWJ, variation
     /// selectors, skin-tone modifiers, keycap combiners).
     ///
-    /// Deliberately conservative: ordinary letters, digits, punctuation, currency,
-    /// math operators, and arrows (← → ↑, meaningful in prose like "A → B") are
-    /// left untouched. Removing a glyph leaves a bare space; collapseWhitespace
-    /// (which runs afterward) tidies the gaps and drops now-empty decorator lines.
+    /// Deliberately conservative about text: letters, digits, punctuation, currency,
+    /// math operators, and the *prose* arrow block (← → ↑ ↓, U+2190–21FF) are kept —
+    /// copied output writes directions as "A → B", never the emoji form. The heavy
+    /// emoji-style arrows in Misc-Symbols-&-Arrows (⬅ ➡, U+2B00–2BFF) travel with
+    /// decoration (⭐ ⬛) and ARE stripped.
+    ///
+    /// Each removed glyph becomes a **space**, not nothing, so adjacent words can't
+    /// fuse ("word🔊word" → "word word"); collapseWhitespace (which runs afterward)
+    /// tidies the resulting gaps and drops now-empty decorator lines. Multi-scalar
+    /// sequences (ZWJ families, skin-tone modifiers, subdivision-flag tags) collapse
+    /// to a single space the same way.
     static func stripSymbols(_ text: String) -> String {
         func isStrippable(_ s: Unicode.Scalar) -> Bool {
             switch s.value {
@@ -135,17 +142,22 @@ enum Preprocess {
                  0x2300...0x23FF,              // misc technical (⌘ ⌚ ⏰ ⏳ …)
                  0x2500...0x25FF,              // box drawing, block elements, geometric shapes
                  0x2600...0x27BF,              // misc symbols + dingbats (☀ ★ ✅ ✂ ❌ …)
-                 0x2B00...0x2BFF,              // misc symbols & arrows (⭐ ⬛ …)
-                 0x1F000...0x1FAFF:            // emoji, pictographs, transport, supplemental
+                 0x2B00...0x2BFF,              // misc symbols & arrows (⭐ ⬛ ⬅ ➡ …)
+                 0x1F000...0x1FAFF,            // emoji, pictographs, transport, supplemental
+                 0x1FB00...0x1FBFF,            // symbols for legacy computing (block mosaics)
+                 0xE0000...0xE007F,            // tags (subdivision-flag glue: 🏴 Scotland/England)
+                 0xE0100...0xE01EF:            // variation selectors supplement
                 return true
             default:
                 return false
             }
         }
-        var out = String.UnicodeScalarView()
+        // Build a scalar array (contiguous 32-bit ints, one UTF-8 pass at the end)
+        // rather than growing a String's UTF-8 storage per scalar.
+        var out: [Unicode.Scalar] = []
         out.reserveCapacity(text.unicodeScalars.count)
-        for s in text.unicodeScalars where !isStrippable(s) { out.append(s) }
-        return String(out)
+        for s in text.unicodeScalars { out.append(isStrippable(s) ? " " : s) }
+        return String(String.UnicodeScalarView(out))
     }
 
     /// Profile -> default option set.

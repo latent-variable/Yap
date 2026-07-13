@@ -73,14 +73,20 @@ enum Selftest {
         print("Preprocess — strip emoji + decorative symbols (all profiles)")
         let sym = Preprocess.clean("Speak to me 🔊 now ✅", options: Preprocess.options(for: .general), custom: [])
         check("drop emoji", sym, contains: ["Speak to me", "now"], absent: ["🔊", "✅"])
-        let box = Preprocess.clean("Header\n────────────────\nBody █ ▶ item", options: Preprocess.options(for: .general), custom: [])
+        let box = Preprocess.clean("Header\n────────────────\nBody █ ▶ ⭐ item", options: Preprocess.options(for: .general), custom: [])
         check("drop box-drawing + shapes", box, contains: ["Header", "Body", "item"],
-              absent: ["─", "█", "▶"])
+              absent: ["─", "█", "▶", "⭐"])
         // ZWJ/skin-tone compound emoji removed whole, no orphaned glue left behind.
         check("drop compound emoji", Preprocess.clean("team 👨‍👩‍👧 done", options: Preprocess.options(for: .general), custom: []),
               contains: ["team", "done"], absent: ["👨", "👧", "\u{200D}"])
-        // Arrows and ordinary punctuation survive — they carry spoken meaning.
-        check("keep arrows + text", Preprocess.clean("A → B, 50% off", options: Preprocess.options(for: .general), custom: []),
+        // Subdivision flags carry trailing Unicode tag scalars — the whole run must go.
+        check("drop subdivision flag", Preprocess.clean("flag 🏴󠁧󠁢󠁳󠁣󠁴󠁿 done", options: Preprocess.options(for: .general), custom: []),
+              contains: ["flag", "done"], absent: ["🏴", "\u{E0067}", "\u{E007F}"])
+        // Each stripped glyph becomes a space, so words on either side never fuse.
+        check("no word-gluing", Preprocess.clean("word🔊word", options: Preprocess.options(for: .general), custom: []),
+              contains: ["word word"], absent: ["wordword"])
+        // Prose arrows (U+2190–21FF) and ordinary punctuation survive — they carry meaning.
+        check("keep prose arrows + text", Preprocess.clean("A → B, 50% off", options: Preprocess.options(for: .general), custom: []),
               contains: ["A → B", "50% off"])
 
         print("Fillers — strip disfluencies, keep meaningful words")
