@@ -123,10 +123,12 @@ enum Preprocess {
     /// selectors, skin-tone modifiers, keycap combiners).
     ///
     /// Deliberately conservative about text: letters, digits, punctuation, currency,
-    /// math operators, and the *prose* arrow block (← → ↑ ↓, U+2190–21FF) are kept —
-    /// copied output writes directions as "A → B", never the emoji form. The heavy
-    /// emoji-style arrows in Misc-Symbols-&-Arrows (⬅ ➡, U+2B00–2BFF) travel with
-    /// decoration (⭐ ⬛) and ARE stripped.
+    /// math operators and delimiters (⌈ ⌉ ⌊ ⌋ at U+2308–230B, ⟂ …), and the *prose*
+    /// arrow block (← → ↑ ↓, U+2190–21FF) are kept — copied output writes directions
+    /// as "A → B" and formulas with ASCII/math glyphs, never the emoji form. The
+    /// heavy emoji-style lookalikes (⬅ ➡ in U+2B00–2BFF; ➕ ✖ in the dingbats) travel
+    /// with decoration (⭐ ⬛ ✅) and ARE stripped. In the mixed Misc-Technical block
+    /// only the clock/media emoji are stripped, never the neighbouring math delimiters.
     ///
     /// Each removed glyph becomes a **space**, not nothing, so adjacent words can't
     /// fuse ("word🔊word" → "word word"); collapseWhitespace (which runs afterward)
@@ -139,11 +141,12 @@ enum Preprocess {
             case 0x200D,                       // zero-width joiner (emoji sequences)
                  0xFE00...0xFE0F,              // variation selectors (e.g. VS16 emoji style)
                  0x20E3,                       // combining enclosing keycap
-                 0x2300...0x23FF,              // misc technical (⌘ ⌚ ⏰ ⏳ …)
+                 0x231A...0x231B,              // ⌚ ⌛ emoji (NOT the 2308–230B ⌈⌉⌊⌋ math delimiters)
+                 0x23E9...0x23FA,              // media-control / clock / timer emoji (⏩ ⏰ ⏳ ⏸ …)
                  0x2500...0x25FF,              // box drawing, block elements, geometric shapes
                  0x2600...0x27BF,              // misc symbols + dingbats (☀ ★ ✅ ✂ ❌ …)
                  0x2B00...0x2BFF,              // misc symbols & arrows (⭐ ⬛ ⬅ ➡ …)
-                 0x1F000...0x1FBFF,            // emoji, pictographs, transport, legacy computing
+                 0x1F000...0x1FFFF,            // all of Plane 1's symbol/emoji blocks (no prose letters live above 1F000)
                  0xE0000...0xE007F,            // tags (subdivision-flag glue: 🏴 Scotland/England)
                  0xE0100...0xE01EF:            // variation selectors supplement
                 return true
@@ -156,8 +159,11 @@ enum Preprocess {
         guard text.unicodeScalars.contains(where: isStrippable) else { return text }
         // Keycap emoji (1️⃣ #️⃣ *️⃣) are base + optional VS16 + U+20E3. The base is an
         // ASCII digit/#/* that the scalar filter leaves alone, so it would be spoken
-        // as a bare "1". Collapse the whole sequence to one space up front.
-        let t = regexReplace(text, #"[0-9#*]\x{FE0F}?\x{20E3}"#, " ", false)
+        // as a bare "1". Collapse the whole sequence to one space up front — but only
+        // when the keycap combiner is actually present, so plain-but-decorated text
+        // skips the regex entirely.
+        let hasKeycap = text.unicodeScalars.contains { $0.value == 0x20E3 }
+        let t = hasKeycap ? regexReplace(text, #"[0-9#*]\x{FE0F}?\x{20E3}"#, " ", false) : text
         // Build a scalar array (contiguous 32-bit ints, one UTF-8 pass at the end)
         // rather than growing a String's UTF-8 storage per scalar.
         var out: [Unicode.Scalar] = []

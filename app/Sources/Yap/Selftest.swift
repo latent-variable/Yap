@@ -91,6 +91,10 @@ enum Selftest {
         // Prose arrows (U+2190–21FF) and ordinary punctuation survive — they carry meaning.
         check("keep prose arrows + text", Preprocess.clean("A → B, 50% off", options: Preprocess.options(for: .general), custom: []),
               contains: ["A → B", "50% off"])
+        // Math delimiters in the Misc-Technical block stay; only its clock/media emoji go.
+        check("keep math delimiters, drop clock emoji",
+              Preprocess.clean("f(x) = ⌈x⌉ ⌊y⌋ ⟂ done ⏳", options: Preprocess.options(for: .general), custom: []),
+              contains: ["⌈x⌉", "⌊y⌋", "⟂", "done"], absent: ["⏳"])
 
         print("Fillers — strip disfluencies, keep meaningful words")
         check("remove um/uh", Fillers.clean("so um I uh think"), contains: ["so I think"], absent: ["um", "uh"])
