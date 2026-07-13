@@ -131,10 +131,13 @@ enum Preprocess {
     /// only the clock/media emoji are stripped, never the neighbouring math delimiters.
     ///
     /// Each removed glyph becomes a **space**, not nothing, so adjacent words can't
-    /// fuse ("word🔊word" → "word word"); collapseWhitespace (which runs afterward)
-    /// tidies the resulting gaps and drops now-empty decorator lines. Multi-scalar
-    /// sequences (ZWJ families, skin-tone modifiers, subdivision-flag tags) collapse
-    /// to a single space the same way.
+    /// fuse ("word🔊word" → "word word"); collapseWhitespace (afterward) tidies the
+    /// gaps. Multi-scalar sequences (ZWJ families, skin-tone modifiers, subdivision-flag
+    /// tags) collapse to a single space the same way. A line whose ENTIRE content was
+    /// decoration (a ──── separator) is dropped outright rather than left blank —
+    /// otherwise server.py's paragraph splitter reads the vanished divider as a
+    /// paragraph boundary and inserts an audible pause. Blank input lines are kept, so
+    /// intentional paragraph breaks survive.
     static func stripSymbols(_ text: String) -> String {
         func isStrippable(_ s: Unicode.Scalar) -> Bool {
             switch s.value {
@@ -158,19 +161,29 @@ enum Preprocess {
         // Fast path: plain prose (the common case) has nothing to strip, so skip
         // the allocation + copy entirely and hand back the original untouched.
         guard text.unicodeScalars.contains(where: isStrippable) else { return text }
-        // Build a scalar array (contiguous 32-bit ints, one UTF-8 pass at the end)
-        // rather than growing a String's UTF-8 storage per scalar.
-        //
-        // Keycap emoji (1️⃣ #️⃣ *️⃣ = ASCII base + optional VS16 + U+20E3) are handled
-        // right here by design: the combining marks strip to spaces while the base
-        // (1 # *) is KEPT, so "press 1️⃣ or 2️⃣" reads "press 1 or 2". Numbered lists and
-        // choices carry their meaning in that digit — an earlier version dropped the
-        // whole sequence and silenced it ("press or"), which made the audio unusable.
-        // Preserving the base is the deliberate call; do not re-add a drop-the-base pass.
-        var out: [Unicode.Scalar] = []
-        out.reserveCapacity(text.unicodeScalars.count)
-        for s in text.unicodeScalars { out.append(isStrippable(s) ? " " : s) }
-        return String(String.UnicodeScalarView(out))
+
+        // Work line by line. Keycap emoji (1️⃣ = ASCII base + VS16 + U+20E3) fall out
+        // for free: the combining marks strip to spaces while the base (1 # *) is KEPT,
+        // so "press 1️⃣ or 2️⃣" reads "press 1 or 2" — the digit carries the meaning. (An
+        // earlier version dropped the whole sequence and silenced it, "press or", which
+        // was unusable. Preserving the base is deliberate; do not re-add a drop pass.)
+        let ws = CharacterSet.whitespaces
+        let kept: [String] = text.split(separator: "\n", omittingEmptySubsequences: false).compactMap { line in
+            let originalHadContent = line.unicodeScalars.contains { !ws.contains($0) }
+            var scalars: [Unicode.Scalar] = []
+            scalars.reserveCapacity(line.unicodeScalars.count)
+            var strippedHasContent = false
+            for s in line.unicodeScalars {
+                if isStrippable(s) { scalars.append(" ") }
+                else { scalars.append(s); if !ws.contains(s) { strippedHasContent = true } }
+            }
+            // A line that HAD content but is now all-whitespace was pure decoration
+            // (a ──── separator); drop it so it can't become a blank-line paragraph
+            // break. Originally-blank lines (no content to begin with) are preserved.
+            if originalHadContent && !strippedHasContent { return nil }
+            return String(String.UnicodeScalarView(scalars))
+        }
+        return kept.joined(separator: "\n")
     }
 
     /// Profile -> default option set.

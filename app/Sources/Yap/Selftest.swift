@@ -76,6 +76,12 @@ enum Selftest {
         let box = Preprocess.clean("Header\n────────────────\nBody █ ▶ ⭐ ⌘ item", options: Preprocess.options(for: .general), custom: [])
         check("drop box-drawing + shapes", box, contains: ["Header", "Body", "item"],
               absent: ["─", "█", "▶", "⭐", "⌘"])
+        // A separator-only line must vanish, NOT become a blank-line paragraph break
+        // (server.py would pause on it). Header and Body end up adjacent.
+        check("separator line leaves no blank paragraph", box, contains: ["Header\nBody"], absent: ["Header\n\n"])
+        // But a genuinely blank line in the input is preserved as a paragraph break.
+        check("keep intentional blank line", Preprocess.clean("Para one ✅\n\nPara two", options: Preprocess.options(for: .general), custom: []),
+              contains: ["Para one\n\nPara two"])
         // ZWJ/skin-tone compound emoji removed whole, no orphaned glue left behind.
         check("drop compound emoji", Preprocess.clean("team 👨‍👩‍👧 done", options: Preprocess.options(for: .general), custom: []),
               contains: ["team", "done"], absent: ["👨", "👧", "\u{200D}"])
