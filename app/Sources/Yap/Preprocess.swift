@@ -141,6 +141,7 @@ enum Preprocess {
             case 0x200D,                       // zero-width joiner (emoji sequences)
                  0xFE00...0xFE0F,              // variation selectors (e.g. VS16 emoji style)
                  0x20E3,                       // combining enclosing keycap
+                 0x2318,                       // ⌘ command-key symbol (TTS says "place of interest sign")
                  0x231A...0x231B,              // ⌚ ⌛ emoji (NOT the 2308–230B ⌈⌉⌊⌋ math delimiters)
                  0x23E9...0x23FA,              // media-control / clock / timer emoji (⏩ ⏰ ⏳ ⏸ …)
                  0x2500...0x25FF,              // box drawing, block elements, geometric shapes
