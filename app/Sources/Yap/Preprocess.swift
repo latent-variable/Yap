@@ -158,18 +158,18 @@ enum Preprocess {
         // Fast path: plain prose (the common case) has nothing to strip, so skip
         // the allocation + copy entirely and hand back the original untouched.
         guard text.unicodeScalars.contains(where: isStrippable) else { return text }
-        // Keycap emoji (1️⃣ #️⃣ *️⃣) are base + optional VS16 + U+20E3. The base is an
-        // ASCII digit/#/* that the scalar filter leaves alone, so it would be spoken
-        // as a bare "1". Collapse the whole sequence to one space up front — but only
-        // when the keycap combiner is actually present, so plain-but-decorated text
-        // skips the regex entirely.
-        let hasKeycap = text.unicodeScalars.contains { $0.value == 0x20E3 }
-        let t = hasKeycap ? regexReplace(text, #"[0-9#*]\x{FE0F}?\x{20E3}"#, " ", false) : text
         // Build a scalar array (contiguous 32-bit ints, one UTF-8 pass at the end)
         // rather than growing a String's UTF-8 storage per scalar.
+        //
+        // Keycap emoji (1️⃣ #️⃣ *️⃣ = ASCII base + optional VS16 + U+20E3) are handled
+        // right here by design: the combining marks strip to spaces while the base
+        // (1 # *) is KEPT, so "press 1️⃣ or 2️⃣" reads "press 1 or 2". Numbered lists and
+        // choices carry their meaning in that digit — an earlier version dropped the
+        // whole sequence and silenced it ("press or"), which made the audio unusable.
+        // Preserving the base is the deliberate call; do not re-add a drop-the-base pass.
         var out: [Unicode.Scalar] = []
-        out.reserveCapacity(t.unicodeScalars.count)
-        for s in t.unicodeScalars { out.append(isStrippable(s) ? " " : s) }
+        out.reserveCapacity(text.unicodeScalars.count)
+        for s in text.unicodeScalars { out.append(isStrippable(s) ? " " : s) }
         return String(String.UnicodeScalarView(out))
     }
 
