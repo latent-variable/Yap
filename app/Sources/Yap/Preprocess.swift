@@ -143,8 +143,7 @@ enum Preprocess {
                  0x2500...0x25FF,              // box drawing, block elements, geometric shapes
                  0x2600...0x27BF,              // misc symbols + dingbats (☀ ★ ✅ ✂ ❌ …)
                  0x2B00...0x2BFF,              // misc symbols & arrows (⭐ ⬛ ⬅ ➡ …)
-                 0x1F000...0x1FAFF,            // emoji, pictographs, transport, supplemental
-                 0x1FB00...0x1FBFF,            // symbols for legacy computing (block mosaics)
+                 0x1F000...0x1FBFF,            // emoji, pictographs, transport, legacy computing
                  0xE0000...0xE007F,            // tags (subdivision-flag glue: 🏴 Scotland/England)
                  0xE0100...0xE01EF:            // variation selectors supplement
                 return true
@@ -152,11 +151,18 @@ enum Preprocess {
                 return false
             }
         }
+        // Fast path: plain prose (the common case) has nothing to strip, so skip
+        // the allocation + copy entirely and hand back the original untouched.
+        guard text.unicodeScalars.contains(where: isStrippable) else { return text }
+        // Keycap emoji (1️⃣ #️⃣ *️⃣) are base + optional VS16 + U+20E3. The base is an
+        // ASCII digit/#/* that the scalar filter leaves alone, so it would be spoken
+        // as a bare "1". Collapse the whole sequence to one space up front.
+        let t = regexReplace(text, #"[0-9#*]\x{FE0F}?\x{20E3}"#, " ", false)
         // Build a scalar array (contiguous 32-bit ints, one UTF-8 pass at the end)
         // rather than growing a String's UTF-8 storage per scalar.
         var out: [Unicode.Scalar] = []
-        out.reserveCapacity(text.unicodeScalars.count)
-        for s in text.unicodeScalars { out.append(isStrippable(s) ? " " : s) }
+        out.reserveCapacity(t.unicodeScalars.count)
+        for s in t.unicodeScalars { out.append(isStrippable(s) ? " " : s) }
         return String(String.UnicodeScalarView(out))
     }
 

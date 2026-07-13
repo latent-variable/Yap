@@ -85,6 +85,9 @@ enum Selftest {
         // Each stripped glyph becomes a space, so words on either side never fuse.
         check("no word-gluing", Preprocess.clean("word🔊word", options: Preprocess.options(for: .general), custom: []),
               contains: ["word word"], absent: ["wordword"])
+        // Keycap emoji: the ASCII base (1 # *) must go with its combiners, not linger.
+        check("drop keycap emoji", Preprocess.clean("press 1️⃣ or #️⃣ now", options: Preprocess.options(for: .general), custom: []),
+              contains: ["press", "or", "now"], absent: ["1", "#️⃣", "1️⃣"])
         // Prose arrows (U+2190–21FF) and ordinary punctuation survive — they carry meaning.
         check("keep prose arrows + text", Preprocess.clean("A → B, 50% off", options: Preprocess.options(for: .general), custom: []),
               contains: ["A → B", "50% off"])
