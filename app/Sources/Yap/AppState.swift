@@ -247,10 +247,22 @@ final class AppState: ObservableObject {
             refreshHD()
             status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
         }
+        restoreCachedUpdate()
         maybeAutoCheckForUpdates()
     }
 
     // MARK: - update awareness
+
+    /// Re-show a previously-found update so the banner survives a restart within
+    /// the throttle window. Drops it if the running build has since caught up.
+    private func restoreCachedUpdate() {
+        guard let c = prefs.cachedUpdate else { return }
+        if UpdateChecker.isNewer(c.version, than: UpdateChecker.currentVersion) {
+            availableUpdate = UpdateChecker.Release(version: c.version, url: c.url)
+        } else {
+            prefs.cachedUpdate = nil   // already updated past it — stale
+        }
+    }
 
     /// Fire the once/day auto-check if the user hasn't opted out and a day has
     /// passed. Silent — a found update surfaces as a menu banner, nothing else.
@@ -258,33 +270,36 @@ final class AppState: ObservableObject {
         guard prefs.autoUpdateCheck else { return }
         if let last = prefs.lastUpdateCheck,
            Date().timeIntervalSince(last) < 60 * 60 * 24 { return }   // throttle: once/day
-        Task { await runUpdateCheck() }
+        Task { await runUpdateCheck(forceFresh: false) }
     }
 
-    /// User-initiated "Check now" — bypasses the once/day throttle.
-    func checkForUpdatesNow() { Task { await runUpdateCheck() } }
+    /// User-initiated "Check now" — bypasses the once/day throttle and URL cache.
+    func checkForUpdatesNow() { Task { await runUpdateCheck(forceFresh: true) } }
 
-    private func runUpdateCheck() async {
+    private func runUpdateCheck(forceFresh: Bool) async {
         if checkingForUpdate { return }
         checkingForUpdate = true
         defer { checkingForUpdate = false }
         // URLSession does the network off-main; AppState is @MainActor, so after
         // the await we're back on main to publish the result safely.
-        switch await UpdateChecker.check() {
+        switch await UpdateChecker.check(forceFresh: forceFresh) {
         case .update(let release):
             availableUpdate = release
+            prefs.cachedUpdate = (release.version, release.url)   // survive restart
             checkedForUpdate = true
             checkFailed = false
             prefs.lastUpdateCheck = Date()          // success: arm the once/day throttle
         case .upToDate:
             availableUpdate = nil
+            prefs.cachedUpdate = nil                 // nothing pending anymore
             checkedForUpdate = true
             checkFailed = false
             prefs.lastUpdateCheck = Date()          // success: arm the once/day throttle
         case .failed:
             // Do NOT stamp lastUpdateCheck (a failed check must not poison the
             // throttle — the auto-check should retry next launch) and do NOT claim
-            // "up to date" — the check never completed.
+            // "up to date" — the check never completed. A previously-cached update
+            // (if any) stays shown.
             checkFailed = true
         }
     }

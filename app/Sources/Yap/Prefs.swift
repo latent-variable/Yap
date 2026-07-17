@@ -128,6 +128,22 @@ final class Prefs: ObservableObject {
         set { d.set(newValue?.timeIntervalSinceReferenceDate, forKey: "lastUpdateCheck") }
     }
 
+    /// The last update we surfaced, persisted so the banner survives a restart
+    /// inside the 24h throttle window — otherwise the throttled launch skips the
+    /// check and the banner silently vanishes. Cleared when a check finds none, or
+    /// once the running build has caught up (staleness is re-verified on restore).
+    var cachedUpdate: (version: String, url: URL)? {
+        get {
+            guard let v = d.string(forKey: "cachedUpdateVersion"),
+                  let u = d.string(forKey: "cachedUpdateURL").flatMap({ URL(string: $0) }) else { return nil }
+            return (v, u)
+        }
+        set {
+            d.set(newValue?.version, forKey: "cachedUpdateVersion")
+            d.set(newValue?.url.absoluteString, forKey: "cachedUpdateURL")
+        }
+    }
+
     private init() {
         // Port pre-rename state (Parley → Yap) before reading any setting below, so
         // the new bundle-id domain has the user's real prefs, not fresh defaults.

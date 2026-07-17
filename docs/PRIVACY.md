@@ -8,11 +8,13 @@ it touches, and why — so you don't have to take "private" on faith.
 - Runs entirely on your Mac. Speech is synthesized locally by the bundled
   Kokoro engine.
 - No account, no sign-in, no analytics, no telemetry, no crash reporting.
-- Only two network calls, both to public GitHub, neither sending personal data:
-  the one-time model download (~340 MB), and a once-a-day check for a newer
-  release (default on; toggle off in Settings ▸ General). Nothing else. Turn the
-  update check off and idle Yap makes no outbound connections at all — verify
-  with Little Snitch / `nettop`.
+- No telemetry, no account, nothing about you is ever sent. Yap's only network
+  activity is fetching assets you opt into, plus an optional update check: the
+  one-time Kokoro model download (~340 MB); the Pocket engine's packages and
+  voices if you set that up; the gated weights if you clone a voice; and a
+  once-a-day check for a newer release (default on, toggle off in Settings ▸
+  General). With the update check off and nothing downloading, idle Yap makes no
+  outbound connections — verify with Little Snitch / `nettop`.
 - Open source. Every capability described here is in this repo.
 - Don't trust the prose? It's 2026. Point your coding agent (Claude Code or
   similar) at this repo and let it confirm these claims, or read the source
@@ -61,8 +63,9 @@ never downloads or installs anything on its own: the banner links to the release
 page, and you update via Homebrew or the DMG yourself.
 
 On by default, throttled to once per day. Turn it off in **Settings ▸ General ▸
-Updates**; with it off, Yap makes no network calls at all after the model
-download. The whole thing is one file:
+Updates**; with it off, Yap makes no *automatic* network calls — every other
+download (the model, optional Pocket packages, cloned-voice weights) is one-time
+and something you initiate. The whole thing is one file:
 [`UpdateChecker.swift`](../app/Sources/Yap/UpdateChecker.swift).
 
 ## The Auto read source and your clipboard

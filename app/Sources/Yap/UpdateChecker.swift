@@ -2,13 +2,14 @@ import Foundation
 
 /// Checks GitHub for a newer Yap release.
 ///
-/// This is the ONLY network call Yap makes beyond the one-time model download:
-/// a single unauthenticated GET to the public GitHub releases API. It sends no
-/// payload and no identifiers — just "what's the latest release?" — and returns
-/// nothing personal. Auto-check is a user preference (default on, toggle in
-/// Settings ▸ General) and throttled to once per day; a manual "Check now"
-/// bypasses the throttle. Disclosed in docs/PRIVACY.md. Turn the pref off for
-/// zero outbound connections.
+/// This is the only *automatic* network call Yap makes — everything else it
+/// fetches (the Kokoro model, optional Pocket packages, cloned-voice weights) is
+/// a one-time, user-initiated download. It's a single unauthenticated GET to the
+/// public GitHub releases API: no payload, no identifiers, just "what's the
+/// latest release?", returning nothing personal. Auto-check is a user preference
+/// (default on, toggle in Settings ▸ General) throttled to once per day; a manual
+/// "Check now" bypasses the throttle and the URL cache. Disclosed in
+/// docs/PRIVACY.md. Turn the pref off for zero automatic connections.
 enum UpdateChecker {
     struct Release: Equatable {
         let version: String   // normalized, e.g. "0.8.2"
@@ -75,10 +76,14 @@ enum UpdateChecker {
     /// check never nags, blocks, or throws — but the caller can still tell failure
     /// from success and avoid a false "up to date" / a poisoned throttle.
     static func check(owner: String = "latent-variable",
-                      repo: String = "Yap") async -> Outcome {
+                      repo: String = "Yap",
+                      forceFresh: Bool = false) async -> Outcome {
         guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest")
         else { return .failed }
         var req = URLRequest(url: url, timeoutInterval: 10)
+        // A manual "Check now" ignores the URL cache so a just-published release
+        // shows immediately; the daily auto-check uses the normal cache policy.
+        req.cachePolicy = forceFresh ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("Yap/\(currentVersion)", forHTTPHeaderField: "User-Agent")  // GitHub requires a UA
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
