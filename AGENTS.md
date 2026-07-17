@@ -361,6 +361,30 @@ an agent must keep:
 - Deleting HD removes `hd-packages` only — **cloned voices (`hd-voices`) are
   kept** — and falls back to the Kokoro engine.
 
+## Menu-bar UI (the layout-loop gotcha)
+
+The menu is a `MenuBarExtra` with `.menuBarExtraStyle(.window)` — a real SwiftUI
+view tree (`MenuContent`), not an `NSMenu`. That style **auto-sizes the popover
+window to its content**, and if any subview reports a size that never settles,
+CoreAnimation re-lays-the-whole-menu-out every display cycle in a self-sustaining
+loop (`MenuBarExtraLayout.sizeThatFits` back-to-back). It pins the main thread —
+seen as sustained idle CPU + a laggy menu-bar icon that worsens with use — even
+with the popover closed, once it's been opened once. Diagnose with
+`sample <pid>`; the tell is `DriverCore::continueProcessing → CA::Transaction::commit
+→ NSHostingView.layout → MenuBarExtraLayout.sizeThatFits`.
+
+Rules for `MenuContent` and anything it shows:
+- **No `ScrollView` and no `.textSelection(.enabled)` in the menu content.** Those
+  are the documented offenders — they renegotiate size and never converge here.
+  `LastResultCard` deliberately uses a fixed-height, line-limited, truncated
+  `Text` (Copy button for the full text) for exactly this reason. Don't "restore"
+  scroll/selection.
+- Keep subview sizes deterministic; a fixed `.frame(height:)` beats a
+  content-dependent `maxHeight` when in doubt.
+- Don't fire `@Published` writes on a timer unconditionally — assigning even an
+  unchanged value triggers `objectWillChange` and re-renders the whole menu. The
+  `axTrusted` poll guards on an actual change for this reason.
+
 ## Standing constraints
 
 - **Fully local. No cloud TTS, no accounts, no analytics, ever.** That's the
