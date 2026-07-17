@@ -31,6 +31,10 @@ struct MenuContent: View {
         VStack(alignment: .leading, spacing: 12) {
             header
 
+            if let update = state.availableUpdate {
+                updateBanner(update)
+            }
+
             if !state.axTrusted && prefs.readSource == .selection {
                 permissionBanner
             }
@@ -148,6 +152,22 @@ struct MenuContent: View {
                     .symbolEffect(.pulse, isActive: state.status == .reading)
             )
             .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+    }
+
+    /// Shown when a newer release exists. Yap installs via Homebrew or a DMG, so
+    /// there's no in-app installer — the button opens the release page (notes +
+    /// download); brew users just `brew upgrade`.
+    private func updateBanner(_ update: UpdateChecker.Release) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Update available — \(update.version)", systemImage: "arrow.down.circle.fill")
+                .font(.caption.bold()).foregroundStyle(.blue)
+            Text("You're on \(UpdateChecker.currentVersion). Update with “brew upgrade yap”, or download the new release.")
+                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button("Release notes & download") { NSWorkspace.shared.open(update.url) }
+                .controlSize(.small).buttonStyle(.borderedProminent)
+        }
+        .padding(8)
+        .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var permissionBanner: some View {
