@@ -45,6 +45,12 @@ final class AppState: ObservableObject {
     @Published var hdInstalled = false
     @Published var preparing = false   // synth requested, first audio not yet playing
     @Published var preparingDetail = "Preparing voice…"
+    // Update awareness (see UpdateChecker). availableUpdate is non-nil only when a
+    // strictly newer release exists; checkedForUpdate flips true after any check
+    // completes so Settings can say "up to date" vs "not checked yet".
+    @Published var availableUpdate: UpdateChecker.Release?
+    @Published var checkingForUpdate = false
+    @Published var checkedForUpdate = false
     private var hdWarm = false          // HD model loaded since backend start
 
     /// The voice id for the currently selected engine.
@@ -240,6 +246,33 @@ final class AppState: ObservableObject {
             refreshHD()
             status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
         }
+        maybeAutoCheckForUpdates()
+    }
+
+    // MARK: - update awareness
+
+    /// Fire the once/day auto-check if the user hasn't opted out and a day has
+    /// passed. Silent — a found update surfaces as a menu banner, nothing else.
+    func maybeAutoCheckForUpdates() {
+        guard prefs.autoUpdateCheck else { return }
+        if let last = prefs.lastUpdateCheck,
+           Date().timeIntervalSince(last) < 60 * 60 * 24 { return }   // throttle: once/day
+        Task { await runUpdateCheck() }
+    }
+
+    /// User-initiated "Check now" — bypasses the once/day throttle.
+    func checkForUpdatesNow() { Task { await runUpdateCheck() } }
+
+    private func runUpdateCheck() async {
+        if checkingForUpdate { return }
+        checkingForUpdate = true
+        defer { checkingForUpdate = false }
+        // URLSession does the network off-main; AppState is @MainActor, so after
+        // the await we're back on main to publish the result safely.
+        let release = await UpdateChecker.latestIfNewer()
+        prefs.lastUpdateCheck = Date()
+        availableUpdate = release
+        checkedForUpdate = true
     }
 
     /// Bind the read hot key only when the reading feature is enabled; otherwise

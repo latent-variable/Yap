@@ -249,6 +249,17 @@ enum Selftest {
                       deleted.map(\.text) == ["new", "old2"], true)
         }
 
+        print("UpdateChecker — semantic version compare")
+        checkBool("newer patch is newer", UpdateChecker.isNewer("0.8.2", than: "0.8.1"), true)
+        checkBool("older is not newer", UpdateChecker.isNewer("0.8.0", than: "0.8.1"), false)
+        checkBool("equal is not newer", UpdateChecker.isNewer("0.8.1", than: "0.8.1"), false)
+        checkBool("v-prefix tolerated", UpdateChecker.isNewer("v0.9.0", than: "0.8.9"), true)
+        checkBool("1.2 equals 1.2.0 (not newer)", UpdateChecker.isNewer("1.2", than: "1.2.0"), false)
+        checkBool("minor beats high patch", UpdateChecker.isNewer("0.9.0", than: "0.8.99"), true)
+        checkBool("major beats all", UpdateChecker.isNewer("1.0.0", than: "0.99.99"), true)
+        checkBool("prerelease suffix ignored", UpdateChecker.isNewer("0.8.1-beta", than: "0.8.1"), false)
+        checkBool("normalized strips leading v", UpdateChecker.normalized("v1.2.3") == "1.2.3", true)
+
         print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILURE(S)")
         exit(failures == 0 ? 0 : 1)
     }

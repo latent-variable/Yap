@@ -8,9 +8,11 @@ it touches, and why — so you don't have to take "private" on faith.
 - Runs entirely on your Mac. Speech is synthesized locally by the bundled
   Kokoro engine.
 - No account, no sign-in, no analytics, no telemetry, no crash reporting.
-- No network connection after the one-time model download (~340 MB from a public
-  GitHub release). You can verify with Little Snitch / `nettop` — idle Yap
-  makes no outbound connections.
+- Only two network calls, both to public GitHub, neither sending personal data:
+  the one-time model download (~340 MB), and a once-a-day check for a newer
+  release (default on; toggle off in Settings ▸ General). Nothing else. Turn the
+  update check off and idle Yap makes no outbound connections at all — verify
+  with Little Snitch / `nettop`.
 - Open source. Every capability described here is in this repo.
 - Don't trust the prose? It's 2026. Point your coding agent (Claude Code or
   similar) at this repo and let it confirm these claims, or read the source
@@ -47,6 +49,21 @@ actually does with it is narrow and visible in
 - No clipboard hijacking. The fallback restores whatever was on your clipboard.
 - No data leaves the machine. There is no server, no API key, no upload path in
   the code.
+
+## The update check (the one optional network call)
+
+So you know when a new version ships, Yap checks GitHub once a day for the latest
+release. It's a single unauthenticated GET to the public releases API
+(`api.github.com/repos/latent-variable/Yap/releases/latest`) — no account, no
+identifier, no usage data sent. Yap just receives the latest version number,
+compares it to the running build, and shows a banner if a newer one exists. It
+never downloads or installs anything on its own: the banner links to the release
+page, and you update via Homebrew or the DMG yourself.
+
+On by default, throttled to once per day. Turn it off in **Settings ▸ General ▸
+Updates**; with it off, Yap makes no network calls at all after the model
+download. The whole thing is one file:
+[`UpdateChecker.swift`](../app/Sources/Yap/UpdateChecker.swift).
 
 ## The Auto read source and your clipboard
 

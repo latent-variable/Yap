@@ -61,6 +61,26 @@ private struct GeneralTab: View {
             Toggle("Show mini-player controls", isOn: $prefs.showMiniPlayer)
             Toggle("Launch at login", isOn: $prefs.launchAtLogin)
                 .onChange(of: prefs.launchAtLogin) { _, on in LoginItem.set(on) }
+
+            Section("Updates") {
+                Toggle("Automatically check for updates", isOn: $prefs.autoUpdateCheck)
+                Text("Once a day, Yap asks GitHub for the latest release version. This is the only network call Yap makes after the model download — a plain version check that sends no personal data. Turn it off for zero outbound connections.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button(state.checkingForUpdate ? "Checking…" : "Check now") {
+                        state.checkForUpdatesNow()
+                    }
+                    .disabled(state.checkingForUpdate)
+                    Spacer()
+                    if let u = state.availableUpdate {
+                        Link("Update \(u.version) available", destination: u.url)
+                    } else if state.checkedForUpdate {
+                        Text("Up to date (\(UpdateChecker.currentVersion))").foregroundStyle(.secondary)
+                    } else {
+                        Text("v\(UpdateChecker.currentVersion)").foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
     }

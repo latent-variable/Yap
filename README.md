@@ -78,9 +78,9 @@ Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 
 ## Permissions & privacy
 
-100% on your Mac. No account, no telemetry, no network after the one-time model download. **Accessibility** lets Yap read your selection and paste; **Microphone** feeds dictation. Audio never leaves the machine. Don't want to grant Accessibility? Switch **Read source → Clipboard** and copy text yourself first. Details: [docs/PRIVACY.md](docs/PRIVACY.md).
+100% on your Mac. No account, no telemetry. The only network calls are the one-time model download and an optional once-a-day update check (toggle off in Settings ▸ General); nothing else, nothing personal sent. **Accessibility** lets Yap read your selection and paste; **Microphone** feeds dictation. Audio never leaves the machine. Don't want to grant Accessibility? Switch **Read source → Clipboard** and copy text yourself first. Details: [docs/PRIVACY.md](docs/PRIVACY.md).
 
-**Don't take my word for it.** It's 2026. Point your coding agent (Claude Code or similar) at this repo and have it read the source and confirm there's no network path beyond the one-time model download. Or build your own from source and use these binaries as a reference. If it holds up, a ⭐ is appreciated.
+**Don't take my word for it.** It's 2026. Point your coding agent (Claude Code or similar) at this repo and have it read the source and confirm there's no network path beyond the one-time model download and the optional daily update check. Or build your own from source and use these binaries as a reference. If it holds up, a ⭐ is appreciated.
 
 > Ad-hoc signed, so each reinstall is a new identity to macOS and the Accessibility grant can go stale — remove Yap from the list and re-add, or run `scripts/setup_signing.sh` once for a stable identity.
 

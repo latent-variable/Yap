@@ -116,6 +116,17 @@ final class Prefs: ObservableObject {
     @Published var dictationEngine: String { didSet { d.set(dictationEngine, forKey: "dictationEngine") } }  // "english" | "multilingual"
     @Published var dictationChime: Bool { didSet { d.set(dictationChime, forKey: "dictationChime") } }       // play a start/stop sound
     @Published var removeFillers: Bool { didSet { d.set(removeFillers, forKey: "removeFillers") } }           // strip "um"/"uh" from dictation
+    // The one opt-outable network call: once/day Yap asks GitHub for the latest
+    // release version (no payload, no identifiers — see UpdateChecker / PRIVACY).
+    // Default on; off means zero outbound connections after the model download.
+    @Published var autoUpdateCheck: Bool { didSet { d.set(autoUpdateCheck, forKey: "autoUpdateCheck") } }
+
+    /// Last time an update check actually ran (throttles the once/day auto-check).
+    /// Not @Published — nothing observes it; it only gates the timer.
+    var lastUpdateCheck: Date? {
+        get { (d.object(forKey: "lastUpdateCheck") as? Double).map { Date(timeIntervalSinceReferenceDate: $0) } }
+        set { d.set(newValue?.timeIntervalSinceReferenceDate, forKey: "lastUpdateCheck") }
+    }
 
     private init() {
         // Port pre-rename state (Parley → Yap) before reading any setting below, so
@@ -146,6 +157,7 @@ final class Prefs: ObservableObject {
         dictationEngine = d.string(forKey: "dictationEngine") ?? "english"
         dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true
         removeFillers = d.object(forKey: "removeFillers") as? Bool ?? true
+        autoUpdateCheck = d.object(forKey: "autoUpdateCheck") as? Bool ?? true
         showMiniPlayer = d.object(forKey: "showMiniPlayer") as? Bool ?? true
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false
         if let data = d.data(forKey: "customRules"),
