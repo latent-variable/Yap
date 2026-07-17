@@ -231,17 +231,21 @@ struct LastResultCard<Actions: View>: View {
     @ViewBuilder var actions: () -> Actions
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Bounded scroll, not lineLimit: with .textSelection enabled, selecting
-            // the text makes SwiftUI ignore lineLimit and expand to full height,
-            // which would cover the Settings/Quit buttons. A fixed max height clips
-            // it for good — long results scroll inside the card instead.
-            ScrollView(.vertical, showsIndicators: false) {
-                Text(text)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .frame(maxHeight: 56)
+            // Fixed-height, line-limited, truncated — NOT a ScrollView. A
+            // ScrollView here (plus .textSelection) made the MenuBarExtra(.window)
+            // content renegotiate its size on every display cycle, so CoreAnimation
+            // relaid the whole menu back-to-back forever: a self-sustaining
+            // MenuBarExtraLayout loop that pinned the main thread (~continuous CPU)
+            // and made every menu-bar click lag. A deterministic size lets layout
+            // converge. The full text is one click away via the Copy button in
+            // `actions`, so losing in-card scroll/selection costs little.
+            Text(text)
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(3)
+                .truncationMode(.tail)
+                .frame(height: 56, alignment: .top)
+                .clipped()
             HStack(spacing: 10) {
                 Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 actions()

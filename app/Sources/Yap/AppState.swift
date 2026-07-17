@@ -219,8 +219,15 @@ final class AppState: ObservableObject {
         // Keep the published trust flag fresh (granting happens out of process).
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             // Timer fires on the main run loop; assert that isolation instead of
-            // spinning up a fresh Task every 2s.
-            MainActor.assumeIsolated { self?.axTrusted = Permissions.axTrusted }
+            // spinning up a fresh Task every 2s. Only WRITE on an actual change:
+            // assigning to a @Published fires objectWillChange even when the value
+            // is identical, which re-renders the whole menu (an expensive
+            // MenuBarExtra layout pass) every 2s for nothing.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let trusted = Permissions.axTrusted
+                if trusted != self.axTrusted { self.axTrusted = trusted }
+            }
         }
         Task {
             status = .loadingModel
