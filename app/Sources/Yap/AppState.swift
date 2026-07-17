@@ -50,7 +50,8 @@ final class AppState: ObservableObject {
     // completes so Settings can say "up to date" vs "not checked yet".
     @Published var availableUpdate: UpdateChecker.Release?
     @Published var checkingForUpdate = false
-    @Published var checkedForUpdate = false
+    @Published var checkedForUpdate = false   // a check completed successfully at least once
+    @Published var checkFailed = false        // last check couldn't reach GitHub (offline etc.)
     private var hdWarm = false          // HD model loaded since backend start
 
     /// The voice id for the currently selected engine.
@@ -269,10 +270,23 @@ final class AppState: ObservableObject {
         defer { checkingForUpdate = false }
         // URLSession does the network off-main; AppState is @MainActor, so after
         // the await we're back on main to publish the result safely.
-        let release = await UpdateChecker.latestIfNewer()
-        prefs.lastUpdateCheck = Date()
-        availableUpdate = release
-        checkedForUpdate = true
+        switch await UpdateChecker.check() {
+        case .update(let release):
+            availableUpdate = release
+            checkedForUpdate = true
+            checkFailed = false
+            prefs.lastUpdateCheck = Date()          // success: arm the once/day throttle
+        case .upToDate:
+            availableUpdate = nil
+            checkedForUpdate = true
+            checkFailed = false
+            prefs.lastUpdateCheck = Date()          // success: arm the once/day throttle
+        case .failed:
+            // Do NOT stamp lastUpdateCheck (a failed check must not poison the
+            // throttle — the auto-check should retry next launch) and do NOT claim
+            // "up to date" — the check never completed.
+            checkFailed = true
+        }
     }
 
     /// Bind the read hot key only when the reading feature is enabled; otherwise

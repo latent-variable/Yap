@@ -257,7 +257,9 @@ enum Selftest {
         checkBool("1.2 equals 1.2.0 (not newer)", UpdateChecker.isNewer("1.2", than: "1.2.0"), false)
         checkBool("minor beats high patch", UpdateChecker.isNewer("0.9.0", than: "0.8.99"), true)
         checkBool("major beats all", UpdateChecker.isNewer("1.0.0", than: "0.99.99"), true)
-        checkBool("prerelease suffix ignored", UpdateChecker.isNewer("0.8.1-beta", than: "0.8.1"), false)
+        checkBool("prerelease is not newer than its stable", UpdateChecker.isNewer("0.8.1-beta", than: "0.8.1"), false)
+        checkBool("stable IS newer than same-core prerelease", UpdateChecker.isNewer("0.8.1", than: "0.8.1-beta"), true)
+        checkBool("higher release beats a prerelease", UpdateChecker.isNewer("0.9.0", than: "0.8.9-beta"), true)
         checkBool("normalized strips leading v", UpdateChecker.normalized("v1.2.3") == "1.2.3", true)
 
         print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILURE(S)")

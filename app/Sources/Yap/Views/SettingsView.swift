@@ -74,6 +74,8 @@ private struct GeneralTab: View {
                     Spacer()
                     if let u = state.availableUpdate {
                         Link("Update \(u.version) available", destination: u.url)
+                    } else if state.checkFailed {
+                        Text("Couldn't check — check your connection").foregroundStyle(.secondary)
                     } else if state.checkedForUpdate {
                         Text("Up to date (\(UpdateChecker.currentVersion))").foregroundStyle(.secondary)
                     } else {
