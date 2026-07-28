@@ -219,9 +219,8 @@ Accessibility permission and a real focused app; audio needs an output device.
 
 ## Contributing / PRs
 
-Workflow, commit style, and the review/merge cycle follow the user-scope **`review-cycle`** skill (`~/.agents/skills/review-cycle/`) — branch off `main`, validate + test, PR, automated review, severity-gated loop, merge per the gating tiers. Project-specific only:
+Review/merge follows the user-scope **`review-cycle`** skill. Project-specific only:
 
-- **Trigger BOTH reviewers on every PR**, don't merge on one. Post `/gemini review` *and* `/dais review` (the in-house `latent-git-agents` reviewer). Gemini Code Assist sunsets **2026-07-17**, so the DAIS reviewer is its successor — don't skip it. The auto-monitor can lag, so trigger `/dais review` explicitly and wait for its verdict before merging; gate on zero high/critical across both.
 - If you change the backend payload shape, update `BackendClient` and `AudioPlayer` together and re-run the validation list above.
 - Keep the README ~100 lines; long design prose goes in `docs/`. Don't hand-maintain lists `/voices` can print live.
 
@@ -397,9 +396,8 @@ Rules for `MenuContent` and anything it shows:
 
 ## Agent context (scope + memory)
 <!-- BEGIN agent-context (managed by ~/.agents/bin/project-sync.sh) -->
-- You are in **PROJECT scope** (this repo). User-scope canon = `~/.agents` and transcends projects — don't conflate them. `.claude`/`.agents` here may be symlinks; verify with `readlink` before claiming a write landed.
+- You are in **PROJECT scope** (this repo). Everything that is true across projects lives in user-scope canon (`~/.agents/AGENTS.md` + skills) and is NOT repeated here; this file holds only what is true of THIS repo.
 - Project memory + shared skills: `.agents/` (gitignored). Read `.agents/memory/MEMORY.md` first.
-- **Commit proactively** (canon doctrine): finished+tested chunk → commit. Commits are free and revertible.
-- **Why: nightly audit.** `latent-git-agents` audits only **committed code on the default branch**. Uncommitted / branch-stranded work is invisible to it — no review, no fixes. Finishing work without committing drops it out of coverage; if you leave any uncommitted, flag it to Lino.
+- `.claude`/`.agents` here may be symlinks; verify with `readlink` before claiming a write landed.
 - Refresh infra: `~/.agents/bin/project-sync.sh .`
 <!-- END agent-context -->
