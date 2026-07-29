@@ -388,9 +388,8 @@ Rules for `MenuContent` and anything it shows:
 
 - **Fully local. No cloud TTS, no accounts, no analytics, ever.** That's the
   product. Any network call besides the one-time model download is a regression.
-- Destructive shell: `trash`, never `rm -rf`/`rm -r`/`rm -f`.
-- Default model IDs for any AI work: Opus `claude-opus-4-8`, Sonnet
-  `claude-sonnet-4-6`, Haiku `claude-haiku-4-5-20251001`.
+- Default model IDs for any AI work: Opus `claude-opus-5`, Sonnet
+  `claude-sonnet-5`, Haiku `claude-haiku-4-5-20251001`.
 - macOS 14+, Apple Silicon. Prefer native APIs (AVFoundation, Carbon hotkey,
   AXUIElement) over adding dependencies.
 
