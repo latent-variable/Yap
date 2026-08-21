@@ -497,6 +497,15 @@ final class AppState: ObservableObject {
                     if self.prefs.engine == "pocket" { self.hdWarm = true }
                 }
             }
+            // Superseded: the newer read already called audio.stop()/start() and
+            // owns the player, so everything below belongs to it, not us. Bail
+            // before flush() — it would set `ended` on the new session and, if the
+            // new read hasn't primed yet, start it early on a short cushion.
+            // (Pre-gate this was near-harmless because a stale stream only got
+            // here after downloading the whole document, long after the new read
+            // had primed. The gate returns the moment it's superseded — right
+            // inside that window — so it has to be guarded now.)
+            guard gen == generation else { return }
             audio.flush()   // stream ended — play any sub-cushion remainder
             // drain
             // Include .paused: pausing flips status away from .reading, and if the
@@ -594,6 +603,7 @@ final class AppState: ObservableObject {
                 self.audio.feed(d)
                 Task { @MainActor in if self.preparing { self.preparing = false } }
             }
+            guard gen == generation else { return }   // superseded — see stream()
             audio.flush()
             while gen == generation && audio.hasQueued {
                 do { try await Task.sleep(nanoseconds: 150_000_000) } catch { break }
