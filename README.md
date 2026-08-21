@@ -24,16 +24,20 @@ You think faster than you type, and way faster than you read. So stop doing both
 
 The app bundles its own Python — nothing else to install.
 
-```bash
-# ① Homebrew (easiest, no Gatekeeper prompt)
-brew install --cask latent-variable/tap/yap
+**① Homebrew** — easiest, no Gatekeeper prompt.
 
-# ③ Build from source (needs Xcode command-line tools)
+```bash
+brew install --cask latent-variable/tap/yap
+```
+
+**② DMG** — grab `Yap-*.dmg` from [Releases](https://github.com/latent-variable/Yap/releases), drag to Applications, then clear the one-time quarantine (it's open-source, not notarized): `xattr -cr /Applications/Yap.app`.
+
+**③ Build from source** — needs Xcode command-line tools.
+
+```bash
 git clone https://github.com/latent-variable/Yap.git
 cd Yap && bash scripts/build_app.sh && open dist/Yap.app
 ```
-
-**② DMG:** grab `Yap-*.dmg` from [Releases](https://github.com/latent-variable/Yap/releases), drag to Applications, then clear the one-time quarantine (it's open-source, not notarized): `xattr -cr /Applications/Yap.app`.
 
 First launch grabs the Kokoro model (~340 MB). Grant Accessibility + Microphone when asked (or use Clipboard mode, no permission needed). Then: **⌘⇧D** to dictate, **⌘⇧R** to read the selection aloud.
 
