@@ -215,6 +215,31 @@ enum Selftest {
         if ap.isEngineRunning { failures += 1; print("  ✗ engine STILL running after stop — idle CPU drain") }
         else { print("  ✓ engine parked after stop") }
 
+        print("AudioPlayer — queued-seconds accounting (drives stream backpressure)")
+        do {
+            let bp = AudioPlayer()
+            try? bp.start(volume: 1, pitchCents: 0, rate: 1, cushionSeconds: 0.05)
+            checkBool("fresh session starts empty", bp.queuedSeconds == 0, true)
+            // 24000 frames = 1s of int16 mono @ 24 kHz = 48000 bytes.
+            bp.feed(Data(count: 48000))
+            // feed() is async on the player queue; queuedSeconds syncs on the same
+            // queue, so the read is ordered after the append — no sleep needed.
+            checkBool("1s of PCM reads as ~1s queued", abs(bp.queuedSeconds - 1.0) < 0.01, true)
+            bp.feed(Data(count: 48000 * 3))
+            checkBool("queue accumulates across chunks", abs(bp.queuedSeconds - 4.0) < 0.01, true)
+            // The gate stalls the reader above this; a queue that couldn't exceed
+            // the cap would mean the backpressure branch is dead code.
+            checkBool("queue can exceed the cap (gate has something to clamp)",
+                      4.0 < AudioPlayer.maxQueuedSeconds, true)
+            // An odd trailing byte is carried, not counted as a whole frame.
+            bp.feed(Data(count: 1))
+            checkBool("odd trailing byte doesn't inflate the count",
+                      abs(bp.queuedSeconds - 4.0) < 0.01, true)
+            bp.stop()
+            checkBool("stop() clears the queue (gate sees an empty player)",
+                      bp.queuedSeconds == 0, true)
+        }
+
         print("History — cap keeps newest, drops overflow; entries round-trip")
         do {
             // capped() takes the first N (newest, since we prepend) and drops the rest.

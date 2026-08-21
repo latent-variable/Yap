@@ -1,6 +1,31 @@
 import SwiftUI
 
+/// Real entry point.
+///
+/// The probes that park the main thread on `dispatchMain()` (`--pipetest`,
+/// `--backpressure`) must run BEFORE SwiftUI installs its scene. Run from
+/// `applicationDidFinishLaunching` they abort with
+/// `NSViewIsCurrentlyBuildingLayerTreeForDisplay != currentlyBuildingLayerTree`
+/// (SIGTRAP): the MenuBarExtra's layer tree is mid-build, and parking main
+/// re-enters AppKit while it is. The flags that just print and `exit(0)` are
+/// unaffected and stay in the delegate.
 @main
+enum YapMain {
+    static func main() {
+        if let i = CommandLine.arguments.firstIndex(of: "--pipetest") {
+            let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
+            let prof = CommandLine.arguments.count > i + 2 ? CommandLine.arguments[i + 2] : nil
+            CLITest.run(path: path, profileName: prof)
+        }
+        if let i = CommandLine.arguments.firstIndex(of: "--backpressure") {
+            let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
+            let secs = CommandLine.arguments.count > i + 2 ? Double(CommandLine.arguments[i + 2]) : nil
+            CLITest.runBackpressure(path: path, seconds: secs ?? 25)
+        }
+        YapApp.main()
+    }
+}
+
 struct YapApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @ObservedObject private var state = AppState.shared
@@ -56,11 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             exit(0)
         }
-        if let i = CommandLine.arguments.firstIndex(of: "--pipetest") {
-            let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
-            let prof = CommandLine.arguments.count > i + 2 ? CommandLine.arguments[i + 2] : nil
-            CLITest.run(path: path, profileName: prof)
-        }
+        // --pipetest / --backpressure are handled in YapMain, before SwiftUI
+        // builds its scene (see the note there).
         NSApp.setActivationPolicy(.accessory) // menu-bar only
         // Register the "Read with Yap" Services-menu provider (see NSServices
         // in Info.plist). Strong ref kept so it isn't deallocated.

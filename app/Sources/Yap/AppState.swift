@@ -436,6 +436,22 @@ final class AppState: ObservableObject {
         Task { await stream(cleaned, gen: gen) }
     }
 
+    /// Flow control for a streaming read, handed to `BackendClient.streamPCM`.
+    ///
+    /// Suspends while the player is more than `AudioPlayer.maxQueuedSeconds`
+    /// ahead of the listener, and reports `false` once a newer read (or `stop()`)
+    /// has bumped `generation`, which tears the stream down instead of merely
+    /// discarding its bytes. The loop itself is `AudioPlayer.gate`; this only
+    /// supplies the main-actor sample it polls.
+    private func streamGate(gen: Int) -> @Sendable () async -> Bool {
+        AudioPlayer.gate { [weak self] in
+            guard let self else { return (live: false, queued: 0) }
+            return await MainActor.run {
+                (live: gen == self.generation, queued: self.audio.queuedSeconds)
+            }
+        }
+    }
+
     /// Shared synth + playback path: ensure the backend is up, then stream the
     /// cleaned text for this generation. Used by both the hotkey and Services.
     private func stream(_ cleaned: String, gen: Int) async {
@@ -470,7 +486,8 @@ final class AppState: ObservableObject {
             // backend synthesizes at 1.0 and pauses stretch along with it.
             try await backend.client.streamPCM(text: cleaned, voice: activeVoice,
                                                 speed: 1.0, pauseScale: prefs.pauseScale,
-                                                engine: prefs.engine) { [weak self] data in
+                                                engine: prefs.engine,
+                                                awaitCapacity: streamGate(gen: gen)) { [weak self] data in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(data)   // scheduling is thread-safe
                 // @Published writes MUST be on the main actor (the stream
@@ -480,6 +497,15 @@ final class AppState: ObservableObject {
                     if self.prefs.engine == "pocket" { self.hdWarm = true }
                 }
             }
+            // Superseded: the newer read already called audio.stop()/start() and
+            // owns the player, so everything below belongs to it, not us. Bail
+            // before flush() — it would set `ended` on the new session and, if the
+            // new read hasn't primed yet, start it early on a short cushion.
+            // (Pre-gate this was near-harmless because a stale stream only got
+            // here after downloading the whole document, long after the new read
+            // had primed. The gate returns the moment it's superseded — right
+            // inside that window — so it has to be guarded now.)
+            guard gen == generation else { return }
             audio.flush()   // stream ended — play any sub-cushion remainder
             // drain
             // Include .paused: pausing flips status away from .reading, and if the
@@ -571,11 +597,13 @@ final class AppState: ObservableObject {
                 ? "This is a preview of the selected Pocket voice."
                 : Self.sampleText(for: prefs.voice)
             try? await backend.client.streamPCM(text: sample, voice: activeVoice, speed: 1.0,
-                                                pauseScale: prefs.pauseScale, engine: prefs.engine) { [weak self] d in
+                                                pauseScale: prefs.pauseScale, engine: prefs.engine,
+                                                awaitCapacity: streamGate(gen: gen)) { [weak self] d in
                 guard let self, gen == self.generation else { return }
                 self.audio.feed(d)
                 Task { @MainActor in if self.preparing { self.preparing = false } }
             }
+            guard gen == generation else { return }   // superseded — see stream()
             audio.flush()
             while gen == generation && audio.hasQueued {
                 do { try await Task.sleep(nanoseconds: 150_000_000) } catch { break }

@@ -244,6 +244,44 @@ final class AudioPlayer {
     /// Approximate: is anything still queued?
     var hasQueued: Bool { q.sync { scheduledFrames > 0 } }
 
+    /// Seconds of audio scheduled but not yet played back.
+    ///
+    /// Drives stream backpressure. Both backends generate far faster than
+    /// realtime (measured on a README-sized read: Kokoro 9.1x, Pocket 14.4x), and
+    /// nothing in the read path used to wait for playback — so a long document
+    /// queued *the whole thing* onto the node ahead of the listener: ~2,950
+    /// buffers / 57 MB for 11 minutes of audio, and ~19,850 buffers / 381 MB for
+    /// a 46k-character document. `AppState.stream` stalls the reader while this
+    /// is over `maxQueuedSeconds`, which bounds the node to ~50 buffers / ~1 MB
+    /// no matter how long the text is.
+    var queuedSeconds: Double { q.sync { Double(scheduledFrames) / 24000.0 } }
+
+    /// How far ahead of the listener we let the stream run. Far above the 0.35s
+    /// prime cushion, so a stalled reader can never starve playback: at the
+    /// slowest measured generation rate the backend refills this in a fraction of
+    /// the time it takes to play.
+    static let maxQueuedSeconds: Double = 10.0
+
+    /// The backpressure policy, shared by the app (`AppState.streamGate`) and the
+    /// `--backpressure` probe so both exercise the same loop rather than a copy.
+    ///
+    /// `sample` reports whether the read is still current and how much audio is
+    /// queued; the returned closure is what `BackendClient.streamPCM` awaits after
+    /// each chunk. Polling beats a continuation: the two conditions it waits on —
+    /// playback draining and the read being superseded — share no signal to
+    /// resume from, and at 10 Hz against a 10s budget the latency is irrelevant.
+    static func gate(sample: @escaping @Sendable () async -> (live: Bool, queued: Double))
+        -> @Sendable () async -> Bool {
+        {
+            while true {
+                let s = await sample()
+                if !s.live { return false }
+                if s.queued <= maxQueuedSeconds { return true }
+                do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return false }
+            }
+        }
+    }
+
     /// Test hook (`--selftest`): observe engine run state to verify idle-parking.
     var isEngineRunning: Bool { engine.isRunning }
 }

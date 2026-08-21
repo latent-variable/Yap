@@ -180,6 +180,23 @@ def _hardwrap(sentence: str, max_chars: int) -> list[str]:
     return out
 
 
+def speakable(piece: str) -> bool:
+    """Is there anything here to pronounce?
+
+    A markdown rule (`---`, `___`), a code fence (```` ``` ````), a table divider
+    or bare punctuation phonemizes to the empty string, and Kokoro's `create()`
+    then does `np.concatenate([])` and raises. `/synthesize` streaming swallowed
+    that per segment, so every rule in every document logged a synth error;
+    **WAV export has no such guard and returned HTTP 500 for any text containing
+    one.** Dropping these at the source fixes both, and is what the caller wanted
+    anyway — there is no audio to emit for a horizontal rule.
+
+    `isalnum` is Unicode-aware, so CJK/Cyrillic/Arabic text counts as speakable;
+    `\\w` would not work here because it also matches the `_` in `___`.
+    """
+    return any(ch.isalnum() for ch in piece)
+
+
 def segment_text(text: str, max_chars: int = 320) -> list[tuple[str, float]]:
     """Split into speakable segments, each tagged with the silence to play
     after it. Respects paragraphs (blank lines), single line breaks, and
@@ -214,6 +231,12 @@ def segment_text(text: str, max_chars: int = 320) -> list[tuple[str, float]]:
                         gap = GAP_SENTENCE
                     else:
                         gap = GAP_SENTENCE * 0.5  # mid-sentence hard wrap
+                    if not speakable(piece):
+                        # Keep the pause the rule/fence stood for: roll its gap
+                        # into the previous segment rather than losing the beat.
+                        if segs and gap > 0:
+                            segs[-1] = (segs[-1][0], max(segs[-1][1], gap))
+                        continue
                     segs.append((piece, gap))
     return segs
 

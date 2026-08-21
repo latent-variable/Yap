@@ -11,7 +11,7 @@ import wave
 import numpy as np
 import pytest
 
-from server import (chunk_text, split_sentences, segment_text, Engine, SAMPLE_RATE,
+from server import (chunk_text, split_sentences, segment_text, speakable, Engine, SAMPLE_RATE,
                     resolve_provider, GAP_SENTENCE, GAP_LINE, GAP_PARAGRAPH,
                     hd_voice_path)
 from pocket_engine import PocketEngine
@@ -152,6 +152,30 @@ class TestSegmentation:
         joined = " ".join(s for s, _ in segment_text(text))
         for word in ("Intro", "one", "two", "Outro"):
             assert word in joined
+
+    @pytest.mark.parametrize("mark", ["---", "***", "___", "```", "|---|---|", "..."])
+    def test_unspeakable_lines_are_dropped(self, mark):
+        """A rule/fence phonemizes to nothing; Kokoro then raises on it. Streaming
+        swallowed that (an error log per rule), WAV export 500'd. Drop at source."""
+        segs = segment_text(f"First para.\n\n{mark}\n\nSecond para.")
+        assert [s for s, _ in segs] == ["First para.", "Second para."]
+        assert all(speakable(s) for s, _ in segs)
+
+    def test_dropped_line_keeps_its_pause(self):
+        """Losing the segment must not silently lose the beat it stood for."""
+        segs = segment_text("First para.\n\n---\n\nSecond para.")
+        assert segs[0][1] == GAP_PARAGRAPH
+
+    def test_speakable_keeps_non_latin_and_digits(self):
+        # isalnum is Unicode-aware; `\w` would wrongly accept the `_` in `___`.
+        assert speakable("你好") and speakable("Привет") and speakable("42")
+        assert not speakable("---") and not speakable("___") and not speakable("!?")
+
+    def test_readme_has_no_unspeakable_segments(self):
+        """The repo's own README is what turned the long-document tests red."""
+        text = (Path(__file__).parents[2] / "README.md").read_text()
+        bad = [s for s, _ in segment_text(text) if not speakable(s)]
+        assert bad == [], f"unspeakable segments would fail synthesis: {bad[:5]}"
 
 
 # ── synthesis robustness ────────────────────────────────────────────────────

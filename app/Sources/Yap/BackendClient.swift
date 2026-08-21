@@ -164,8 +164,17 @@ struct BackendClient {
     }
 
     /// Stream raw int16 PCM. `onChunk` receives bytes as they arrive.
+    ///
+    /// `awaitCapacity` is the flow-control hook, called after every chunk is
+    /// handed over. It may suspend (while the consumer is saturated) and returns
+    /// `false` to abandon the stream. Suspending here stops draining the socket,
+    /// so the kernel receive window closes and the backend blocks on write — real
+    /// backpressure, applied all the way back to the synthesizer rather than
+    /// letting it run a whole document ahead of the listener.
     func streamPCM(text: String, voice: String, speed: Double, pauseScale: Double = 1.0,
-                   engine: String = "kokoro", onChunk: @escaping (Data) -> Void) async throws {
+                   engine: String = "kokoro",
+                   awaitCapacity: (@Sendable () async -> Bool)? = nil,
+                   onChunk: @escaping (Data) -> Void) async throws {
         let req = synthRequest(text, voice: voice, speed: speed, pauseScale: pauseScale,
                                engine: engine, wav: false)
         let (bytes, response) = try await session.bytes(for: req)
@@ -183,6 +192,14 @@ struct BackendClient {
             if buf.count >= 9600 { // ~0.2s of audio
                 onChunk(Data(buf))
                 buf.removeAll(keepingCapacity: true)
+                // Returning here abandons the sequence, which deinits the
+                // AsyncBytes iterator and cancels the underlying URLSession task
+                // — the backend sees the disconnect and stops synthesizing the
+                // rest. Before this, a superseded read was only *ignored*: its
+                // bytes were dropped on the floor while the backend kept
+                // generating the whole document and contending for the engine
+                // lock with the read that replaced it.
+                if let awaitCapacity, await awaitCapacity() == false { return }
             }
         }
         if !buf.isEmpty { onChunk(Data(buf)) }
