@@ -12,10 +12,12 @@ our gap on top of that is what made the first take drag.
 
 Run via scripts/make_voiceover.sh (it wires the venv + hd-packages PYTHONPATH).
 """
+import math
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import wave
 from pathlib import Path
 
@@ -41,8 +43,10 @@ GAP_SCALE = float(os.environ.get("YAP_VOICEOVER_GAP") or 1.0)  # multiplier on i
 # most people run faster. Reproduce playback with a pitch-preserving stretch over
 # the finished file, which is what AVAudioUnitTimePitch does live.
 SPEED = float(os.environ.get("YAP_VOICEOVER_SPEED") or 1.25)
-if SPEED <= 0:
-    raise SystemExit(f"YAP_VOICEOVER_SPEED must be positive, got {SPEED}")
+# Finite as well as positive: the atempo chain halves until it lands in range, so
+# inf would loop forever and nan would never satisfy either bound.
+if not math.isfinite(SPEED) or SPEED <= 0:
+    raise SystemExit(f"YAP_VOICEOVER_SPEED must be a positive finite number, got {SPEED}")
 
 
 def narration() -> str:
@@ -149,7 +153,16 @@ def main() -> int:
     peak = float(np.max(np.abs(audio))) or 1.0
     pcm = (np.clip(audio / peak * 0.97, -1.0, 1.0) * 32767).astype("<i2")
     OUT_WAV.parent.mkdir(parents=True, exist_ok=True)
-    raw = OUT_WAV.with_suffix(".raw.wav") if SPEED != 1.0 else OUT_WAV
+    # A name derived from OUT_WAV (foo.wav -> foo.raw.wav) is a path we do not own:
+    # if something of that name already exists we would overwrite it and then
+    # delete it in the finally below. mkstemp gives us a path nothing else holds,
+    # in the destination dir so the ffmpeg pass stays on one filesystem.
+    if SPEED != 1.0:
+        fd, tmp = tempfile.mkstemp(dir=OUT_WAV.parent, suffix=".raw.wav")
+        os.close(fd)
+        raw = Path(tmp)
+    else:
+        raw = OUT_WAV
     with wave.open(str(raw), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -174,7 +187,7 @@ def main() -> int:
                   f"SPEED != 1.0", file=sys.stderr)
             return 1
         finally:
-            raw.unlink(missing_ok=True)
+            raw.unlink(missing_ok=True)   # ours by construction, see mkstemp above
         spoken /= SPEED
     with wave.open(str(OUT_WAV), "rb") as w:
         total = w.getnframes() / w.getframerate()
