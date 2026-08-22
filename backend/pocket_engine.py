@@ -35,6 +35,60 @@ log = logging.getLogger("yap")
 
 SAMPLE_RATE = 24000  # Pocket native; matches Kokoro / the int16 PCM contract
 
+# Pocket wraps every utterance in its own silence, and it is per-utterance
+# overhead rather than anything to do with the line: measured at 0.56-0.96s
+# leading and 0.20-0.34s trailing on lines from three words to twenty. Kokoro,
+# on the identical text, leaves 0.04-0.05s and 0.09-0.19s.
+#
+# Playing that verbatim put roughly a second of dead air in front of EVERY
+# sentence, on top of the pause server.py already inserts between segments — so
+# a Pocket read dragged, and GAP_SENTENCE meant one thing on Kokoro and another
+# on Pocket. Trimming back to Kokoro's range is what makes the gap a caller asks
+# for the gap a listener hears, on either engine.
+LEAD_PAD = 0.05    # seconds of silence to keep before the first sound
+TRAIL_PAD = 0.15   # ...and after the last, so a line doesn't end clipped
+
+
+def trim_padding(a: np.ndarray, sr: int = SAMPLE_RATE,
+                 lead: float = LEAD_PAD, trail: float = TRAIL_PAD) -> np.ndarray:
+    """Cut a Pocket utterance's leading/trailing silence back to `lead`/`trail`.
+
+    Only ever REMOVES: a clip already tighter than the targets is returned
+    untouched, and one with no detectable speech at all is returned whole rather
+    than emptied — dropping audio would be a far worse failure than leaving a
+    little silence on it.
+    """
+    if a.size == 0:
+        return a
+    fl = max(1, int(0.01 * sr))                       # 10 ms frames
+    frames = a[: a.size // fl * fl].reshape(-1, fl)
+    if frames.size == 0:
+        return a
+    rms = np.sqrt((frames ** 2).mean(axis=1))
+    peak = float(np.abs(a).max())
+
+    # TWO thresholds, because one cannot do this job. A single "is this speech"
+    # level set high enough to ignore the model's noise floor also sits above a
+    # quiet onset — an /s/ or /f/ before the vowel — and trimming to it lops the
+    # front off the word. So: `speech` finds a frame that is confidently speech,
+    # then we walk outward while frames stay above `floor`, which is barely off
+    # true silence. The word's quiet edges are inside that walk.
+    speech = max(0.005, peak * 0.02)
+    floor = max(0.0015, peak * 0.004)
+    loud = np.flatnonzero(rms >= speech)
+    if loud.size == 0:
+        return a
+    first, last = int(loud[0]), int(loud[-1])
+    while first > 0 and rms[first - 1] >= floor:
+        first -= 1
+    while last < rms.size - 1 and rms[last + 1] >= floor:
+        last += 1
+
+    start = max(0, first * fl - int(lead * sr))
+    end = min(a.size, (last + 1) * fl + int(trail * sr))
+    return a[start:end]
+
+
 # Predefined catalog voices (the without-cloning model). Hardcoded so we can list
 # them before the model loads; mirrors pocket_tts _ORIGINS_OF_PREDEFINED_VOICES.
 # (lang lets the UI group non-English voices.)
@@ -283,8 +337,13 @@ class PocketEngine:
             st = self._state_for(voice)
             audio = self.model.generate_audio(st, text)
         if hasattr(audio, "detach"):
-            return audio.detach().cpu().numpy().astype(np.float32)
-        return np.asarray(audio, dtype=np.float32)
+            out = audio.detach().cpu().numpy().astype(np.float32)
+        else:
+            out = np.asarray(audio, dtype=np.float32)
+        # Strip the model's per-utterance padding before it reaches the caller,
+        # so the segment gaps server.py inserts are the only silence between
+        # sentences. See trim_padding().
+        return trim_padding(out)
 
     def status(self) -> dict:
         return {
