@@ -41,6 +41,8 @@ GAP_SCALE = float(os.environ.get("YAP_VOICEOVER_GAP") or 1.0)  # multiplier on i
 # most people run faster. Reproduce playback with a pitch-preserving stretch over
 # the finished file, which is what AVAudioUnitTimePitch does live.
 SPEED = float(os.environ.get("YAP_VOICEOVER_SPEED") or 1.25)
+if SPEED <= 0:
+    raise SystemExit(f"YAP_VOICEOVER_SPEED must be positive, got {SPEED}")
 
 
 def narration() -> str:
@@ -99,35 +101,34 @@ def main() -> int:
         print("[voiceover] Pocket load failed:", eng.error, file=sys.stderr)
         return 1
 
-    # A catalog name goes straight through; anything else is one of the user's
-    # cloned voices and has to be resolved to its reference clip, exactly as
-    # _segment_synth does for a real read.
+    # Resolve in the SAME order as _segment_synth, or this renders a different
+    # voice than the app speaks: an explicit clone beats a same-named catalog
+    # voice while cloning is usable, and the catalog is the fallback otherwise —
+    # so a clone called "jane" is the user's jane, not the model's.
     voice, target = VOICE, None
-    if VOICE in CATALOG_NAMES:
+    ref = hd_voice_path(VOICE)
+    if ref is not None and eng.has_cloning:
+        target = str(ref)
+    elif VOICE in CATALOG_NAMES:
         target = VOICE
     else:
-        ref = hd_voice_path(VOICE)
-        why = (f"no reference clip {VOICE}.wav in the hd-voices dir" if ref is None
-               else "cloning is not available in this install" if not eng.has_cloning
-               else None)
-        if why is None:
-            target = str(ref)
-        elif VOICE_EXPLICIT:
+        why = ("cloning is not available in this install" if ref is not None
+               else f"no reference clip {VOICE}.wav in the hd-voices dir")
+        if VOICE_EXPLICIT:
             # Asked for by name — say so instead of quietly speaking as somebody
             # else. Only the *default* falls back.
             print(f"[voiceover] can't use {VOICE!r}: {why}. Catalog voices: "
                   f"{', '.join(sorted(CATALOG_NAMES))}", file=sys.stderr)
             return 1
-        else:
-            # The default is a clone that lives on one machine and is not in the
-            # repo, so on any other checkout it simply isn't there. Falling back
-            # keeps make_hero_video.sh (which renders the voiceover itself when
-            # the WAV is missing) working everywhere — loudly, so nobody ships a
-            # different voice than they meant to.
-            print(f"[voiceover] {VOICE!r} unavailable ({why}); falling back to "
-                  f"{FALLBACK_VOICE!r}. The committed take uses {VOICE!r} — set "
-                  f"YAP_VOICEOVER_VOICE to choose deliberately.", file=sys.stderr)
-            voice = target = FALLBACK_VOICE
+        # The default is a clone that lives on one machine and is not in the
+        # repo, so on any other checkout it simply isn't there. Falling back
+        # keeps make_hero_video.sh (which renders the voiceover itself when the
+        # WAV is missing) working everywhere — loudly, so nobody ships a
+        # different voice than they meant to.
+        print(f"[voiceover] {VOICE!r} unavailable ({why}); falling back to "
+              f"{FALLBACK_VOICE!r}. The committed take uses {VOICE!r} — set "
+              f"YAP_VOICEOVER_VOICE to choose deliberately.", file=sys.stderr)
+        voice = target = FALLBACK_VOICE
 
     print(f"[voiceover] {len(text)} chars -> {voice} @ {SAMPLE_RATE} Hz, {SPEED}x")
 
@@ -155,11 +156,14 @@ def main() -> int:
         w.setframerate(SAMPLE_RATE)
         w.writeframes(pcm.tobytes())
     if SPEED != 1.0:
-        # atempo preserves pitch, same as the playback path. It is capped at 2.0
-        # per instance, so chain filters for anything faster.
+        # atempo preserves pitch, same as the playback path. One instance only
+        # spans 0.5-2.0, so chain them at BOTH ends — a slow take (0.4x) is as
+        # out of range as a fast one.
         n, chain = SPEED, []
         while n > 2.0:
             chain.append("atempo=2.0"); n /= 2.0
+        while n < 0.5:
+            chain.append("atempo=0.5"); n /= 0.5
         chain.append(f"atempo={n:.6f}")
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw),
                "-filter:a", ",".join(chain), str(OUT_WAV)]
