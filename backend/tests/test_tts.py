@@ -541,6 +541,9 @@ class TestStreamIntegrity:
 
 
 # ── Pocket utterance padding ────────────────────────────────────────────────
+LEAD_PAD_SLACK = 0.03   # the trim quantizes to 10 ms frames
+
+
 class TestPocketPadding:
     """Pocket wraps every utterance in its own silence — 0.56-0.96s leading,
     0.20-0.34s trailing, near-constant regardless of line length, against
@@ -589,6 +592,39 @@ class TestPocketPadding:
         assert out.size >= speech.size
         assert float(np.sum(out ** 2)) == pytest.approx(float(np.sum(speech ** 2)), rel=1e-3)
 
+    def test_a_quiet_onset_is_not_clipped_off_the_word(self):
+        from pocket_engine import trim_padding
+        # A fricative — /s/, /f/ — carries a fraction of the energy of the vowel
+        # after it. A single threshold set high enough to ignore the model's noise
+        # floor sits above this, and the trim then starts at the vowel and eats the
+        # consonant. This is the failure that matters: leaving silence is free,
+        # cutting the front off a word is audible damage.
+        rng = np.random.default_rng(7)
+        fricative = (rng.standard_normal(int(0.14 * SAMPLE_RATE)) * 0.006).astype(np.float32)
+        vowel = self._tone(0.5, amp=0.5)
+        padded = np.concatenate([np.zeros(int(0.9 * SAMPLE_RATE), np.float32),
+                                 fricative, vowel,
+                                 np.zeros(int(0.35 * SAMPLE_RATE), np.float32)])
+        out = trim_padding(padded)
+
+        # Assert the CONTENT, not the length: a trim that cut the consonant still
+        # returns a long clip, because the trailing pad makes up the difference.
+        # So find where the vowel starts inside the result and weigh what is in
+        # front of it — that is the consonant, or it is nothing.
+        fl = int(0.01 * SAMPLE_RATE)
+        f = out[: out.size // fl * fl].reshape(-1, fl)
+        vowel_frame = int(np.flatnonzero(np.sqrt((f ** 2).mean(axis=1)) >= 0.05)[0])
+        before = out[: vowel_frame * fl]
+        kept = float(np.sum(before ** 2))
+        want = float(np.sum(fricative ** 2))
+        assert kept >= want * 0.9, (
+            f"the /s/ was clipped: {kept:.4f} of {want:.4f} energy survives in "
+            f"front of the vowel")
+        # ...and it must still have done its job on the silence in front of that.
+        from pocket_engine import LEAD_PAD
+        assert vowel_frame * fl / SAMPLE_RATE <= 0.14 + LEAD_PAD + LEAD_PAD_SLACK, \
+            f"lead to vowel {vowel_frame * fl / SAMPLE_RATE:.3f}s"
+
     def test_an_already_tight_clip_is_untouched(self):
         from pocket_engine import trim_padding
         tight = self._tone(0.5)
@@ -608,7 +644,12 @@ class TestPocketPadding:
         eng = PocketEngine()
         if not eng.available() or not eng.load():
             pytest.skip("Pocket engine not installed")
+        # Bounds sit well under the 0.56-0.96s / 0.20-0.34s the model actually
+        # emits, so they still fail outright if trimming stops working — but not
+        # at LEAD_PAD exactly: a line like "See ..." opens on a quiet /s/ that the
+        # detector deliberately keeps, and a test that punished that would be
+        # asking the trim to cut speech.
         for line in ["Meet Yap.", "Stop typing.", "See something worth hearing?"]:
             lead, trail = self._edges(eng.synth(line, "eve", 1.0))
-            assert lead <= LEAD_PAD + 0.02, f"{line!r} still leads with {lead:.2f}s"
-            assert trail <= TRAIL_PAD + 0.05, f"{line!r} still trails {trail:.2f}s"
+            assert lead <= 0.25, f"{line!r} still leads with {lead:.2f}s"
+            assert trail <= 0.30, f"{line!r} still trails {trail:.2f}s"

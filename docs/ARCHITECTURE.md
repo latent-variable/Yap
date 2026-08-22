@@ -51,6 +51,41 @@ The **Services menu** ("Read with Yap") is a second entry point: macOS hands the
 
 Raw int16 mono PCM at 24 kHz streams from the backend as `application/octet-stream`. The Swift side converts to `Float32` `AVAudioPCMBuffer`s and schedules them on an `AVAudioPlayerNode` as they arrive — playback begins on the first chunk. Pitch/volume/speed all run through `AVAudioUnitTimePitch` at playback (live-adjustable), so speed is real-time and identical across both engines.
 
+### Pocket pads every utterance, and we trim it
+
+Pocket returns each utterance wrapped in its own silence, and it is per-utterance
+overhead rather than anything to do with the line. Measured through both engines on
+identical text:
+
+| line | Kokoro lead / trail | Pocket lead / trail |
+|---|---|---|
+| "Meet Yap." | 0.04s / 0.19s | 0.74s / 0.20s |
+| "Stop typing." | 0.04s / 0.17s | 0.86s / 0.21s |
+| "No cloud. No account." | 0.05s / 0.09s | 0.77s / 0.30s |
+| "See something worth hearing?" | 0.04s / 0.15s | 0.56s / 0.27s |
+| a 15-word sentence | 0.05s / 0.17s | 0.96s / 0.34s |
+
+Streamed verbatim that put roughly a second of dead air in front of every sentence,
+*on top of* the `GAP_*` pause `server.py` already inserts between segments — so a
+Pocket read of the demo script ran 63.8s against 42.6s of speech, and `GAP_SENTENCE`
+meant one thing on Kokoro and another on Pocket even though the gap constants are
+supposed to be engine-agnostic. `PocketEngine.trim_padding` cuts it back to Kokoro's
+range at the engine, so the streaming read and the WAV export both get it.
+
+**The detector uses two thresholds, and that is the whole trick.** A single "is this
+speech" level high enough to ignore the model's noise floor also sits above a quiet
+onset — the `/s/` in "See" — and trimming to it lops the front off the word. So one
+threshold finds a frame that is confidently speech, then it walks outward while
+frames stay above a second, much lower floor; the word's quiet edges live inside
+that walk. It only ever removes: an already-tight clip comes back untouched, and one
+with no detectable speech comes back whole rather than emptied, because dropping
+audio is a far worse failure than leaving silence on it.
+
+Covered by `TestPocketPadding`, including a synthetic quiet-fricative-then-vowel case
+that asserts the consonant's *energy* survives in front of the vowel — a length
+assertion passes even when the onset was cut, because the trailing pad makes up the
+difference.
+
 ### Telling a finished read from a truncated one
 
 A synthesis failure partway through a read has no honest way to reach the client. The 200 went out with the first chunk and can't be retracted, and **aborting isn't detectable either**: uvicorn terminates the chunked body with a clean `0\r\n\r\n` even when the generator raises — verified on a raw socket — so a truncated body is byte-identical to a complete one. Skipping the segment (the original behaviour) was worse still: the read finished as a clean 200 having spoken a document with holes in it, and if every segment failed the app played nothing and announced success.

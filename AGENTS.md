@@ -100,13 +100,11 @@ Key facts an agent must keep straight:
   re-prompts for the Keychain HF token; until "Always Allow" is granted the backend
   sees `has_token=false`, so a cold-start demote can still happen once on a new
   build. In steady state (token readable) the selection is sticky.
-- **Pocket output is trimmed before it leaves the engine** (`trim_padding`). The
-  model pads every utterance with ~0.6-1.0s of leading silence and ~0.2-0.3s
-  trailing, near-constant whatever the line; Kokoro leaves ~0.05s/0.15s. Untrimmed
-  that stacked on top of the `GAP_*` pause between segments, so a Pocket read ran
-  a third longer than it needed to and the gap constants meant different things on
-  the two engines. Only ever removes, never empties a clip it can't read. Tests:
-  `TestPocketPadding`.
+- **Pocket output is trimmed before it leaves the engine** (`trim_padding`): the
+  model pads every utterance with its own silence, and playing that is what makes
+  the `GAP_*` constants mean different things on the two engines. It only ever
+  removes, and never empties a clip it can't read. Measurements and the detector:
+  `docs/ARCHITECTURE.md`.
 - Speed is applied at **playback** (AVAudioUnitTimePitch rate, live-adjustable),
   not the backend — parity across engines. The player pre-buffers a 0.35s cushion
   (both engines now; Pocket is fast enough not to need the old HD buffer logic).

@@ -65,15 +65,27 @@ def trim_padding(a: np.ndarray, sr: int = SAMPLE_RATE,
     if frames.size == 0:
         return a
     rms = np.sqrt((frames ** 2).mean(axis=1))
-    # Relative to this utterance, with an absolute floor so a clip that is only
-    # noise doesn't get treated as all-speech. Deliberately low: leaving 100ms of
-    # silence is nothing, clipping the front of a word is audible damage.
-    thr = max(0.005, float(np.abs(a).max()) * 0.02)
-    loud = np.flatnonzero(rms >= thr)
+    peak = float(np.abs(a).max())
+
+    # TWO thresholds, because one cannot do this job. A single "is this speech"
+    # level set high enough to ignore the model's noise floor also sits above a
+    # quiet onset — an /s/ or /f/ before the vowel — and trimming to it lops the
+    # front off the word. So: `speech` finds a frame that is confidently speech,
+    # then we walk outward while frames stay above `floor`, which is barely off
+    # true silence. The word's quiet edges are inside that walk.
+    speech = max(0.005, peak * 0.02)
+    floor = max(0.0015, peak * 0.004)
+    loud = np.flatnonzero(rms >= speech)
     if loud.size == 0:
         return a
-    start = max(0, loud[0] * fl - int(lead * sr))
-    end = min(a.size, (loud[-1] + 1) * fl + int(trail * sr))
+    first, last = int(loud[0]), int(loud[-1])
+    while first > 0 and rms[first - 1] >= floor:
+        first -= 1
+    while last < rms.size - 1 and rms[last + 1] >= floor:
+        last += 1
+
+    start = max(0, first * fl - int(lead * sr))
+    end = min(a.size, (last + 1) * fl + int(trail * sr))
     return a[start:end]
 
 
