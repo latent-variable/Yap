@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import AppKit
 import Carbon.HIToolbox
 
@@ -272,6 +273,65 @@ enum Selftest {
             let deleted = HistoryStore.merged(window: win, restored: old, cleared: false, deleted: [id0])
             checkBool("merge doesn't resurrect a deleted entry",
                       deleted.map(\.text) == ["new", "old2"], true)
+        }
+
+        print("AudioImport — a failed import never destroys the existing voice")
+        do {
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appending(path: "yap-import-\(UUID().uuidString)")
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: root) }
+
+            // A real 1s source clip (48 kHz stereo float, i.e. needs converting).
+            let src = root.appending(path: "source.wav")
+            let srcFmt = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
+            do {
+                let f = try AVAudioFile(forWriting: src, settings: srcFmt.settings)
+                let buf = AVAudioPCMBuffer(pcmFormat: srcFmt, frameCapacity: 48000)!
+                buf.frameLength = 48000
+                for ch in 0..<Int(srcFmt.channelCount) {
+                    for i in 0..<48000 {
+                        buf.floatChannelData![ch][i] = sinf(Float(i) * 0.05) * 0.5
+                    }
+                }
+                try f.write(from: buf)
+            } catch {
+                failures += 1; print("  ✗ could not build the source clip: \(error)")
+            }
+
+            // The voice the user already has, standing in for a cloned reference.
+            let dest = root.appending(path: "Lino.wav")
+            let existing = Data("an existing cloned voice".utf8)
+            fm.createFile(atPath: dest.path, contents: existing)
+
+            // maxSeconds: 0 makes the conversion produce nothing and throw — the
+            // exact shape of any mid-conversion failure. The original code had
+            // already deleted `dest` and opened a new empty file there by this
+            // point, so the user lost their voice and got a 0-frame stub.
+            var threw = false
+            do { try AudioImport.toReferenceWAV(src: src, dest: dest, maxSeconds: 0) }
+            catch { threw = true }
+            checkBool("failed conversion throws", threw, true)
+            checkBool("existing voice survives a failed import",
+                      fm.contents(atPath: dest.path) == existing, true)
+
+            // Success must still land: same name, replaced in place, real audio.
+            var ok = true
+            do { try AudioImport.toReferenceWAV(src: src, dest: dest, maxSeconds: 20) }
+            catch { ok = false }
+            checkBool("successful import replaces the voice", ok, true)
+            if let out = try? AVAudioFile(forReading: dest) {
+                checkBool("replacement is mono 24 kHz with audio in it",
+                          out.fileFormat.sampleRate == 24000 && out.fileFormat.channelCount == 1
+                          && out.length > 0, true)
+            } else {
+                failures += 1; print("  ✗ replacement is not a readable audio file")
+            }
+            // The staging dir must not leave a stray *.wav next to the voices —
+            // the backend globs that directory and would list it as a voice.
+            let strays = (try? fm.contentsOfDirectory(atPath: root.path))?
+                .filter { $0.hasSuffix(".wav") && $0 != "Lino.wav" && $0 != "source.wav" } ?? []
+            checkBool("no temp file left beside the voice", strays.isEmpty, true)
         }
 
         print("UpdateChecker — semantic version compare")
