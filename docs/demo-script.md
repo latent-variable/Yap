@@ -13,9 +13,12 @@ scripts/make_hero_video.sh     # muxes it over docs/yap-hero.png -> docs/yap-rea
 ```
 
 `Philip` is a cloned reference clip in `~/Library/Application Support/Yap/hd-voices`,
-not in the repo, so anyone else renders with a catalog voice:
-`YAP_VOICEOVER_VOICE=eve scripts/make_voiceover.sh`. `YAP_VOICEOVER_SPEED` and
-`YAP_VOICEOVER_GAP` are there for auditioning other takes.
+not in the repo. Where it isn't there the renderer says so and falls back to the
+`eve` catalog voice, so the hero build works on any checkout — a voice you name
+yourself and that doesn't exist is still a hard error, never a substitution.
+`YAP_VOICEOVER_VOICE`, `_SPEED`, `_GAP` and `_OUT` are there for auditioning
+takes. Pocket samples, so no two renders are bit-identical; duration drifts about
+a second between takes.
 
 **Two things the renderer has to do, and the first take did neither.** Pocket
 pads every utterance with its own silence — measured at 0.66–0.91s leading, up to

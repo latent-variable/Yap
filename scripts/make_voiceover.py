@@ -31,6 +31,8 @@ SCRIPT_MD = ROOT / "docs" / "demo-script.md"
 # something in the repo, so anyone else renders with a catalog voice:
 #   YAP_VOICEOVER_VOICE=eve scripts/make_voiceover.sh
 VOICE = os.environ.get("YAP_VOICEOVER_VOICE") or "Philip"
+VOICE_EXPLICIT = bool(os.environ.get("YAP_VOICEOVER_VOICE"))
+FALLBACK_VOICE = "eve"   # catalog, ships with the model, always resolvable
 OUT_WAV = Path(os.environ.get("YAP_VOICEOVER_OUT") or ROOT / "docs" / "demo-voiceover.wav")
 GAP_SCALE = float(os.environ.get("YAP_VOICEOVER_GAP") or 1.0)  # multiplier on inter-chunk pauses
 # Yap applies speed at PLAYBACK, never in the engine (Pocket ignores its `speed`
@@ -91,7 +93,6 @@ def main() -> int:
     if not text:
         print("no narration text found in", SCRIPT_MD, file=sys.stderr)
         return 1
-    print(f"[voiceover] {len(text)} chars -> {VOICE} @ {SAMPLE_RATE} Hz, {SPEED}x")
 
     eng = PocketEngine()
     if not eng.load():
@@ -101,19 +102,34 @@ def main() -> int:
     # A catalog name goes straight through; anything else is one of the user's
     # cloned voices and has to be resolved to its reference clip, exactly as
     # _segment_synth does for a real read.
+    voice, target = VOICE, None
     if VOICE in CATALOG_NAMES:
         target = VOICE
     else:
         ref = hd_voice_path(VOICE)
-        if ref is None:
-            print(f"[voiceover] no voice named {VOICE!r} — catalog: "
+        why = (f"no reference clip {VOICE}.wav in the hd-voices dir" if ref is None
+               else "cloning is not available in this install" if not eng.has_cloning
+               else None)
+        if why is None:
+            target = str(ref)
+        elif VOICE_EXPLICIT:
+            # Asked for by name — say so instead of quietly speaking as somebody
+            # else. Only the *default* falls back.
+            print(f"[voiceover] can't use {VOICE!r}: {why}. Catalog voices: "
                   f"{', '.join(sorted(CATALOG_NAMES))}", file=sys.stderr)
             return 1
-        if not eng.has_cloning:
-            print(f"[voiceover] {VOICE!r} is a cloned voice but cloning is not "
-                  "available in this install", file=sys.stderr)
-            return 1
-        target = str(ref)
+        else:
+            # The default is a clone that lives on one machine and is not in the
+            # repo, so on any other checkout it simply isn't there. Falling back
+            # keeps make_hero_video.sh (which renders the voiceover itself when
+            # the WAV is missing) working everywhere — loudly, so nobody ships a
+            # different voice than they meant to.
+            print(f"[voiceover] {VOICE!r} unavailable ({why}); falling back to "
+                  f"{FALLBACK_VOICE!r}. The committed take uses {VOICE!r} — set "
+                  f"YAP_VOICEOVER_VOICE to choose deliberately.", file=sys.stderr)
+            voice = target = FALLBACK_VOICE
+
+    print(f"[voiceover] {len(text)} chars -> {voice} @ {SAMPLE_RATE} Hz, {SPEED}x")
 
     pieces: list[np.ndarray] = []
     spoken = 0.0
