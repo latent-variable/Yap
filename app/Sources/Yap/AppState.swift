@@ -127,7 +127,6 @@ final class AppState: ObservableObject {
         AppMigration.runOnce()
         downloader = ModelDownloader(modelsDir: backend.modelsDir)
         hotkey.onFire = { [weak self] in self?.triggerRead() }
-        audio.onFinished = { [weak self] in self?.finishIfDone() }
         // Live transport: dragging speed/pitch/volume affects audio immediately,
         // including whatever is currently streaming.
         prefs.$speed.sink { [weak self] in self?.audio.setRate(Float($0)) }.store(in: &cancellables)
@@ -860,8 +859,6 @@ final class AppState: ObservableObject {
             }
         }
     }
-
-    private func finishIfDone() {}
 
     private func resetToIdle(after seconds: Double) {
         // Snapshot the exact status this timer is for; only clear it if nothing

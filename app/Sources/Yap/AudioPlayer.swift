@@ -53,7 +53,6 @@ final class AudioPlayer {
     // underflow, since the count is unsigned) the new session's frame counter.
     private var epoch: UInt64 = 0
 
-    var onFinished: (() -> Void)?
     private var configObserver: NSObjectProtocol?
 
     init() {

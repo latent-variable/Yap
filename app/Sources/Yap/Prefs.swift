@@ -90,7 +90,6 @@ final class Prefs: ObservableObject {
     @Published var captureMode: CaptureMode { didSet { d.set(captureMode.rawValue, forKey: "captureMode") } }
     @Published var readSource: ReadSource { didSet { d.set(readSource.rawValue, forKey: "readSource") } }
     @Published var stopOnNewTrigger: Bool { didSet { d.set(stopOnNewTrigger, forKey: "stopOnNewTrigger") } }
-    @Published var keepWarm: Bool { didSet { d.set(keepWarm, forKey: "keepWarm") } }
     // Pre-load the Pocket model at launch so the first read isn't a cold wait.
     // Only acts when the Pocket engine is installed (so it's a no-op — "off" —
     // for the default Kokoro-only setup).
@@ -163,7 +162,6 @@ final class Prefs: ObservableObject {
         captureMode = CaptureMode(rawValue: d.string(forKey: "captureMode") ?? "") ?? .clipboard
         readSource = ReadSource(rawValue: d.string(forKey: "readSource") ?? "") ?? .selection
         stopOnNewTrigger = d.object(forKey: "stopOnNewTrigger") as? Bool ?? true
-        keepWarm = d.object(forKey: "keepWarm") as? Bool ?? true
         autoLoadHD = d.object(forKey: "autoLoadHD") as? Bool ?? true
         failChime = d.object(forKey: "failChime") as? Bool ?? true
         voiceEnabled = d.object(forKey: "voiceEnabled") as? Bool ?? true

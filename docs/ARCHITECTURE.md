@@ -53,8 +53,15 @@ Raw int16 mono PCM at 24 kHz streams from the backend as `application/octet-stre
 
 ## Backend lifecycle
 
-`BackendManager` first probes `/health`. If a backend is already running it reuses it (and records `ownsProcess = false`); otherwise it spawns one — the bundled self-contained Python runtime directly in a shipped app, or `scripts/run_backend.sh` (venv) in a dev checkout — loads Kokoro, warms it, and serves.
+`BackendManager` first probes `/health`. Nothing answering means it spawns one — the bundled self-contained Python runtime directly in a shipped app, or `scripts/run_backend.sh` (venv) in a dev checkout — loads Kokoro, warms it, and serves.
+
+Something already answering is reused, but only after `verifyAuthentic()` proves it knows the shared secret; an unverified listener on the port is refused rather than trusted with captured text. A verified reuse then splits on **who started it**:
+
+- **Orphaned Yap backend** (a `server.py` reparented to launchd because its spawner died) — **adopted**: `ownsProcess = true`. The app can stop and relaunch it, so model management keeps working across an app restart.
+- **Hand-started external server** (a dev backend in a terminal, ppid != 1) — left external: `ownsProcess = false`. It isn't ours to kill.
+
+So `ownsProcess` means "we may end this process", not "we spawned it".
 
 `ready` means the backend can serve *some* engine: Kokoro loaded **or** the Pocket engine present on disk. So deleting one model doesn't make the backend look dead, and `waitForHealth()` fails fast (instead of polling 60s) when a model will never load. Kokoro presence is tracked separately as `kokoroFilesPresent`.
 
-Model management (Models tab) leans on this: delete is only offered when `ownsProcess` is true (the app can't safely replace a backend it didn't spawn), and a delete does `stopAndWait()` → remove files → `start()` so disk is freed and the relaunched process reflects the change.
+Model management (Models tab) leans on both: delete is only offered when `ownsProcess` is true (an external backend can't be stopped to release the model files), and a delete does `stopAndWait()` → remove files → `start()` so disk is freed and the relaunched process reflects the change.

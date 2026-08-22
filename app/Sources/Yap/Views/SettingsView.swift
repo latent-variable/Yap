@@ -57,7 +57,6 @@ private struct GeneralTab: View {
                 .disabled(prefs.muteAllSounds)
             Text("A short cue when nothing can be read — empty or stale selection, or a window you haven't clicked into yet. Without it a failed shortcut is just silence.")
                 .font(.caption).foregroundStyle(.secondary)
-            Toggle("Keep model warm", isOn: $prefs.keepWarm)
             Toggle("Show mini-player controls", isOn: $prefs.showMiniPlayer)
             Toggle("Launch at login", isOn: $prefs.launchAtLogin)
                 .onChange(of: prefs.launchAtLogin) { _, on in LoginItem.set(on) }
