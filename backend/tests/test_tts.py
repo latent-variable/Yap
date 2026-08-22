@@ -538,3 +538,77 @@ class TestStreamIntegrity:
         assert len(body) > 0, "audio before the failure is still delivered"
         assert not body.endswith(server.STREAM_FOOTER), \
             "a truncated read must not be marked complete"
+
+
+# ── Pocket utterance padding ────────────────────────────────────────────────
+class TestPocketPadding:
+    """Pocket wraps every utterance in its own silence — 0.56-0.96s leading,
+    0.20-0.34s trailing, near-constant regardless of line length, against
+    0.04-0.05s / 0.09-0.19s from Kokoro on the same text. Played verbatim that
+    is a second of dead air in front of every sentence, stacked on top of the
+    gap server.py already inserts, and it made GAP_SENTENCE mean different
+    things on the two engines. trim_padding() cuts it back to Kokoro's range.
+
+    The pure cases run anywhere; the synthesis case needs Pocket installed.
+    """
+
+    @staticmethod
+    def _tone(seconds, sr=SAMPLE_RATE, amp=0.5):
+        t = np.arange(int(seconds * sr)) / sr
+        return (amp * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+    @staticmethod
+    def _edges(a, sr=SAMPLE_RATE, thr=0.01):
+        fl = int(0.01 * sr)
+        f = a[: a.size // fl * fl].reshape(-1, fl)
+        rms = np.sqrt((f ** 2).mean(axis=1))
+        loud = np.flatnonzero(rms >= thr)
+        if loud.size == 0:
+            return a.size / sr, 0.0
+        return loud[0] * fl / sr, (len(f) - 1 - loud[-1]) * fl / sr
+
+    def test_padding_is_cut_back_to_target(self):
+        from pocket_engine import trim_padding, LEAD_PAD, TRAIL_PAD
+        padded = np.concatenate([np.zeros(int(0.9 * SAMPLE_RATE), np.float32),
+                                 self._tone(1.0),
+                                 np.zeros(int(0.35 * SAMPLE_RATE), np.float32)])
+        out = trim_padding(padded)
+        lead, trail = self._edges(out)
+        # A frame of slack either side: the trim quantizes to 10 ms frames.
+        assert lead <= LEAD_PAD + 0.01, f"lead {lead:.3f}s"
+        assert trail <= TRAIL_PAD + 0.02, f"trail {trail:.3f}s"
+
+    def test_the_speech_itself_survives(self):
+        from pocket_engine import trim_padding
+        speech = self._tone(1.0)
+        padded = np.concatenate([np.zeros(int(0.9 * SAMPLE_RATE), np.float32), speech,
+                                 np.zeros(int(0.35 * SAMPLE_RATE), np.float32)])
+        out = trim_padding(padded)
+        # Cutting into the words is the failure that matters far more than
+        # leaving silence, so assert the energy is all still there.
+        assert out.size >= speech.size
+        assert float(np.sum(out ** 2)) == pytest.approx(float(np.sum(speech ** 2)), rel=1e-3)
+
+    def test_an_already_tight_clip_is_untouched(self):
+        from pocket_engine import trim_padding
+        tight = self._tone(0.5)
+        out = trim_padding(tight)
+        assert out.size == tight.size and np.array_equal(out, tight)
+
+    def test_silence_only_is_returned_whole_not_emptied(self):
+        from pocket_engine import trim_padding
+        quiet = np.zeros(int(0.5 * SAMPLE_RATE), np.float32)
+        # Nothing detectable means we cannot tell padding from content, so the
+        # safe answer is to keep it. Emptying would drop audio outright.
+        assert trim_padding(quiet).size == quiet.size
+        assert trim_padding(np.zeros(0, np.float32)).size == 0
+
+    def test_synthesized_pocket_lines_are_not_front_loaded_with_silence(self):
+        from pocket_engine import PocketEngine, LEAD_PAD, TRAIL_PAD
+        eng = PocketEngine()
+        if not eng.available() or not eng.load():
+            pytest.skip("Pocket engine not installed")
+        for line in ["Meet Yap.", "Stop typing.", "See something worth hearing?"]:
+            lead, trail = self._edges(eng.synth(line, "eve", 1.0))
+            assert lead <= LEAD_PAD + 0.02, f"{line!r} still leads with {lead:.2f}s"
+            assert trail <= TRAIL_PAD + 0.05, f"{line!r} still trails {trail:.2f}s"
