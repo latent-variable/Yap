@@ -1,9 +1,9 @@
-# Yap review styleguide
+# Review guidance: don't flag
 
-Guidance for automated reviewers. Intentional, verified-correct patterns that
-should NOT be flagged.
-
-## Don't flag
+**Read this before filing any finding on this repo.** Every entry below is an
+intentional, verified-correct pattern a reviewer has already flagged here once.
+Each carries the mechanism that settles it — to overturn one, show a failing
+case, not a pattern match.
 
 - **`for try await byte in URLSession.AsyncBytes` in `BackendClient.streamPCM`.**
   This does **not** suspend the task per byte. `AsyncBytes` buffers at the

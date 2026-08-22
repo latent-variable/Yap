@@ -410,6 +410,12 @@ Rules for `MenuContent` and anything it shows:
 - macOS 14+, Apple Silicon. Prefer native APIs (AVFoundation, Carbon hotkey,
   AXUIElement) over adding dependencies.
 
+## Review
+
+**Reviewing a PR here? Read `docs/agent/review-guidance.md` before filing
+anything** — it lists the verified-correct patterns reviewers have already
+flagged once, with the mechanism that settles each.
+
 ## Agent context (scope + memory)
 <!-- BEGIN agent-context (managed by ~/.agents/bin/project-sync.sh) -->
 - You are in **PROJECT scope** (this repo). Everything that is true across projects lives in user-scope canon (`~/.agents/AGENTS.md` + skills) and is NOT repeated here; this file holds only what is true of THIS repo.
