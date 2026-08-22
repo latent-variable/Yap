@@ -1,18 +1,34 @@
 # Yap demo narration
 
 Canonical voiceover script for the README/hero video. Written to be **heard**,
-not read, in Yap's own **Pocket TTS "Eve"** voice (the default HD voice) — the
-demo should show off the nicest voice Yap ships, since the voice *is* the product.
+not read, in a **Pocket TTS** voice — the demo should show off the nicest voice
+Yap ships, since the voice *is* the product. The take that ships is the cloned
+**Philip** at **1.25x**, which is what a real Yap read sounds like.
 
-## How to record the voiceover
-1. Launch Yap. Menu bar → Engine → **Pocket TTS**; Voice → **Eve**.
-2. Paste this script somewhere selectable, highlight it, hit **⌘⇧R**.
-3. Screen-record the app doing its thing over the audio (dictation + read-aloud).
+## How to render the voiceover
 
-Render the Eve take to `docs/demo-voiceover.wav` with `scripts/make_voiceover.sh`
-(gitignored, it's regenerable from this script).
+```bash
+scripts/make_voiceover.sh      # -> docs/demo-voiceover.wav (gitignored, regenerable)
+scripts/make_hero_video.sh     # muxes it over docs/yap-hero.png -> docs/yap-readme.mp4
+```
 
-## Script (≈40s)
+`Philip` is a cloned reference clip in `~/Library/Application Support/Yap/hd-voices`,
+not in the repo. Where it isn't there the renderer says so and falls back to the
+`eve` catalog voice, so the hero build works on any checkout — a voice you name
+yourself and that doesn't exist is still a hard error, never a substitution.
+`YAP_VOICEOVER_VOICE`, `_SPEED`, `_GAP` and `_OUT` are there for auditioning
+takes. Pocket samples, so no two renders are bit-identical; duration drifts about
+a second between takes.
+
+**Two things the renderer has to do, and the first take did neither.** Pocket
+pads every utterance with its own silence — measured at 0.66–0.91s leading, up to
+0.40s trailing — so the pauses this script asks for landed *on top* of it and the
+first cut ran 61s at 57% silence. And Pocket ignores its `speed` argument
+entirely; Yap applies speed at playback, so rendering raw gives a 1.0x take
+nobody hears. `make_voiceover.py` trims each chunk before adding the pause and
+finishes with a pitch-preserving `atempo` pass. Same script, 31s.
+
+## Script (≈30s at 1.25x)
 
 Meet Yap. Your Mac just grew ears and a voice.
 

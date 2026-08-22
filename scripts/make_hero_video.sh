@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the README/hero video: the static hero image with the HD-voice demo
-# narration (Pocket "Eve") playing over it. No screen recording — just a mux.
+# narration (Pocket "Philip") playing over it. No screen recording — just a mux.
 # Renders the voiceover first if it's missing. Output: docs/yap-readme.mp4
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
