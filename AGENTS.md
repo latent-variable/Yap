@@ -31,10 +31,17 @@ pieces an agent must keep in sync if touching either side:
   `AVAudioPlayerNode`. Change the sample rate, channel count, or sample format on
   one side and you must change the other. `?format=wav` returns a full WAV for
   export only.
-- **Backend lifecycle is reuse-first.** `BackendManager` probes `/health`; if a
-  server already answers, it reuses it and never spawns one. Only if nothing
-  answers does it launch `scripts/run_backend.sh`. Don't assume the app owns the
-  process it's talking to.
+- **A completed PCM stream ends with `STREAM_FOOTER` (`b"YEND"`) — the read's
+  verdict, not audio.** The client strips it and throws when it is missing, but
+  only when the response carries `X-Stream-Footer` (an older sidecar doesn't, and
+  must still work). Withhold it on any failure; never let a truncated read finish
+  clean. Why a footer and not an abort: `docs/ARCHITECTURE.md`.
+- **Backend lifecycle is reuse-first, but a responding backend is not always
+  left alone.** `BackendManager` reuses one that answers `/health` *and* proves
+  itself via `/verify`; an unverified Yap orphan or a verified-but-not-ready one
+  gets stopped and relaunched, and an unverified foreign listener is refused
+  outright. `ownsProcess` means "we may end this process", not "we started it".
+  The full decision table: `docs/ARCHITECTURE.md`.
 
 ## Two engines (Kokoro + Pocket TTS)
 
