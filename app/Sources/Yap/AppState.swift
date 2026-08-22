@@ -477,6 +477,9 @@ final class AppState: ObservableObject {
         status = .reading
         preparing = true   // first audio not here yet (Pocket cold-load takes a moment)
         preparingDetail = prepDetail()
+        // Counts what actually reached the player, so a stream that dies mid-read
+        // can say how far it got instead of failing silently (see the catch).
+        let delivered = ByteCounter()
         do {
             // Inside the do so an engine-start failure is caught below (park +
             // error) instead of scheduling into a dead engine and hanging the drain.
@@ -489,6 +492,7 @@ final class AppState: ObservableObject {
                                                 engine: prefs.engine,
                                                 awaitCapacity: streamGate(gen: gen)) { [weak self] data in
                 guard let self, gen == self.generation else { return }
+                delivered.add(data.count)
                 self.audio.feed(data)   // scheduling is thread-safe
                 // @Published writes MUST be on the main actor (the stream
                 // callback runs off-main); doing it here crashed the menu bar.
@@ -523,7 +527,18 @@ final class AppState: ObservableObject {
         } catch {
             // audio.start() already ran, so park the engine here too — otherwise a
             // mid-stream backend error leaves it running (the very idle drain we fix).
-            if gen == generation { audio.stop(); preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3) }
+            // Only for a read that is still current: a superseded one throws when
+            // its cancelled URLSession task unwinds, which is us tearing it down on
+            // purpose, not a failure worth logging or showing.
+            if gen == generation {
+                // A stream that dies mid-read is the quiet failure mode: the voice
+                // just stops, and the error badge is gone in 3s. Log how far it got —
+                // that is what makes a truncated read diagnosable after the fact
+                // instead of a report that "it cut off somewhere near the end".
+                Log.write(String(format: "read stream failed after %.1fs of audio: %@",
+                                 Double(delivered.value / 2) / 24000.0, error.localizedDescription))
+                audio.stop(); preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3)
+            }
         }
     }
 
@@ -861,4 +876,13 @@ final class AppState: ObservableObject {
             if status == expected { status = .idle }
         }
     }
+}
+
+/// Thread-safe byte tally. The stream callback runs off the main actor, so a
+/// plain `var` captured there is a data race.
+final class ByteCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    func add(_ k: Int) { lock.lock(); n += k; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
 }

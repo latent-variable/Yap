@@ -121,3 +121,116 @@ enum CLITest {
         dispatchMain()
     }
 }
+
+extension CLITest {
+    /// `Yap --tailtest <file> [maxChars]` — does a read survive to its LAST word?
+    ///
+    /// The backpressure probe proves the queue stays bounded; it abandons the
+    /// stream on a timer, so it says nothing about the end of a read. This one
+    /// runs a read to natural completion through the real path — gate, player,
+    /// `flush()`, drain loop — and checks the tail at both places it can vanish:
+    ///
+    ///   transport — bytes received vs the same text rendered as a whole WAV.
+    ///   playback  — audio actually heard vs audio scheduled, since the drain
+    ///               loop ends on `hasQueued`, and `stop()` discards whatever is
+    ///               still on the node when it fires.
+    ///
+    /// Both failures are silent in the app: no error, no log, the voice just
+    /// stops early.
+    static func runTailTest(path: String, maxChars: Int, port: Int) -> Never {
+        guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else {
+            FileHandle.standardError.write("cannot read \(path)\n".data(using: .utf8)!)
+            exit(2)
+        }
+        var cleaned = Preprocess.clean(raw, options: Preprocess.options(for: .markdown), custom: [])
+        if cleaned.count > maxChars { cleaned = String(cleaned.prefix(maxChars)) }
+        print("── tail probe  chars=\(cleaned.count)  cap=\(AudioPlayer.maxQueuedSeconds)s")
+        Task {
+            var client = BackendClient()
+            client.base = URL(string: "http://127.0.0.1:\(port)")!
+
+            // Reference: one non-streamed render of the same text. Any shortfall
+            // against this is bytes the stream never delivered.
+            var referenceSecs = 0.0
+            do {
+                let wav = try await client.wav(text: cleaned, voice: "af_heart", speed: 1.0)
+                referenceSecs = Double(wavDataBytes(wav) / 2) / 24000.0
+                print(String(format: "   reference (whole-WAV render): %.2fs", referenceSecs))
+            } catch {
+                print("   ✗ reference render failed: \(error.localizedDescription)"); exit(1)
+            }
+
+            let player = AudioPlayer()
+            do { try player.start(volume: 0, pitchCents: 0, rate: 1, cushionSeconds: 0.35) }
+            catch { print("   · no audio output device — cannot drain, skipping"); exit(0) }
+
+            var total = 0
+            var firstFeed: Date?
+            let gate = AudioPlayer.gate { [weak player] in
+                (live: true, queued: player?.queuedSeconds ?? 0)
+            }
+            do {
+                try await client.streamPCM(text: cleaned, voice: "af_heart", speed: 1.0,
+                                           awaitCapacity: gate) { data in
+                    if firstFeed == nil { firstFeed = Date() }
+                    total += data.count
+                    player.feed(data)
+                }
+            } catch {
+                let e = error as NSError
+                print(String(format: "   ✗ stream died %.1fs in, after %.2fs of audio (%d bytes): %@ [%@ %d]",
+                             firstFeed.map { Date().timeIntervalSince($0) } ?? 0,
+                             Double(total / 2) / 24000.0, total,
+                             e.localizedDescription, e.domain, e.code))
+                print(String(format: "     queued at death: %.2fs", player.queuedSeconds))
+                exit(1)
+            }
+            let streamedSecs = Double(total / 2) / 24000.0
+
+            // The app's tail, verbatim: flush the sub-cushion remainder, then
+            // drain until nothing is queued.
+            player.flush()
+            let queuedAtFlush = player.queuedSeconds
+            // Bounded: a probe that hangs forever on a wedged engine reports
+            // nothing. Well clear of the queue it has to drain.
+            let drainBy = Date().addingTimeInterval(queuedAtFlush + 30)
+            while player.hasQueued && Date() < drainBy {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+            let heardSecs = firstFeed.map { Date().timeIntervalSince($0) } ?? 0
+            player.stop()
+
+            var failures = 0
+            func want(_ name: String, _ ok: Bool, _ detail: String) {
+                if ok { print("   ✓ \(name) — \(detail)") }
+                else { failures += 1; print("   ✗ \(name) — \(detail)") }
+            }
+            print(String(format: "   queued when the stream ended: %.2fs", queuedAtFlush))
+            // 0.2s = one chunk of slop on the byte accounting.
+            want("stream delivered the whole render", streamedSecs >= referenceSecs - 0.2,
+                 String(format: "streamed %.2fs of %.2fs (short by %.2fs)",
+                        streamedSecs, referenceSecs, referenceSecs - streamedSecs))
+            // The drain must outlast the audio. Anything still on the node when it
+            // exits is discarded by stop() — that is the tail the listener loses.
+            want("playback outlasted the audio", heardSecs >= streamedSecs - 0.35,
+                 String(format: "drain ended after %.2fs for %.2fs of audio (cut %.2fs)",
+                        heardSecs, streamedSecs, streamedSecs - heardSecs))
+            print(failures == 0 ? "\nTAIL OK" : "\n\(failures) FAILURE(S)")
+            exit(failures == 0 ? 0 : 1)
+        }
+        dispatchMain()
+    }
+
+    /// Byte count of a WAV's `data` chunk (don't assume a 44-byte header).
+    private static func wavDataBytes(_ wav: Data) -> Int {
+        let tag = Array("data".utf8)
+        let bytes = [UInt8](wav)
+        var i = 12
+        while i + 8 <= bytes.count {
+            let size = Int(bytes[i+4]) | Int(bytes[i+5]) << 8 | Int(bytes[i+6]) << 16 | Int(bytes[i+7]) << 24
+            if Array(bytes[i..<i+4]) == tag { return min(size, bytes.count - i - 8) }
+            i += 8 + size + (size % 2)
+        }
+        return max(0, bytes.count - 44)
+    }
+}

@@ -404,3 +404,30 @@ class TestExport:
             assert w.getframerate() == SAMPLE_RATE
             assert w.getnchannels() == 1
             assert w.getnframes() > 0
+
+
+# ── connection lifetime ─────────────────────────────────────────────────────
+class TestKeepAlive:
+    """The app reads /synthesize at PLAYBACK rate, so a response the server has
+    finished writing keeps draining out of the socket for as long as it takes to
+    hear it. uvicorn's 5s default closes the connection during that drain and the
+    client loses every byte still in flight — a read that stops a few sentences
+    early with no error the listener sees. End-to-end probe: `Yap --tailtest`."""
+
+    def test_keep_alive_outlasts_a_draining_read(self):
+        import server
+        # Only has to outlast a socket buffer draining at 48000 B/s. A minute is
+        # already far past any real buffer; the floor is what matters, not 900.
+        assert server.KEEP_ALIVE >= 60
+
+    def test_main_actually_passes_it_to_uvicorn(self, monkeypatch, tmp_path):
+        # The constant is worthless if main() stops handing it over.
+        import sys, types, server
+        seen = {}
+        fake = types.ModuleType("uvicorn")
+        fake.run = lambda app, **kw: seen.update(kw)
+        monkeypatch.setitem(sys.modules, "uvicorn", fake)
+        monkeypatch.setattr(sys, "argv",
+                            ["server.py", "--no-preload", "--models-dir", str(tmp_path)])
+        server.main()
+        assert seen.get("timeout_keep_alive") == server.KEEP_ALIVE
