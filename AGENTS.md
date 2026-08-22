@@ -123,18 +123,13 @@ Key facts an agent must keep straight:
   `AsyncBytes` sequence, cancelling the URLSession task so the backend stops
   synthesizing (verified: 767% → 0% CPU within 3s). `generation` alone only
   *ignores* arriving bytes. Regression test: `--backpressure`.
-- **Backpressure means the SERVER must hold the connection open for the whole
-  read.** Because the app reads at playback rate, a response the backend finished
-  writing is still draining out of the socket for as long as it takes to *hear*
-  it — so `server.py` sets `timeout_keep_alive=KEEP_ALIVE` (900s). uvicorn's 5s
-  default starts its idle timer the moment the body is written and then closes
-  the connection mid-drain: the app gets `NSURLErrorNetworkConnectionLost` and
-  loses every byte still in flight — measured at 7.5s of speech on a 124.7s read,
-  i.e. the voice stops a few sentences from the end with nothing the listener
-  sees. It only bites past the point where the socket buffer can't hold the
-  remainder, which is why short reads look fine and it appeared only once reads
-  were backpressured. Regression tests: `--tailtest` end-to-end,
-  `TestKeepAlive` for the setting itself.
+- **Backpressure makes the connection outlive the response, so the server must
+  hold it open for the whole read.** Reading at playback rate means a body the
+  backend finished writing is still draining out of the socket for as long as it
+  takes to *hear* it; uvicorn's 5s `timeout_keep_alive` closes it mid-drain and
+  the app silently loses the tail. `server.py` sets `KEEP_ALIVE`, and the comment
+  there carries the measurement — don't restore the default. Tests: `--tailtest`
+  end-to-end, `TestKeepAlive` for the setting.
 - @Published writes from the audio-stream callback **must** hop to the main actor
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.

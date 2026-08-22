@@ -197,7 +197,11 @@ extension CLITest {
             while player.hasQueued && Date() < drainBy {
                 try? await Task.sleep(nanoseconds: 150_000_000)
             }
-            let heardSecs = firstFeed.map { Date().timeIntervalSince($0) } ?? 0
+            // Did the drain END, or did it time out? Wall-clock alone cannot tell
+            // those apart — a wedged player runs the deadline out and "elapsed"
+            // looks exactly like a read that played. Assert the reason first.
+            let drained = !player.hasQueued
+            let playedSecs = player.playedSeconds
             player.stop()
 
             var failures = 0
@@ -210,11 +214,15 @@ extension CLITest {
             want("stream delivered the whole render", streamedSecs >= referenceSecs - 0.2,
                  String(format: "streamed %.2fs of %.2fs (short by %.2fs)",
                         streamedSecs, referenceSecs, referenceSecs - streamedSecs))
-            // The drain must outlast the audio. Anything still on the node when it
-            // exits is discarded by stop() — that is the tail the listener loses.
-            want("playback outlasted the audio", heardSecs >= streamedSecs - 0.35,
-                 String(format: "drain ended after %.2fs for %.2fs of audio (cut %.2fs)",
-                        heardSecs, streamedSecs, streamedSecs - heardSecs))
+            // Anything still on the node when the drain exits is discarded by
+            // stop() — that is the tail the listener loses. Both halves matter:
+            // the queue emptied (not timed out), and it emptied by PLAYING, which
+            // only the node's own completions can attest.
+            want("drain ran to empty", drained,
+                 drained ? "queue emptied" : "timed out with audio still queued")
+            want("every scheduled frame played back", playedSecs >= streamedSecs - 0.05,
+                 String(format: "played %.2fs of %.2fs streamed (lost %.2fs)",
+                        playedSecs, streamedSecs, streamedSecs - playedSecs))
             print(failures == 0 ? "\nTAIL OK" : "\n\(failures) FAILURE(S)")
             exit(failures == 0 ? 0 : 1)
         }

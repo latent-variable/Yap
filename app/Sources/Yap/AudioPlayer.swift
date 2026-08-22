@@ -21,6 +21,12 @@ final class AudioPlayer {
 
     private var leftoverByte: UInt8?
     private var scheduledFrames: AVAudioFrameCount = 0
+    // Cumulative frames the node reported as PLAYED BACK this session. Unlike
+    // `scheduledFrames` (a level, which drains to 0 whether the audio was heard
+    // or discarded) this only ever goes up, and only on a real completion — so a
+    // probe can assert that audio actually rendered rather than that wall-clock
+    // time passed. Test-only reader: `playedSeconds`.
+    private var playedFrames: UInt64 = 0
     // Pre-buffer: hold playback until this much audio is queued, so transient
     // slow chunks (HD generates near real-time) don't cause silence gaps.
     private var primeFrames: AVAudioFrameCount = 8400  // ~0.35s default
@@ -101,6 +107,7 @@ final class AudioPlayer {
             paused = false
             ended = false
             scheduledFrames = 0
+            playedFrames = 0
             leftoverByte = nil
             primeFrames = AVAudioFrameCount(max(0.05, cushionSeconds) * 24000)
             player.stop()
@@ -171,6 +178,7 @@ final class AudioPlayer {
                     // unsigned counter can never underflow
                     guard myEpoch == self.epoch else { return }
                     self.scheduledFrames = self.scheduledFrames >= frames ? self.scheduledFrames - frames : 0
+                    self.playedFrames &+= UInt64(frames)
                 }
             }
             // Start once the cushion is full; after that keep the node playing —
@@ -281,6 +289,10 @@ final class AudioPlayer {
             }
         }
     }
+
+    /// Test hook (`--tailtest`): seconds of audio the node reported as played back
+    /// this session. Cumulative, so it survives the queue draining to empty.
+    var playedSeconds: Double { q.sync { Double(playedFrames) / 24000.0 } }
 
     /// Test hook (`--selftest`): observe engine run state to verify idle-parking.
     var isEngineRunning: Bool { engine.isRunning }
