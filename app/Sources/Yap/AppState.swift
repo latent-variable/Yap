@@ -610,12 +610,26 @@ final class AppState: ObservableObject {
             let sample = prefs.engine == "pocket"
                 ? "This is a preview of the selected Pocket voice."
                 : Self.sampleText(for: prefs.voice)
-            try? await backend.client.streamPCM(text: sample, voice: activeVoice, speed: 1.0,
-                                                pauseScale: prefs.pauseScale, engine: prefs.engine,
-                                                awaitCapacity: streamGate(gen: gen)) { [weak self] d in
-                guard let self, gen == self.generation else { return }
-                self.audio.feed(d)
-                Task { @MainActor in if self.preparing { self.preparing = false } }
+            // Same error handling as stream(): `try?` here would swallow a 500 or
+            // a stream that stopped partway and then flush, drain and report
+            // .idle — the preview would just be short, and the user would blame
+            // the voice. A superseded preview still throws when its cancelled
+            // URLSession task unwinds, so the catch guards on generation too.
+            do {
+                try await backend.client.streamPCM(text: sample, voice: activeVoice, speed: 1.0,
+                                                   pauseScale: prefs.pauseScale, engine: prefs.engine,
+                                                   awaitCapacity: streamGate(gen: gen)) { [weak self] d in
+                    guard let self, gen == self.generation else { return }
+                    self.audio.feed(d)
+                    Task { @MainActor in if self.preparing { self.preparing = false } }
+                }
+            } catch {
+                if gen == generation {
+                    Log.write("voice preview failed: \(error.localizedDescription)")
+                    audio.stop(); preparing = false
+                    status = .error(error.localizedDescription); resetToIdle(after: 3)
+                }
+                return
             }
             guard gen == generation else { return }   // superseded — see stream()
             audio.flush()

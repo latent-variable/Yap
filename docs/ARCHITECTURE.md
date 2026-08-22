@@ -51,13 +51,32 @@ The **Services menu** ("Read with Yap") is a second entry point: macOS hands the
 
 Raw int16 mono PCM at 24 kHz streams from the backend as `application/octet-stream`. The Swift side converts to `Float32` `AVAudioPCMBuffer`s and schedules them on an `AVAudioPlayerNode` as they arrive — playback begins on the first chunk. Pitch/volume/speed all run through `AVAudioUnitTimePitch` at playback (live-adjustable), so speed is real-time and identical across both engines.
 
+### Telling a finished read from a truncated one
+
+A synthesis failure partway through a read has no honest way to reach the client. The 200 went out with the first chunk and can't be retracted, and **aborting isn't detectable either**: uvicorn terminates the chunked body with a clean `0\r\n\r\n` even when the generator raises — verified on a raw socket — so a truncated body is byte-identical to a complete one. Skipping the segment (the original behaviour) was worse still: the read finished as a clean 200 having spoken a document with holes in it, and if every segment failed the app played nothing and announced success.
+
+Two mechanisms cover the two halves:
+
+- **Segment 0 is synthesized before the response starts.** Failures there are systemic — model unloaded, unknown voice, cloning unavailable — and are still a real HTTP 500 the app reports normally.
+- **A complete stream ends with `STREAM_FOOTER` (`b"YEND"`).** A later segment failure aborts the generator, withholding it. `BackendClient.streamPCM` holds back the trailing bytes so the footer never reaches the player, and throws `"Synthesis stopped partway"` when the stream ends without it.
+
+The `X-Stream-Footer` response header advertises the marker. `BackendManager` reuses a backend it finds already running, so a newer app can end up talking to an older sidecar; no header means no check, i.e. the old behaviour, rather than every read failing.
+
+Covered by `TestStreamIntegrity` (live uvicorn, raw socket, plus a control that restores skip-and-continue) and end-to-end by `--tailtest` against a fault-injecting backend.
+
 ## Backend lifecycle
 
 `BackendManager` first probes `/health`. Nothing answering means it spawns one — the bundled self-contained Python runtime directly in a shipped app, or `scripts/run_backend.sh` (venv) in a dev checkout — loads Kokoro, warms it, and serves.
 
-Something already answering is reused, but only after `verifyAuthentic()` proves it knows the shared secret; an unverified listener on the port is refused rather than trusted with captured text. A verified reuse then splits on **who started it**:
+Something already answering is not automatically reused. `start()` decides:
 
-- **Orphaned Yap backend** (a `server.py` reparented to launchd because its spawner died) — **adopted**: `ownsProcess = true`. The app can stop and relaunch it, so model management keeps working across an app restart.
+- **Unverified** (`verifyAuthentic()` fails — it can't prove it knows the shared secret). An identifiable Yap orphan (a `server.py` reparented to launchd, ppid 1) is almost always a stale pre-auth backend left over from an upgrade, so it's killed and a fresh authenticated one launched. Anything else is a foreign listener squatting the port: refused with an error, never handed captured text.
+- **Verified and ready** — reused.
+- **Verified but not ready** (responding, no model it can serve). If it's an adopted orphan, it's stopped and relaunched; if it's external, it's left alone and `start()` bails rather than racing a second process onto the same port.
+
+A verified reuse also splits on **who started it**:
+
+- **Orphaned Yap backend** — **adopted**: `ownsProcess = true`. The app can stop and relaunch it, so model management keeps working across an app restart.
 - **Hand-started external server** (a dev backend in a terminal, ppid != 1) — left external: `ownsProcess = false`. It isn't ours to kill.
 
 So `ownsProcess` means "we may end this process", not "we spawned it".
