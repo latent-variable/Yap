@@ -431,3 +431,110 @@ class TestKeepAlive:
                             ["server.py", "--no-preload", "--models-dir", str(tmp_path)])
         server.main()
         assert seen.get("timeout_keep_alive") == server.KEEP_ALIVE
+
+
+# ── stream integrity ────────────────────────────────────────────────────────
+class TestStreamIntegrity:
+    """A read that dies partway must reach the app as a FAILURE.
+
+    Segment failures used to be logged and skipped, so a document read aloud with
+    holes in it — or with no audio at all — still finished as a clean HTTP 200 and
+    the app announced a successful read. Two mechanisms close that, and the second
+    exists because the first cannot cover mid-stream: once the body has started,
+    the 200 is unretractable AND uvicorn still terminates the chunked response
+    cleanly when the generator stops early (asserted below), so truncation is
+    invisible on the wire without an in-band marker.
+    """
+
+    @staticmethod
+    def _serve(monkeypatch, fail_at):
+        """Run the real app under a real uvicorn, with synthesis failing at
+        segment index `fail_at` (None = never). Returns (port, stop)."""
+        import socket as _socket
+        import threading
+        import uvicorn
+        import server
+
+        monkeypatch.setattr(server, "AUTH_TOKEN", "stream-test-token")
+        calls = {"n": -1}
+
+        def fake_segment_synth(_req):
+            def synth(_text):
+                calls["n"] += 1
+                if fail_at is not None and calls["n"] >= fail_at:
+                    raise RuntimeError("synth exploded")
+                return np.zeros(2400, dtype=np.float32)   # 0.1s
+            return synth
+
+        monkeypatch.setattr(server, "_segment_synth", fake_segment_synth)
+
+        s = _socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        srv = uvicorn.Server(uvicorn.Config(server.app, host="127.0.0.1", port=port,
+                                            log_level="critical"))
+        threading.Thread(target=srv.run, daemon=True).start()
+        for _ in range(200):
+            if srv.started:
+                break
+            time.sleep(0.05)
+        assert srv.started, "test server never came up"
+
+        def stop():
+            srv.should_exit = True
+        return port, stop
+
+    @staticmethod
+    def _read(port):
+        """Raw HTTP so the assertion is about the actual bytes on the wire, the
+        way URLSession sees them — not what an HTTP client chooses to tolerate."""
+        import http.client
+        import json as _json
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        body = _json.dumps({"text": "One. Two. Three. Four.", "voice": "af_heart",
+                            "speed": 1.0, "pause_scale": 1.0, "engine": "kokoro"})
+        conn.request("POST", "/synthesize", body=body,
+                     headers={"Content-Type": "application/json",
+                              "Authorization": "Bearer stream-test-token"})
+        r = conn.getresponse()
+        return r.status, dict(r.getheaders()), r.read()
+
+    def test_complete_stream_is_marked_complete(self, monkeypatch):
+        import server
+        port, stop = self._serve(monkeypatch, fail_at=None)
+        try:
+            status, headers, body = self._read(port)
+        finally:
+            stop()
+        assert status == 200
+        # Advertised, so an older sidecar without it just isn't checked.
+        assert headers.get("x-stream-footer") == server.STREAM_FOOTER.decode()
+        assert body.endswith(server.STREAM_FOOTER)
+        assert len(body) > len(server.STREAM_FOOTER)
+
+    def test_first_segment_failure_is_an_error_status(self, monkeypatch):
+        # Nothing has been sent yet, so this one can still be a real 500 — and it
+        # is the systemic case (model unloaded, unknown voice, cloning off) that
+        # otherwise produced a 200 carrying no audio.
+        port, stop = self._serve(monkeypatch, fail_at=0)
+        try:
+            status, _headers, body = self._read(port)
+        finally:
+            stop()
+        assert status == 500
+        assert b"synthesis failed" in body
+
+    def test_mid_stream_failure_leaves_the_stream_unmarked(self, monkeypatch):
+        import server
+        port, stop = self._serve(monkeypatch, fail_at=2)
+        try:
+            status, _headers, body = self._read(port)
+        finally:
+            stop()
+        # The status is still 200 and the body still ends cleanly — that is the
+        # whole problem, and why the footer has to carry the verdict instead.
+        assert status == 200
+        assert len(body) > 0, "audio before the failure is still delivered"
+        assert not body.endswith(server.STREAM_FOOTER), \
+            "a truncated read must not be marked complete"

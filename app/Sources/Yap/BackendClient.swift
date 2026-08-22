@@ -182,6 +182,20 @@ struct BackendClient {
             throw NSError(domain: "Yap", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "backend HTTP \(http.statusCode)"])
         }
+        // Bytes the backend appends to a stream it finished. A synthesis failure
+        // partway through can't change the status code (the 200 is long gone) and
+        // can't abort the body either — uvicorn still terminates the chunked
+        // response cleanly, so a truncated read looked exactly like a finished
+        // one and the app announced it as success. The footer is what tells the
+        // two apart; it is stripped here and never reaches the player.
+        //
+        // Absent header = an older sidecar that doesn't send one (BackendManager
+        // reuses a backend it finds running), so the check is skipped rather than
+        // failing every read.
+        let footer: [UInt8]? = (response as? HTTPURLResponse)
+            .flatMap { $0.value(forHTTPHeaderField: "X-Stream-Footer") }
+            .flatMap { $0.isEmpty ? nil : Array($0.utf8) }
+        let hold = footer?.count ?? 0
         // Collect into a contiguous [UInt8] (amortized O(1) append, no Data
         // copy-on-write churn) and flush ~0.2s chunks. AsyncBytes already
         // buffers at the transport layer, so this doesn't suspend per byte.
@@ -189,18 +203,29 @@ struct BackendClient {
         buf.reserveCapacity(16384)
         for try await b in bytes {
             buf.append(b)
-            if buf.count >= 9600 { // ~0.2s of audio
-                onChunk(Data(buf))
-                buf.removeAll(keepingCapacity: true)
+            if buf.count >= 9600 + hold { // ~0.2s of audio, plus the held-back tail
+                // Keep the last `hold` bytes: any of them could turn out to be
+                // the footer, and the footer must never be played.
+                let n = buf.count - hold
+                onChunk(Data(buf[0..<n]))
+                buf.removeFirst(n)
                 // Returning here abandons the sequence, which deinits the
                 // AsyncBytes iterator and cancels the underlying URLSession task
                 // — the backend sees the disconnect and stops synthesizing the
                 // rest. Before this, a superseded read was only *ignored*: its
                 // bytes were dropped on the floor while the backend kept
                 // generating the whole document and contending for the engine
-                // lock with the read that replaced it.
+                // lock with the read that replaced it. Deliberate teardown, so it
+                // skips the footer check below.
                 if let awaitCapacity, await awaitCapacity() == false { return }
             }
+        }
+        if let footer {
+            guard buf.count >= footer.count, Array(buf.suffix(footer.count)) == footer else {
+                throw NSError(domain: "Yap", code: -1, userInfo: [
+                    NSLocalizedDescriptionKey: "Synthesis stopped partway — the read is incomplete"])
+            }
+            buf.removeLast(footer.count)
         }
         if !buf.isEmpty { onChunk(Data(buf)) }
     }

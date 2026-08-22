@@ -838,6 +838,20 @@ def fetch_starter_voices():
     return StreamingResponse(gen(), media_type="text/plain")
 
 
+# Terminates a complete PCM stream. HTTP/1.1 gives a streaming body no way to
+# retract its 200 once the first byte is out, and aborting is NOT detectable on
+# the wire: uvicorn finishes the chunked body with a clean `0\r\n\r\n` even when
+# the generator raises (verified with a raw socket), so the client reads a
+# truncated read as a finished one. An in-band footer is the only signal that
+# survives — present means every segment was synthesized, absent means the read
+# died partway and the client must surface it as failed.
+#
+# The client is told to expect it via the `X-Stream-Footer` response header, so a
+# newer app talking to an older sidecar (BackendManager reuses a running backend)
+# just skips the check instead of failing every read.
+STREAM_FOOTER = b"YEND"
+
+
 @app.post("/synthesize")
 def synthesize(req: SynthReq, format: str = Query("pcm")):
     if not req.text.strip():
@@ -867,21 +881,44 @@ def synthesize(req: SynthReq, format: str = Query("pcm")):
         return Response(content=data, media_type="audio/wav",
                         headers={"Content-Disposition": "attachment; filename=yap.wav"})
 
+    # Synthesize the first segment BEFORE the response starts. Once a body is
+    # streaming the status code is already sent and cannot be taken back, so this
+    # is the only point where a synthesis failure can still be reported properly.
+    # It also catches the common case by construction: a failure here is almost
+    # always systemic (model unloaded, unknown voice, cloning unavailable), which
+    # used to produce a 200 with an empty body that the app read as a finished
+    # read.
+    try:
+        first = do_synth(segments[0][0])
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.error("synth segment 0 failed: %s", e)
+        raise HTTPException(500, f"synthesis failed: {e}") from e
+
     def gen() -> Iterator[bytes]:
+        samples = first
         for i, (text, gap) in enumerate(segments):
-            try:
-                samples = do_synth(text)
-            except Exception as e:  # noqa: BLE001
-                log.error("synth segment %d failed: %s", i, e)
-                continue
+            if i > 0:
+                try:
+                    samples = do_synth(text)
+                except Exception as e:  # noqa: BLE001
+                    # Abort instead of skipping. Skipping spoke a document with
+                    # holes in it and still finished as a clean 200, so the app
+                    # announced a successful read. Returning here withholds the
+                    # footer, which is what tells the client the read failed.
+                    log.error("synth segment %d failed, aborting stream: %s", i, e)
+                    return
             yield pcm16(samples)
             if gap > 0:
                 yield pcm16(silence(gap))
+        yield STREAM_FOOTER
 
     return StreamingResponse(gen(), media_type="application/octet-stream",
                              headers={"X-Sample-Rate": str(SAMPLE_RATE),
                                       "X-Chunks": str(len(segments)),
-                                      "X-Engine": req.engine})
+                                      "X-Engine": req.engine,
+                                      "X-Stream-Footer": STREAM_FOOTER.decode()})
 
 
 def main() -> None:

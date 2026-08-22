@@ -31,10 +31,26 @@ pieces an agent must keep in sync if touching either side:
   `AVAudioPlayerNode`. Change the sample rate, channel count, or sample format on
   one side and you must change the other. `?format=wav` returns a full WAV for
   export only.
+- **A completed PCM stream ends with `STREAM_FOOTER` (`b"YEND"`), and the client
+  strips it.** It is the read's verdict, not audio. A segment that fails partway
+  cannot be reported any other way: the 200 is already sent, and uvicorn still
+  terminates the chunked body with a clean `0\r\n\r\n` when the generator stops
+  early (verified with a raw socket), so a truncated read is byte-identical to a
+  finished one. Segment 0 is synthesized *before* the response starts, so a
+  systemic failure — model unloaded, unknown voice, cloning off — is still a real
+  500. Later segments abort the stream, withholding the footer, and
+  `streamPCM` throws. The `X-Stream-Footer` response header advertises it, so a
+  newer app reusing an older running sidecar skips the check instead of failing
+  every read. Tests: `TestStreamIntegrity`; end-to-end with a fault-injecting
+  backend on `--tailtest`.
 - **Backend lifecycle is reuse-first.** `BackendManager` probes `/health`; if a
-  server already answers, it reuses it and never spawns one. Only if nothing
-  answers does it launch `scripts/run_backend.sh`. Don't assume the app owns the
-  process it's talking to.
+  server already answers and proves itself via `/verify`, it reuses it and never
+  spawns one. Only if nothing answers does it launch `scripts/run_backend.sh`.
+  Don't assume the app spawned the process it's talking to — and note
+  `ownsProcess` means "we may end this process", not "we started it": a verified
+  *orphaned* Yap backend (ppid 1, its spawner died) is adopted with
+  `ownsProcess = true` so model management keeps working, while a hand-started
+  dev backend stays external. Full rules: `docs/ARCHITECTURE.md`.
 
 ## Two engines (Kokoro + Pocket TTS)
 
