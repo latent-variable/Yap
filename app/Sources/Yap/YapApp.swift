@@ -22,6 +22,12 @@ enum YapMain {
             let secs = CommandLine.arguments.count > i + 2 ? Double(CommandLine.arguments[i + 2]) : nil
             CLITest.runBackpressure(path: path, seconds: secs ?? 25)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--tailtest") {
+            let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
+            let cap = CommandLine.arguments.count > i + 2 ? Int(CommandLine.arguments[i + 2]) : nil
+            let port = CommandLine.arguments.count > i + 3 ? Int(CommandLine.arguments[i + 3]) : nil
+            CLITest.runTailTest(path: path, maxChars: cap ?? 3000, port: port ?? 8766)
+        }
         YapApp.main()
     }
 }

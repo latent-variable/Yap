@@ -42,6 +42,11 @@ log = logging.getLogger("yap")
 
 SAMPLE_RATE = 24000  # Kokoro native
 
+# Seconds an idle connection is held open (see main() for why this is not
+# uvicorn's 5s default). Only has to outlast a socket buffer draining at
+# playback rate; 15 minutes is orders of magnitude past any real buffer.
+KEEP_ALIVE = 900
+
 # Language code per voice prefix (first two chars of voice name).
 LANG_BY_PREFIX = {
     "af": "en-us", "am": "en-us",
@@ -900,7 +905,21 @@ def main() -> None:
 
     import uvicorn
     log.info("serving on http://%s:%d (models: %s)", args.host, args.port, mdir)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    # KEEP_ALIVE, not a default: /synthesize is read at PLAYBACK rate.
+    #
+    # The app deliberately stalls its read while more than ~10s of audio is
+    # queued ahead of the listener (AudioPlayer.gate), so a response the server
+    # finished writing is still draining out of the socket buffer for as long as
+    # it takes to *hear* it. uvicorn's 5s default starts its idle timer the
+    # moment the body is written and then closes the connection out from under
+    # that drain: the client gets NSURLErrorNetworkConnectionLost and loses
+    # every byte still in flight — measured at 7.5s of speech on a 124.7s read,
+    # i.e. the voice stops a few sentences before the end, with no error the
+    # listener ever sees. Long reads only; short ones finish draining inside the
+    # 5s window, which is why this survived until reads got backpressured.
+    # Regression probe: `Yap --tailtest <file>`.
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning",
+                timeout_keep_alive=KEEP_ALIVE)
 
 
 if __name__ == "__main__":

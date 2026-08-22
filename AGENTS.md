@@ -123,11 +123,18 @@ Key facts an agent must keep straight:
   `AsyncBytes` sequence, cancelling the URLSession task so the backend stops
   synthesizing (verified: 767% → 0% CPU within 3s). `generation` alone only
   *ignores* arriving bytes. Regression test: `--backpressure`.
+- **Backpressure makes the connection outlive the response, so the server must
+  hold it open for the whole read.** Reading at playback rate means a body the
+  backend finished writing is still draining out of the socket for as long as it
+  takes to *hear* it; uvicorn's 5s `timeout_keep_alive` closes it mid-drain and
+  the app silently loses the tail. `server.py` sets `KEEP_ALIVE`, and the comment
+  there carries the measurement — don't restore the default. Tests: `--tailtest`
+  end-to-end, `TestKeepAlive` for the setting.
 - @Published writes from the audio-stream callback **must** hop to the main actor
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.
 - **CLI probes that park the run loop run from `YapMain`, not the app delegate.**
-  `--pipetest` / `--backpressure` end in `dispatchMain()`; started from
+  `--pipetest` / `--backpressure` / `--tailtest` end in `dispatchMain()`; started from
   `applicationDidFinishLaunching` they SIGTRAP on
   `NSViewIsCurrentlyBuildingLayerTreeForDisplay` because the MenuBarExtra's layer
   tree is mid-build. Flags that just print and `exit(0)` are fine where they are.
@@ -205,6 +212,8 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 "$(swift build --show-bin-path)/Yap" --pipetest ../README.md
 # Streaming backpressure probe (real player + gate vs the live backend, 25s):
 "$(swift build --show-bin-path)/Yap" --backpressure ../README.md
+# Does a read survive to its LAST word? (runs in realtime — 1500 chars ≈ 2 min)
+"$(swift build --show-bin-path)/Yap" --tailtest ../README.md 1500 [port]
 
 # backend robustness suite (chunking, synth edges, long docs, providers, export)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -v
