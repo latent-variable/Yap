@@ -150,7 +150,6 @@ class TestChunking:
             "He lives there.",
         ]
 
-
     def test_long_sentence_hard_wrapped(self):
         long = "word " * 400  # ~2000 chars, no punctuation
         chunks = chunk_text(long, max_chars=320)
