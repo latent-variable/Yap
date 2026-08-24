@@ -624,7 +624,16 @@ def voices(engine_name: str = Query("kokoro", alias="engine")):
         # Cloned reference clips — only usable when the gated cloning model is
         # loaded (user supplied a token + accepted terms). Listed either way so
         # the user sees their clones; the UI can disable them when cloning is off.
+        #
+        # List only what synthesis can actually resolve. This glob and
+        # hd_voice_path used to disagree about the id grammar, so a clip named
+        # "My Sam.wav" was offered in the picker and then refused by /synthesize
+        # with a 400 for a voice the user could plainly see. The app no longer
+        # mints such ids, but clips written by older builds are still on disk;
+        # one guard for both answers is what keeps the two from drifting again.
         for p in sorted(hd_voices_dir().glob("*.wav")):
+            if hd_voice_path(p.stem) is None:
+                continue
             items.append({"id": p.stem, "lang": "any", "lang_label": "Cloned",
                           "gender": "ref", "section": "✨ Cloned",
                           "needs_cloning": True})
