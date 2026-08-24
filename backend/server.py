@@ -93,16 +93,15 @@ def split_sentences(text: str) -> list[str]:
         if i + 1 < len(parts):
             punct = parts[i + 1]
             buf += punct
-            
             words = re.split(r"\s+", buf.strip())
-            last_word = (
-                words[-1]
-                .rstrip(".!?\"')]")
-                .lstrip("([{\"'")
-                .lower()
-            )
+            # Strip delimiters both ends: an abbreviation is still one when it
+            # opens a bracket or a quote — "(e.g." must match `e.g`.
+            last_word = words[-1].rstrip(".!?\"')]").lstrip("([{\"'").lower()
+            # A bare number ending the FIRST word of the buffer is a list marker
+            # ("10. End of line."), not a sentence. The one-word test is what
+            # keeps a real boundary intact: in "The answer is 42. Next one." the
+            # buffer holds four words, so 42 stays a sentence end.
             is_list_item = len(words) == 1 and last_word.isdigit()
-            
             if last_word in _ABBREV or is_list_item:
                 buf += parts[i + 2] if i + 2 < len(parts) else ""
                 i += 3
