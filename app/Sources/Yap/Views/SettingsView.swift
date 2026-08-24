@@ -148,7 +148,10 @@ private struct EngineTab: View {
     @State private var savingToken = false
     @State private var tokenSaved = false
 
-    private var nameReady: Bool { !newName.trimmingCharacters(in: .whitespaces).isEmpty }
+    // A name that slugs to nothing (emoji only) can never become a voice id, so
+    // it must not unlock recording — the failure would otherwise land after a
+    // 20s take.
+    private var nameReady: Bool { VoiceID.slug(newName) != nil }
 
     var body: some View {
         Form {

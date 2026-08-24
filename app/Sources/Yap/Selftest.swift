@@ -334,6 +334,81 @@ enum Selftest {
             checkBool("no temp file left beside the voice", strays.isEmpty, true)
         }
 
+        print("VoiceID — a cloned voice's id must be one the backend resolves")
+        // The claim under test is not "slug rewrites strings" — it is "every id
+        // this app mints satisfies hd_voice_path's guard", which is what decides
+        // whether an imported voice can ever speak.
+        for raw in ["My Sam", "Dad's voice", "Ángel", "パパ", "Дом", "a/b\\c",
+                    "  padded  ", "Sam!!!", "voice (2)", "MIXED_case-99",
+                    String(repeating: "long name ", count: 20)] {
+            guard let id = VoiceID.slug(raw) else {
+                failures += 1; print("  ✗ slug dropped a usable name «\(raw)»"); continue
+            }
+            checkBool("«\(raw)» -> «\(id)» is backend-legal", VoiceID.isLegal(id), true)
+        }
+        // Control: without slugging, those same names are exactly what the backend
+        // rejects. If slug ever degrades to identity, the loop above stops proving
+        // anything — this is the assertion that notices.
+        checkBool("control: raw «My Sam» is NOT legal", VoiceID.isLegal("My Sam"), false)
+        checkBool("control: raw «Dad's voice» is NOT legal", VoiceID.isLegal("Dad's voice"), false)
+        checkEq("spaces collapse to one dash", VoiceID.slug("My  Sam") ?? "<nil>", "My-Sam")
+        checkEq("apostrophe drops, space joins", VoiceID.slug("Dad's voice") ?? "<nil>", "Dads-voice")
+        checkEq("accents transliterate, not vanish", VoiceID.slug("Ángel") ?? "<nil>", "Angel")
+        checkEq("legal name passes through untouched", VoiceID.slug("MIXED_case-99") ?? "<nil>", "MIXED_case-99")
+        checkEq("no leading or trailing dash", VoiceID.slug("  !Sam!  ") ?? "<nil>", "Sam")
+        checkEq("path separators can't escape the dir", VoiceID.slug("../../etc/x") ?? "<nil>", "etc-x")
+        checkBool("emoji-only name yields no id", VoiceID.slug("🎤🎤") == nil, true)
+        checkBool("separator-only name yields no id", VoiceID.slug("---") == nil, true)
+        checkBool("empty name yields no id", VoiceID.slug("") == nil, true)
+        checkBool("id is capped and still legal",
+                  VoiceID.slug(String(repeating: "long name ", count: 20)).map {
+                      $0.count <= 64 && VoiceID.isLegal($0) } ?? false, true)
+        // The starter voices ship as ids already; slugging must not rename them
+        // out from under a user's saved selection.
+        for starter in ["Aria", "Clara", "Ben", "Cole", "Jake", "Angus", "Ravi"] {
+            checkEq("starter «\(starter)» unchanged", VoiceID.slug(starter) ?? "<nil>", starter)
+        }
+
+        print("VoiceID — repairing clips a previous build already broke")
+        do {
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appending(path: "yap-repair-\(UUID().uuidString)")
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: root) }
+            func put(_ stem: String, _ body: String) {
+                fm.createFile(atPath: root.appending(path: "\(stem).wav").path,
+                              contents: Data(body.utf8))
+            }
+            put("My Sam", "broken")            // renameable
+            put("Ravi", "starter")             // already legal — must not move
+            put("Clara", "legal-clara")        // the collision target below
+            put("Clara!", "would-clobber")     // slugs onto Clara — must be left alone
+            put("🎤", "nothing-sluggable")     // no id to rename it to
+            fm.createFile(atPath: root.appending(path: "notes.txt").path, contents: Data())
+
+            let renamed = AppState.repairVoiceIDs(in: root, fm: fm)
+            let names = Set((try? fm.contentsOfDirectory(atPath: root.path)) ?? [])
+
+            checkBool("broken clip is renamed to a legal id", names.contains("My-Sam.wav"), true)
+            checkBool("the illegal name is gone", names.contains("My Sam.wav"), false)
+            checkEq("rename is reported so the selection can follow",
+                    renamed.map { "\($0.0)->\($0.1)" }.joined(separator: ","), "My Sam->My-Sam")
+            // The bytes must be the SAME file, not a fresh empty one.
+            checkEq("the audio moved, not just the name",
+                    (try? String(contentsOf: root.appending(path: "My-Sam.wav"), encoding: .utf8)) ?? "<gone>",
+                    "broken")
+            checkBool("an already-legal voice is untouched", names.contains("Ravi.wav"), true)
+            // A collision must never overwrite the voice that already works.
+            checkEq("a colliding rename does not clobber the working voice",
+                    (try? String(contentsOf: root.appending(path: "Clara.wav"), encoding: .utf8)) ?? "<gone>",
+                    "legal-clara")
+            checkBool("the colliding clip is left in place", names.contains("Clara!.wav"), true)
+            checkBool("an unsluggable stem is left alone", names.contains("🎤.wav"), true)
+            checkBool("non-wav files are ignored", names.contains("notes.txt"), true)
+            // Re-running must be a no-op, not a second round of renames.
+            checkBool("repair is idempotent", AppState.repairVoiceIDs(in: root, fm: fm).isEmpty, true)
+        }
+
         print("UpdateChecker — semantic version compare")
         checkBool("newer patch is newer", UpdateChecker.isNewer("0.8.2", than: "0.8.1"), true)
         checkBool("older is not newer", UpdateChecker.isNewer("0.8.0", than: "0.8.1"), false)
