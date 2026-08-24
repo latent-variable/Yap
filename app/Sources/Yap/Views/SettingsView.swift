@@ -148,7 +148,30 @@ private struct EngineTab: View {
     @State private var savingToken = false
     @State private var tokenSaved = false
 
-    private var nameReady: Bool { !newName.trimmingCharacters(in: .whitespaces).isEmpty }
+    // A name that slugs to nothing (emoji only) can never become a voice id, so
+    // it must not unlock recording — the failure would otherwise land after a
+    // 20s take.
+    private var newID: String? { VoiceID.slug(newName) }
+    private var nameReady: Bool { newID != nil }
+
+    /// The id this name will be saved under, when it isn't the name itself.
+    /// Slugging means what the user typed and what the voice is called can differ
+    /// ("Dad's voice" → "Dads-voice"), so say so rather than surprise them later.
+    private var idNote: String? {
+        guard let id = newID, id != newName else { return nil }
+        return id
+    }
+
+    /// The existing cloned voice this import would overwrite. The write is a
+    /// `rename(2)` onto `<id>.wav`, which replaces — deliberate when you re-record
+    /// a voice, but slugging means two names you typed differently can land on one
+    /// id. Name the casualty before the user commits a 20s take to it.
+    private var replacesExisting: String? {
+        guard let id = newID,
+              state.hdVoices.contains(where: { $0.id == id && $0.needs_cloning == true })
+        else { return nil }
+        return id
+    }
 
     var body: some View {
         Form {
@@ -340,6 +363,12 @@ private struct EngineTab: View {
                 }
                 if !nameReady {
                     Text("Enter a name above to enable recording and importing.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else if let id = replacesExisting {
+                    Label("Replaces your existing “\(id)” voice.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2).foregroundStyle(.orange)
+                } else if let id = idNote {
+                    Text("Saved as “\(id)”.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }

@@ -36,6 +36,30 @@ def test_hd_voice_path_accepts_safe_id_and_stays_in_dir(tmp_path, monkeypatch):
     assert hd_voice_path("Missing") is None  # safe id, but no such file
 
 
+def test_voices_lists_only_clips_synthesis_can_resolve(tmp_path, monkeypatch):
+    # The picker and the synth guard must agree on the id grammar. They didn't:
+    # /voices globbed every *.wav while hd_voice_path refused anything outside
+    # [A-Za-z0-9_-], so a clip named "My Sam.wav" was offered and then 400'd for
+    # a voice the user could see. Old builds still leave such files on disk.
+    import server
+    monkeypatch.setenv("PARLEY_HD_VOICES", str(tmp_path))
+    for stem in ["My Sam", "My-Sam", "Ravi", "Dad's voice", "🎤"]:
+        (tmp_path / f"{stem}.wav").write_bytes(b"RIFF")
+    monkeypatch.setattr(server.pk_engine, "voices", lambda: [], raising=False)
+
+    listed = {v["id"] for v in server.voices(engine_name="pocket")["voices"]
+              if v.get("needs_cloning")}
+
+    assert listed == {"My-Sam", "Ravi"}
+    # The claim is not "some were filtered" but "everything listed resolves" —
+    # assert it against the guard itself, so the two can't drift apart again.
+    assert all(hd_voice_path(v) is not None for v in listed)
+    # Control: the names dropped are exactly the ones the guard refuses, and the
+    # files are still on disk (an unusable clip is hidden, never deleted).
+    assert all(hd_voice_path(bad) is None for bad in ["My Sam", "Dad's voice", "🎤"])
+    assert len(list(tmp_path.glob("*.wav"))) == 5
+
+
 def _seg_texts(text):
     return [s for s, _g in segment_text(text)]
 

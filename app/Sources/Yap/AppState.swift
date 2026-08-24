@@ -213,8 +213,74 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Rename any cloned clip whose filename stem isn't a legal voice id.
+    ///
+    /// Before the importer slugified, a free-form name reached disk verbatim, so
+    /// "My Sam.wav" was listed, selectable and permanently mute — the backend
+    /// resolves the id through a `[A-Za-z0-9_-]` guard. Renaming in place makes
+    /// those clips speak again and carries the current selection across. Skips
+    /// rather than clobbers when a legal file of that name already exists, and
+    /// skips a stem with nothing sluggable left (emoji only) — there is no name
+    /// to rename it to that the user would recognize.
+    private func repairHDVoiceIDs() {
+        let after = AppState.selection(after: AppState.repairVoiceIDs(in: hdVoicesDir),
+                                       current: prefs.hdVoice)
+        if after != prefs.hdVoice { prefs.hdVoice = after }
+    }
+
+    /// Where the selected voice lands after a repair pass: follow a rename, drop
+    /// an id nothing on this machine can resolve (empty — `refreshHD()` then picks
+    /// a working default), keep anything else.
+    ///
+    /// Dropping is safe to decide from the id alone: a clip the repair could not
+    /// rename is still listed and still selectable, and its id is one the backend
+    /// *structurally* refuses, so every read, preview and export off it is a 400.
+    /// That is a string check, not a question about whether cloning has loaded, so
+    /// unlike a `cloning`-based demote it cannot misfire during the lazy warm-up.
+    nonisolated static func selection(after r: VoiceIDRepair, current: String) -> String {
+        if let hit = r.renamed.first(where: { $0.0 == current }) { return hit.1 }
+        if !current.isEmpty, r.unresolved.contains(current) { return "" }
+        return current
+    }
+
+    /// What a repair pass did: clips renamed onto a legal id, and clips left
+    /// behind because there was nowhere safe to put them.
+    struct VoiceIDRepair {
+        /// (old id, new id) so a caller can carry the current selection across.
+        var renamed: [(String, String)] = []
+        /// Ids still on disk that the backend will refuse — a rename that would
+        /// have clobbered a working voice, or a stem with nothing sluggable left.
+        var unresolved: [String] = []
+    }
+
+    /// The file half of the repair: rename each illegally-named clip in `dir`.
+    /// Static + FileManager-only, so `--selftest` can exercise the no-data-loss
+    /// path on a temp dir (same shape as `AppMigration.merge`).
+    nonisolated static func repairVoiceIDs(in dir: URL, fm: FileManager = .default) -> VoiceIDRepair {
+        guard let clips = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        else { return VoiceIDRepair() }
+        var out = VoiceIDRepair()
+        for clip in clips.sorted(by: { $0.path < $1.path }) where clip.pathExtension == "wav" {
+            let stem = clip.deletingPathExtension().lastPathComponent
+            guard !VoiceID.isLegal(stem) else { continue }
+            // Never overwrite: a colliding target is a voice that already works,
+            // and an unsluggable stem has no name a user would recognize. Keep the
+            // file (it is the user's only copy of that recording) and report the id
+            // so the caller can stop it being the active selection.
+            guard let id = VoiceID.slug(stem) else { out.unresolved.append(stem); continue }
+            let dest = dir.appending(path: "\(id).wav")
+            guard !fm.fileExists(atPath: dest.path) else { out.unresolved.append(stem); continue }
+            guard (try? fm.moveItem(at: clip, to: dest)) != nil else {
+                out.unresolved.append(stem); continue
+            }
+            out.renamed.append((stem, id))
+        }
+        return out
+    }
+
     func bootstrap() {
         seedStarterVoices()
+        repairHDVoiceIDs()
         reapplyHotKey()   // honors voiceEnabled — won't bind the hot key when reading is off
         Log.write("bootstrap: axTrusted=\(Permissions.axTrusted) readSource=\(prefs.readSource.rawValue) captureMode=\(prefs.captureMode.rawValue) voiceEnabled=\(prefs.voiceEnabled)")
         // Selection capture needs Accessibility. Prompt up front so the user
@@ -808,10 +874,16 @@ final class AppState: ObservableObject {
 
     /// Import an audio file as a Pocket reference voice (converted to a
     /// mono 24 kHz WAV, trimmed to ~20s).
+    ///
+    /// The name is free-form, so it goes through `VoiceID.slug` before it becomes
+    /// a filename or a stored selection: the id ends up in a synth request, where
+    /// the backend rejects anything outside `[A-Za-z0-9_-]`. Writing the raw name
+    /// produced a voice that was listed and selectable and 400'd on every read.
     func addHDVoice(from src: URL, name: String) {
-        let safe = name.replacingOccurrences(of: "/", with: "-")
-            .trimmingCharacters(in: .whitespaces)
-        guard !safe.isEmpty else { return }
+        guard let safe = VoiceID.slug(name) else {
+            status = .error("Voice name needs a letter or number")
+            return
+        }
         let dest = hdVoicesDir.appending(path: "\(safe).wav")
         // Security-scoped access has thread affinity: start AND stop must be on
         // the same thread, else the sandbox token leaks. So hold the scope only

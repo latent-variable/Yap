@@ -277,9 +277,6 @@ final class BackendManager: NSObject, ObservableObject {
         ownsProcess = false
     }
 
-    // MARK: Orphan detection (lsof + ps, off the main actor)
-
-    /// PID of an orphaned Yap backend listening on `port`: the process must be
     /// True once the gated Pocket cloning weights (kyutai/pocket-tts) are in the
     /// Hugging Face cache. When they are, the backend loads cloning offline with no
     /// token, so we can skip the Keychain read (and its password prompt) entirely.
@@ -321,6 +318,9 @@ final class BackendManager: NSObject, ObservableObject {
         return false
     }
 
+    // MARK: Orphan detection (lsof + ps, off the main actor)
+
+    /// PID of an orphaned Yap backend listening on `port`: the process must be
     /// running `server.py` AND have been reparented to launchd (ppid == 1), the
     /// signature of a backend whose spawning Yap quit or crashed.
     private nonisolated static func orphanBackendPID(port: Int) async -> pid_t? {

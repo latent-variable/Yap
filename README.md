@@ -39,7 +39,7 @@ git clone https://github.com/latent-variable/Yap.git
 cd Yap && bash scripts/build_app.sh && open dist/Yap.app
 ```
 
-First launch grabs the Kokoro model (~340 MB). Grant Accessibility + Microphone when asked (or use Clipboard mode, no permission needed). Then: **⌘⇧D** to dictate, **⌘⇧R** to read the selection aloud.
+On first launch, open **Settings ▸ Models** and download the Kokoro model (~340 MB) — the menu bar flags it until you do. Grant Accessibility + Microphone when asked (or use Clipboard mode, no permission needed). Then: **⌘⇧D** to dictate, **⌘⇧R** to read the selection aloud.
 
 ## The loop
 
