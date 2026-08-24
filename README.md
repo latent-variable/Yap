@@ -39,7 +39,7 @@ git clone https://github.com/latent-variable/Yap.git
 cd Yap && bash scripts/build_app.sh && open dist/Yap.app
 ```
 
-On first launch, open **Settings ▸ Models** and download the Kokoro model (~340 MB) — the menu bar flags it until you do. Grant Accessibility + Microphone when asked (or use Clipboard mode, no permission needed). Then: **⌘⇧D** to dictate, **⌘⇧R** to read the selection aloud.
+On first launch, open **Settings ▸ Models** and download the Kokoro model (~340 MB) — the menu bar flags it until you do. Grant Accessibility + Microphone when asked (Clipboard mode skips Accessibility; dictation always needs the mic). Then: **⌘⇧D** to dictate, **⌘⇧R** to read the selection aloud.
 
 ## The loop
 
@@ -99,7 +99,7 @@ SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CP
   AVAudioEngine mic ──► FluidAudio / Parakeet (CoreML, ANE) ← ears: streaming dictation, in-app
 ```
 
-The default app stays small (~88 MB): Kokoro is bundled; the Pocket engine (torch, ~1 GB) downloads on demand only when you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+88 MB to download, ~275 MB installed (mostly the self-contained Python runtime). The Kokoro model (~340 MB) downloads on first launch; the Pocket engine (torch, ~1 GB) only if you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Develop
 

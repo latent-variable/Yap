@@ -5,8 +5,9 @@ it touches, and why — so you don't have to take "private" on faith.
 
 ## The short version
 
-- Runs entirely on your Mac. Speech is synthesized locally by the bundled
-  Kokoro engine.
+- Runs entirely on your Mac. Speech is synthesized locally (Kokoro, or Pocket
+  TTS if you enable it); dictation is transcribed locally on the Apple Neural
+  Engine (Parakeet).
 - No account, no sign-in, no analytics, no telemetry, no crash reporting.
 - No telemetry, no account, nothing about you is ever sent. Yap's only network
   activity is fetching assets you opt into, plus an optional update check: the
@@ -22,11 +23,14 @@ it touches, and why — so you don't have to take "private" on faith.
   (capture) and [`server.py`](../backend/server.py) (the only thing that touches
   the TTS model). Or build your own and use these binaries as a reference.
 
-## Why Accessibility is the one permission asked for
+## The two permissions Yap asks for
 
-Yap's whole job: take the text you select and read it aloud. macOS protects
-two capabilities behind the Accessibility permission, and both are needed for
-that job:
+Yap has two jobs: read the text you select aloud, and type back what you say.
+Each needs exactly one grant, and you can use either half without the other.
+
+### Accessibility (reading a selection, and typing a transcript back)
+
+macOS protects three capabilities behind it:
 
 1. **Reading the selected text of another app.** macOS only lets a *trusted*
    process query another app's UI via the Accessibility API (`AXUIElement` →
@@ -37,15 +41,32 @@ that job:
    a synthetic ⌘C (`CGEvent`), reads the result, and **restores your previous
    clipboard**. Posting a synthetic keystroke also requires the same trust.
 
+3. **Simulating ⌘V to paste a transcript at your cursor.** Dictation puts the
+   finished text on the pasteboard, posts a synthetic ⌘V, then **restores your
+   previous clipboard**: the same mechanism and the same restore as the copy
+   path ([`TextInsert.swift`](../app/Sources/Yap/TextInsert.swift)).
+
 These are the *only* reasons. The grant is broad on paper ("control your
 computer") because that's the single switch macOS offers — but what Yap
 actually does with it is narrow and visible in
 [`TextCapture.swift`](../app/Sources/Yap/TextCapture.swift).
 
+### Microphone (dictation)
+
+Dictation is a toggle: the mic opens when you press ⌘⇧D and closes when you
+press it again. The audio goes straight to a local Parakeet model on the Apple
+Neural Engine; it is
+**never written to disk and never leaves the machine**. There is no sidecar and
+no network call anywhere in the dictation path
+([`Dictation.swift`](../app/Sources/Yap/Dictation.swift)). Don't dictate? Don't
+grant it. The read-aloud half works without it.
+
 ## What Yap does NOT do
 
 - No keylogging. It reads a selection only when you press the shortcut — it does
   not observe what you type.
+- No always-on listening. The mic opens when you press the dictation shortcut and
+  closes when you press it again. Nothing is recorded between those two presses.
 - No screen reading or screenshots.
 - No background scraping. Nothing is captured unless you trigger it.
 - No clipboard hijacking. The fallback restores whatever was on your clipboard.
@@ -87,7 +108,7 @@ clipboard involvement, set **Read source → Selected text**.
 
 ## The no-permission option
 
-You can use Yap without granting anything: set **Read source → Clipboard**.
+You can read aloud without granting anything: set **Read source → Clipboard**.
 Then you copy text yourself (⌘C) and press the shortcut; Yap reads the
 clipboard. Reading your own clipboard is unrestricted, so no permission is
 involved.
