@@ -217,6 +217,12 @@ final class Dictation: ObservableObject {
         // state stays .idle until the callback, so without this two quick presses
         // would each begin capture and orphan a pump.
         guard !starting, modelReady, state == .idle, let manager else { return }
+        // Bind the choice HERE, with the manager, not after the await below. The
+        // picker stays live through the permission window, so reading it in the
+        // callback could pair the new engine's batch model with the old engine's
+        // streaming manager — the wrong-language final pass this whole change
+        // exists to prevent.
+        let choice = engineChoice
         starting = true
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             Task { @MainActor in
@@ -229,7 +235,7 @@ final class Dictation: ObservableObject {
                     _ = self.recorder.drain()   // clear last session's audio
                     try self.beginCapture(into: manager)
                     self.sessionManager = manager   // bind for the whole session
-                    self.sessionFinalVersion = self.engineChoice.finalVersion
+                    self.sessionFinalVersion = choice.finalVersion
                     self.state = .listening
                     self.startRefineLoop()      // accurate preview, layered over streaming
                 } catch {
