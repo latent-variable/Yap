@@ -74,6 +74,7 @@ def lang_for_voice(voice: str) -> str:
 _ABBREV = {
     "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e",
     "fig", "inc", "ltd", "co", "no", "vol", "approx", "dept", "univ", "min", "max",
+    "u.s", "u.k",
 }
 _SENT_END = re.compile(r"([.!?]+[\"')\]]?)(\s+)")
 
@@ -92,8 +93,17 @@ def split_sentences(text: str) -> list[str]:
         if i + 1 < len(parts):
             punct = parts[i + 1]
             buf += punct
-            last_word = re.split(r"\s+", buf.strip())[-1].rstrip(".!?\"')]").lower()
-            if last_word in _ABBREV:
+            
+            words = re.split(r"\s+", buf.strip())
+            last_word = (
+                words[-1]
+                .rstrip(".!?\"')]")
+                .lstrip("([{\"'")
+                .lower()
+            )
+            is_list_item = len(words) == 1 and last_word.isdigit()
+            
+            if last_word in _ABBREV or is_list_item:
                 buf += parts[i + 2] if i + 2 < len(parts) else ""
                 i += 3
                 continue

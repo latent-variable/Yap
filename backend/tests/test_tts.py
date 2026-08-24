@@ -135,6 +135,22 @@ class TestChunking:
         assert len(s) == 2
         assert s[0].startswith("Dr. Smith")
 
+    def test_us_abbreviation_not_split(self):
+        assert split_sentences("The U.S. is big.") == ["The U.S. is big."]
+
+    def test_bracketed_abbreviation_not_split(self):
+        assert split_sentences("(e.g. foo)") == ["(e.g. foo)"]
+
+    def test_numbered_list_item_not_split(self):
+        assert split_sentences("10. End of line.") == ["10. End of line."]
+
+    def test_real_sentence_boundary_after_abbreviation(self):
+        assert split_sentences("The U.S. is big. He lives there.") == [
+            "The U.S. is big.",
+            "He lives there.",
+        ]
+
+
     def test_long_sentence_hard_wrapped(self):
         long = "word " * 400  # ~2000 chars, no punctuation
         chunks = chunk_text(long, max_chars=320)
