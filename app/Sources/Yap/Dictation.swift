@@ -36,6 +36,43 @@ final class Dictation: ObservableObject {
         case error(String)
     }
 
+    /// May a model load write `state`?
+    ///
+    /// No, while a capture session owns it. An engine switch is one click away
+    /// in the menu bar and in Settings, and nothing disables it mid-dictation,
+    /// so a load can land at any point in a session. Letting it commit
+    /// `state = .idle` over a live `.listening` made `stopAndTranscribe`'s
+    /// `guard state == .listening` fail, and the user's speech was dropped with
+    /// no error shown. `starting` covers the async mic-permission window, where
+    /// state is still `.idle` but a session is already coming up.
+    ///
+    /// Pure and internal so `--selftest` can cover it: the rest of the path
+    /// needs a mic and a loaded model.
+    /// May the loaded batch model re-transcribe this session's audio?
+    ///
+    /// Only when it is the version the session was captured under. Both guards
+    /// used to compare against the live `engineChoice`, which moves when the
+    /// picker does: switching multilingual→English mid-utterance loaded the
+    /// English batch model, passed the guard, and ran it over Spanish audio. The
+    /// garbage it returned then *overrode* the correct live transcript, because
+    /// a non-empty accurate pass always wins. Refusing falls back to the live
+    /// text, which is the degradation this path already documents.
+    ///
+    /// Pure and nonisolated so `--selftest` can cover it.
+    nonisolated static func batchModelUsable(loaded: AsrModelVersion?,
+                                             session: AsrModelVersion?) -> Bool {
+        guard let loaded, let session else { return false }
+        return loaded == session
+    }
+
+    nonisolated static func loadMayWriteState(starting: Bool, state: State) -> Bool {
+        if starting { return false }
+        switch state {
+        case .listening, .transcribing: return false
+        case .idle, .loadingModel, .error: return true
+        }
+    }
+
     @Published private(set) var state: State = .idle
     @Published private(set) var modelReady = false
     @Published var engineChoice: EngineChoice = .english
@@ -51,6 +88,16 @@ final class Dictation: ObservableObject {
     @Published private(set) var lastFinal = ""
 
     private var manager: (any StreamingAsrManager)?
+    /// The manager ONE capture session is bound to, held for its whole life.
+    /// `manager` is a slot the engine picker can swap at any moment; the pump,
+    /// the reset and the final flush must all be the same instance, so the
+    /// session captures it once at `beginCapture` and `stopAndTranscribe` reads
+    /// it back from here rather than re-reading the slot.
+    private var sessionManager: (any StreamingAsrManager)?
+    /// The batch-model version this session's audio belongs to, captured with
+    /// `sessionManager`. `engineChoice` is live and moves under a session, so the
+    /// batch guards key on this instead.
+    private var sessionFinalVersion: AsrModelVersion?
     private let audio = AVAudioEngine()
     private var pump: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?   // supersedable engine load (last wins)
@@ -103,7 +150,7 @@ final class Dictation: ObservableObject {
         // after each await; the picker also reflects the new selection immediately.
         engineChoice = choice
         Prefs.shared.dictationEngine = choice.rawValue
-        state = .loadingModel
+        if Dictation.loadMayWriteState(starting: starting, state: state) { state = .loadingModel }
         do {
             let mgr = choice.variant.createManager()
             try await mgr.loadModels()
@@ -120,7 +167,9 @@ final class Dictation: ObservableObject {
             guard !Task.isCancelled, engineChoice == choice else { return }
             manager = mgr
             modelReady = true
-            state = .idle
+            // Swapping the slot mid-session is harmless — the session holds its
+            // own instance in `sessionManager` — but the state must not move.
+            if Dictation.loadMayWriteState(starting: starting, state: state) { state = .idle }
             // Warm the high-accuracy final-pass model in the background so it's
             // ready by the time you stop talking. Best-effort, and tracked so a
             // later engine switch or a model delete can cancel it.
@@ -135,7 +184,9 @@ final class Dictation: ObservableObject {
             // a stale load can't stamp a false error over the new engine's state.
             guard !Task.isCancelled, engineChoice == choice else { return }
             modelReady = false
-            state = .error("Model load failed: \(error.localizedDescription)")
+            if Dictation.loadMayWriteState(starting: starting, state: state) {
+                state = .error("Model load failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -166,6 +217,12 @@ final class Dictation: ObservableObject {
         // state stays .idle until the callback, so without this two quick presses
         // would each begin capture and orphan a pump.
         guard !starting, modelReady, state == .idle, let manager else { return }
+        // Bind the choice HERE, with the manager, not after the await below. The
+        // picker stays live through the permission window, so reading it in the
+        // callback could pair the new engine's batch model with the old engine's
+        // streaming manager — the wrong-language final pass this whole change
+        // exists to prevent.
+        let choice = engineChoice
         starting = true
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             Task { @MainActor in
@@ -177,6 +234,8 @@ final class Dictation: ObservableObject {
                     self.refined = ""
                     _ = self.recorder.drain()   // clear last session's audio
                     try self.beginCapture(into: manager)
+                    self.sessionManager = manager   // bind for the whole session
+                    self.sessionFinalVersion = choice.finalVersion
                     self.state = .listening
                     self.startRefineLoop()      // accurate preview, layered over streaming
                 } catch {
@@ -189,7 +248,11 @@ final class Dictation: ObservableObject {
     /// Stop capture, flush, and return the final transcript (nil if empty).
     @discardableResult
     func stopAndTranscribe() async -> String? {
-        guard state == .listening, let manager else { return nil }
+        // The session's own instance, not the slot: an engine switch during the
+        // read may already have replaced `manager` with one that never saw this
+        // audio, which flushed an empty transcript over real speech.
+        guard state == .listening, let manager = sessionManager else { return nil }
+        defer { sessionManager = nil; sessionFinalVersion = nil }
         audio.inputNode.removeTap(onBus: 0)
         audio.stop()
         // Await the pump's actual termination — cancel() alone doesn't wait, and
@@ -233,9 +296,11 @@ final class Dictation: ObservableObject {
     /// Returns nil (→ caller keeps the live text) if the model isn't loaded, the
     /// audio is empty, or anything throws.
     private func runFinalPass(_ buffers: [AVAudioPCMBuffer]) async -> String? {
-        // Only trust the batch model if it matches the currently-selected engine
-        // (a language switch may have left a stale model loaded).
-        guard let finalASR, finalVersionLoaded == engineChoice.finalVersion,
+        // Only trust the batch model if it is the one THIS session was captured
+        // under — not merely the currently-selected engine, which the picker can
+        // move mid-session.
+        guard let finalASR,
+              Dictation.batchModelUsable(loaded: finalVersionLoaded, session: sessionFinalVersion),
               let combined = BufferQueue.concat(buffers) else { return nil }
         do {
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
@@ -271,9 +336,11 @@ final class Dictation: ObservableObject {
             // Overflow latches on for the rest of the session, so stop the loop
             // (don't spin every 0.8s) — the HUD falls back to the live partial.
             if recorder.overflowed { if !refined.isEmpty { refined = "" }; break }
-            // Need the accurate model, matching the live engine. Otherwise leave the
-            // streaming `partial` to drive the HUD.
-            guard let finalASR, finalVersionLoaded == engineChoice.finalVersion else { continue }
+            // Need the accurate model, matching the engine THIS session started on.
+            // Otherwise leave the streaming `partial` to drive the HUD.
+            guard let finalASR,
+                  Dictation.batchModelUsable(loaded: finalVersionLoaded, session: sessionFinalVersion)
+            else { continue }
             // Cheap frame count on the main actor for the gates; the expensive
             // snapshot + concat (a memcpy of the whole utterance) runs off-main so a
             // long hold can't stutter the UI.

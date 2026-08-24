@@ -166,6 +166,43 @@ enum Selftest {
                 TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
                 "one two . three")
 
+        print("Dictation — a model load must not reset an active session")
+        // An engine switch is one click away in the menu bar AND in Settings, and
+        // nothing disables it mid-dictation. A load that commits `state = .idle`
+        // over a live session made stopAndTranscribe's `guard state == .listening`
+        // fail, and the speech was dropped with no error shown.
+        checkBool("listening is protected",
+                  Dictation.loadMayWriteState(starting: false, state: .listening), false)
+        checkBool("transcribing is protected",
+                  Dictation.loadMayWriteState(starting: false, state: .transcribing), false)
+        // The mic-permission window: state is still .idle but a session is coming
+        // up, so `starting` alone must protect it.
+        checkBool("permission window is protected",
+                  Dictation.loadMayWriteState(starting: true, state: .idle), false)
+        checkBool("starting outranks any state",
+                  Dictation.loadMayWriteState(starting: true, state: .loadingModel), false)
+        // With no session in flight a load owns the state, or the picker would
+        // never show "loading" and a failed load could never surface its error.
+        checkBool("idle is writable",
+                  Dictation.loadMayWriteState(starting: false, state: .idle), true)
+        checkBool("loadingModel is writable",
+                  Dictation.loadMayWriteState(starting: false, state: .loadingModel), true)
+        checkBool("error is writable",
+                  Dictation.loadMayWriteState(starting: false, state: .error("x")), true)
+
+        // The batch model must belong to the session's engine, not the live picker
+        // selection. Switching multilingual→English mid-utterance loaded the English
+        // batch model and ran it over Spanish audio; the garbage overrode the correct
+        // live transcript, because a non-empty accurate pass always wins.
+        checkBool("batch model matching the session is used",
+                  Dictation.batchModelUsable(loaded: .v3, session: .v3), true)
+        checkBool("batch model from a later engine switch is refused",
+                  Dictation.batchModelUsable(loaded: .v2, session: .v3), false)
+        checkBool("no batch model loaded yet is refused",
+                  Dictation.batchModelUsable(loaded: nil, session: .v3), false)
+        checkBool("no session binding is refused",
+                  Dictation.batchModelUsable(loaded: .v2, session: nil), false)
+
         print("AppMigration — recursive merge never strands files")
         do {
             let fm = FileManager.default
