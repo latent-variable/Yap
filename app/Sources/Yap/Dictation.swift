@@ -36,6 +36,26 @@ final class Dictation: ObservableObject {
         case error(String)
     }
 
+    /// May a model load write `state`?
+    ///
+    /// No, while a capture session owns it. An engine switch is one click away
+    /// in the menu bar and in Settings, and nothing disables it mid-dictation,
+    /// so a load can land at any point in a session. Letting it commit
+    /// `state = .idle` over a live `.listening` made `stopAndTranscribe`'s
+    /// `guard state == .listening` fail, and the user's speech was dropped with
+    /// no error shown. `starting` covers the async mic-permission window, where
+    /// state is still `.idle` but a session is already coming up.
+    ///
+    /// Pure and internal so `--selftest` can cover it: the rest of the path
+    /// needs a mic and a loaded model.
+    nonisolated static func loadMayWriteState(starting: Bool, state: State) -> Bool {
+        if starting { return false }
+        switch state {
+        case .listening, .transcribing: return false
+        case .idle, .loadingModel, .error: return true
+        }
+    }
+
     @Published private(set) var state: State = .idle
     @Published private(set) var modelReady = false
     @Published var engineChoice: EngineChoice = .english
@@ -51,6 +71,12 @@ final class Dictation: ObservableObject {
     @Published private(set) var lastFinal = ""
 
     private var manager: (any StreamingAsrManager)?
+    /// The manager ONE capture session is bound to, held for its whole life.
+    /// `manager` is a slot the engine picker can swap at any moment; the pump,
+    /// the reset and the final flush must all be the same instance, so the
+    /// session captures it once at `beginCapture` and `stopAndTranscribe` reads
+    /// it back from here rather than re-reading the slot.
+    private var sessionManager: (any StreamingAsrManager)?
     private let audio = AVAudioEngine()
     private var pump: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?   // supersedable engine load (last wins)
@@ -103,7 +129,7 @@ final class Dictation: ObservableObject {
         // after each await; the picker also reflects the new selection immediately.
         engineChoice = choice
         Prefs.shared.dictationEngine = choice.rawValue
-        state = .loadingModel
+        if Dictation.loadMayWriteState(starting: starting, state: state) { state = .loadingModel }
         do {
             let mgr = choice.variant.createManager()
             try await mgr.loadModels()
@@ -120,7 +146,9 @@ final class Dictation: ObservableObject {
             guard !Task.isCancelled, engineChoice == choice else { return }
             manager = mgr
             modelReady = true
-            state = .idle
+            // Swapping the slot mid-session is harmless — the session holds its
+            // own instance in `sessionManager` — but the state must not move.
+            if Dictation.loadMayWriteState(starting: starting, state: state) { state = .idle }
             // Warm the high-accuracy final-pass model in the background so it's
             // ready by the time you stop talking. Best-effort, and tracked so a
             // later engine switch or a model delete can cancel it.
@@ -135,7 +163,9 @@ final class Dictation: ObservableObject {
             // a stale load can't stamp a false error over the new engine's state.
             guard !Task.isCancelled, engineChoice == choice else { return }
             modelReady = false
-            state = .error("Model load failed: \(error.localizedDescription)")
+            if Dictation.loadMayWriteState(starting: starting, state: state) {
+                state = .error("Model load failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -177,6 +207,7 @@ final class Dictation: ObservableObject {
                     self.refined = ""
                     _ = self.recorder.drain()   // clear last session's audio
                     try self.beginCapture(into: manager)
+                    self.sessionManager = manager   // bind for the whole session
                     self.state = .listening
                     self.startRefineLoop()      // accurate preview, layered over streaming
                 } catch {
@@ -189,7 +220,11 @@ final class Dictation: ObservableObject {
     /// Stop capture, flush, and return the final transcript (nil if empty).
     @discardableResult
     func stopAndTranscribe() async -> String? {
-        guard state == .listening, let manager else { return nil }
+        // The session's own instance, not the slot: an engine switch during the
+        // read may already have replaced `manager` with one that never saw this
+        // audio, which flushed an empty transcript over real speech.
+        guard state == .listening, let manager = sessionManager else { return nil }
+        defer { sessionManager = nil }
         audio.inputNode.removeTap(onBus: 0)
         audio.stop()
         // Await the pump's actual termination — cancel() alone doesn't wait, and
