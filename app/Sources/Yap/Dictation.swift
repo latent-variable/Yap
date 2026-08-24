@@ -48,6 +48,23 @@ final class Dictation: ObservableObject {
     ///
     /// Pure and internal so `--selftest` can cover it: the rest of the path
     /// needs a mic and a loaded model.
+    /// May the loaded batch model re-transcribe this session's audio?
+    ///
+    /// Only when it is the version the session was captured under. Both guards
+    /// used to compare against the live `engineChoice`, which moves when the
+    /// picker does: switching multilingual→English mid-utterance loaded the
+    /// English batch model, passed the guard, and ran it over Spanish audio. The
+    /// garbage it returned then *overrode* the correct live transcript, because
+    /// a non-empty accurate pass always wins. Refusing falls back to the live
+    /// text, which is the degradation this path already documents.
+    ///
+    /// Pure and nonisolated so `--selftest` can cover it.
+    nonisolated static func batchModelUsable(loaded: AsrModelVersion?,
+                                             session: AsrModelVersion?) -> Bool {
+        guard let loaded, let session else { return false }
+        return loaded == session
+    }
+
     nonisolated static func loadMayWriteState(starting: Bool, state: State) -> Bool {
         if starting { return false }
         switch state {
@@ -77,6 +94,10 @@ final class Dictation: ObservableObject {
     /// session captures it once at `beginCapture` and `stopAndTranscribe` reads
     /// it back from here rather than re-reading the slot.
     private var sessionManager: (any StreamingAsrManager)?
+    /// The batch-model version this session's audio belongs to, captured with
+    /// `sessionManager`. `engineChoice` is live and moves under a session, so the
+    /// batch guards key on this instead.
+    private var sessionFinalVersion: AsrModelVersion?
     private let audio = AVAudioEngine()
     private var pump: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?   // supersedable engine load (last wins)
@@ -208,6 +229,7 @@ final class Dictation: ObservableObject {
                     _ = self.recorder.drain()   // clear last session's audio
                     try self.beginCapture(into: manager)
                     self.sessionManager = manager   // bind for the whole session
+                    self.sessionFinalVersion = self.engineChoice.finalVersion
                     self.state = .listening
                     self.startRefineLoop()      // accurate preview, layered over streaming
                 } catch {
@@ -224,7 +246,7 @@ final class Dictation: ObservableObject {
         // read may already have replaced `manager` with one that never saw this
         // audio, which flushed an empty transcript over real speech.
         guard state == .listening, let manager = sessionManager else { return nil }
-        defer { sessionManager = nil }
+        defer { sessionManager = nil; sessionFinalVersion = nil }
         audio.inputNode.removeTap(onBus: 0)
         audio.stop()
         // Await the pump's actual termination — cancel() alone doesn't wait, and
@@ -268,9 +290,11 @@ final class Dictation: ObservableObject {
     /// Returns nil (→ caller keeps the live text) if the model isn't loaded, the
     /// audio is empty, or anything throws.
     private func runFinalPass(_ buffers: [AVAudioPCMBuffer]) async -> String? {
-        // Only trust the batch model if it matches the currently-selected engine
-        // (a language switch may have left a stale model loaded).
-        guard let finalASR, finalVersionLoaded == engineChoice.finalVersion,
+        // Only trust the batch model if it is the one THIS session was captured
+        // under — not merely the currently-selected engine, which the picker can
+        // move mid-session.
+        guard let finalASR,
+              Dictation.batchModelUsable(loaded: finalVersionLoaded, session: sessionFinalVersion),
               let combined = BufferQueue.concat(buffers) else { return nil }
         do {
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
@@ -306,9 +330,11 @@ final class Dictation: ObservableObject {
             // Overflow latches on for the rest of the session, so stop the loop
             // (don't spin every 0.8s) — the HUD falls back to the live partial.
             if recorder.overflowed { if !refined.isEmpty { refined = "" }; break }
-            // Need the accurate model, matching the live engine. Otherwise leave the
-            // streaming `partial` to drive the HUD.
-            guard let finalASR, finalVersionLoaded == engineChoice.finalVersion else { continue }
+            // Need the accurate model, matching the engine THIS session started on.
+            // Otherwise leave the streaming `partial` to drive the HUD.
+            guard let finalASR,
+                  Dictation.batchModelUsable(loaded: finalVersionLoaded, session: sessionFinalVersion)
+            else { continue }
             // Cheap frame count on the main actor for the gates; the expensive
             // snapshot + concat (a memcpy of the whole utterance) runs off-main so a
             // long hold can't stutter the UI.

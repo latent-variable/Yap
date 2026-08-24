@@ -190,6 +190,19 @@ enum Selftest {
         checkBool("error is writable",
                   Dictation.loadMayWriteState(starting: false, state: .error("x")), true)
 
+        // The batch model must belong to the session's engine, not the live picker
+        // selection. Switching multilingual→English mid-utterance loaded the English
+        // batch model and ran it over Spanish audio; the garbage overrode the correct
+        // live transcript, because a non-empty accurate pass always wins.
+        checkBool("batch model matching the session is used",
+                  Dictation.batchModelUsable(loaded: .v3, session: .v3), true)
+        checkBool("batch model from a later engine switch is refused",
+                  Dictation.batchModelUsable(loaded: .v2, session: .v3), false)
+        checkBool("no batch model loaded yet is refused",
+                  Dictation.batchModelUsable(loaded: nil, session: .v3), false)
+        checkBool("no session binding is refused",
+                  Dictation.batchModelUsable(loaded: .v2, session: nil), false)
+
         print("AppMigration — recursive merge never strands files")
         do {
             let fm = FileManager.default
