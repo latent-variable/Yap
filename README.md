@@ -99,7 +99,7 @@ SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CP
   AVAudioEngine mic ──► FluidAudio / Parakeet (CoreML, ANE) ← ears: streaming dictation, in-app
 ```
 
-88 MB to download, ~275 MB installed (mostly the self-contained Python runtime). The Kokoro model (~340 MB) downloads on first launch; the Pocket engine (torch, ~1 GB) only if you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+~100 MB to download, ~270 MB installed (mostly the self-contained Python runtime). The Kokoro model (~340 MB) downloads on first launch; the Pocket engine (torch, ~1 GB) only if you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Develop
 
