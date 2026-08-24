@@ -392,7 +392,7 @@ enum Selftest {
             checkBool("broken clip is renamed to a legal id", names.contains("My-Sam.wav"), true)
             checkBool("the illegal name is gone", names.contains("My Sam.wav"), false)
             checkEq("rename is reported so the selection can follow",
-                    renamed.map { "\($0.0)->\($0.1)" }.joined(separator: ","), "My Sam->My-Sam")
+                    renamed.renamed.map { "\($0.0)->\($0.1)" }.joined(separator: ","), "My Sam->My-Sam")
             // The bytes must be the SAME file, not a fresh empty one.
             checkEq("the audio moved, not just the name",
                     (try? String(contentsOf: root.appending(path: "My-Sam.wav"), encoding: .utf8)) ?? "<gone>",
@@ -405,8 +405,29 @@ enum Selftest {
             checkBool("the colliding clip is left in place", names.contains("Clara!.wav"), true)
             checkBool("an unsluggable stem is left alone", names.contains("🎤.wav"), true)
             checkBool("non-wav files are ignored", names.contains("notes.txt"), true)
+            // Every clip left behind must be REPORTED, not silently abandoned —
+            // it is still listed by the backend and still refuses to synthesize,
+            // so the caller has to know not to leave it selected.
+            checkEq("skipped clips are reported as unresolved",
+                    renamed.unresolved.sorted().joined(separator: ","), "Clara!,🎤")
             // Re-running must be a no-op, not a second round of renames.
-            checkBool("repair is idempotent", AppState.repairVoiceIDs(in: root, fm: fm).isEmpty, true)
+            let again = AppState.repairVoiceIDs(in: root, fm: fm)
+            checkBool("repair is idempotent", again.renamed.isEmpty, true)
+            checkEq("and still reports the same leftovers",
+                    again.unresolved.sorted().joined(separator: ","), "Clara!,🎤")
+
+            // Where the saved selection ends up. A selection left pointing at an
+            // id the backend refuses can only 400 — that's the case the repair has
+            // to catch, not just the one it can rename.
+            func sel(_ current: String) -> String {
+                AppState.selection(after: renamed, current: current)
+            }
+            checkEq("a renamed selection follows its voice", sel("My Sam"), "My-Sam")
+            checkEq("a selection left unresolvable is dropped", sel("Clara!"), "")
+            checkEq("an unsluggable selection is dropped too", sel("🎤"), "")
+            checkEq("a working selection is left alone", sel("Ravi"), "Ravi")
+            checkEq("a catalog voice is left alone", sel("eve"), "eve")
+            checkEq("no selection stays no selection", sel(""), "")
         }
 
         print("UpdateChecker — semantic version compare")
