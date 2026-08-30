@@ -67,17 +67,36 @@ final class AppState: ObservableObject {
         var out: [EngineVoice] = voices.map {
             EngineVoice(engine: "kokoro", voiceId: $0.id, label: $0.shortName, section: $0.lang_label)
         }
-        if hdInstalled {
-            out += hdVoices.map {
-                EngineVoice(engine: "pocket", voiceId: $0.id, label: $0.id,
-                            section: $0.section ?? "Pocket Voices")
-            }
-        }
+        if hdInstalled { out += AppState.pocketVoices(hdVoices, cloningReady: cloningReady) }
         return out
     }
 
+    /// The Pocket half of the unified picker list.
+    ///
+    /// A cloned voice is only speakable while cloning is actually loaded, so it is
+    /// marked unavailable rather than dropped — the picker locks the row and names
+    /// the reason. Offering it as a live choice is what made a dead selection look
+    /// like a crash: the pick 403s on the next read and `refreshHD` demotes it back
+    /// to a catalog voice, so the voice simply refused to stick with nothing said.
+    /// (Seen for real when a macOS update evicted the gated weights from the HF
+    /// cache and the Keychain token with them.)
+    ///
+    /// Pure + static so `--selftest` can exercise it headlessly.
+    nonisolated static func pocketVoices(_ vs: [VoiceInfo], cloningReady: Bool) -> [EngineVoice] {
+        vs.map {
+            EngineVoice(engine: "pocket", voiceId: $0.id, label: $0.id,
+                        section: $0.section ?? "Pocket Voices",
+                        available: $0.needs_cloning != true || cloningReady)
+        }
+    }
+
     /// Pick a voice from the unified list — sets the engine and its voice.
+    ///
+    /// Refuses an unavailable voice outright. The picker already locks those rows;
+    /// this is the belt-and-braces half, so no other call path can park the app on
+    /// a selection the backend will 403 and `refreshHD` will silently demote.
     func selectVoice(_ v: EngineVoice) {
+        guard v.available else { return }
         prefs.engine = v.engine
         if v.engine == "pocket" { prefs.hdVoice = v.voiceId } else { prefs.voice = v.voiceId }
     }
