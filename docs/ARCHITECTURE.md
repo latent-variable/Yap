@@ -29,7 +29,6 @@ Pocket TTS opt-in) behind one int16-PCM contract.
 | Logic self-test / pipe probe | `Selftest.swift`, `CLITest.swift` |
 | Inference server (both engines) | `backend/server.py` |
 | Pocket TTS engine (catalog + cloning, lazy) | `backend/pocket_engine.py` |
-| HF token storage (cloning) | `app/Sources/Yap/Keychain.swift` |
 
 ## Read pipeline
 

@@ -379,7 +379,8 @@ def wav_bytes(samples: np.ndarray) -> bytes:
 
 
 # --- app ------------------------------------------------------------------------
-from pocket_engine import PocketEngine, CATALOG_NAMES
+from pocket_engine import (PocketEngine, CATALOG_NAMES,
+                           cloning_weights_ready, ensure_cloning_weights)
 
 engine: Engine  # set in main
 pk_engine = PocketEngine()  # optional HD/cloning engine; lazy, no torch import yet
@@ -610,9 +611,43 @@ def install_pocket():
                         proc.kill()
             if rc != 0:
                 break
+        # Cloning weights ride along with the deps the user is already downloading.
+        # Failure here is NOT fatal: the catalog voices are the product for most
+        # people, so a flaky network costs cloning, not the whole engine.
+        if rc == 0:
+            yield b"\n[cloning] fetching voice-cloning weights\n"
+            buf: list[str] = []
+            ensure_cloning_weights(buf.append)
+            for line in buf:
+                yield f"[cloning] {line}\n".encode()
+            if not cloning_weights_ready():
+                yield b"[cloning] unavailable for now; catalog voices still work, retry later\n"
+
         ok = rc == 0 and pk_engine.available()
-        yield f"\n[{'done' if ok else 'failed'}] exit={rc} installed={pk_engine.available()}\n".encode()
+        yield f"\n[{'done' if ok else 'failed'}] exit={rc} installed={pk_engine.available()} cloning={cloning_weights_ready()}\n".encode()
         yield b"\n[note] restart the engine to activate Pocket (the app does this for you).\n"
+
+    return StreamingResponse(gen(), media_type="text/plain")
+
+
+@app.post("/engines/pocket/cloning/install")
+def install_cloning_weights():
+    """Fetch the voice-cloning weights on their own.
+
+    Separate from /engines/pocket/install so cloning can be added later by someone
+    who already installed Pocket (and so a failed fetch during that install is
+    retryable without redoing the 1 GB of deps). Streams progress like the deps
+    install. The caller must restart the engine afterwards: Pocket resolves its
+    config once at load."""
+    def gen() -> Iterator[bytes]:
+        if cloning_weights_ready():
+            yield b"cloning weights already installed\n"
+            return
+        buf: list[str] = []
+        ensure_cloning_weights(buf.append)
+        for line in buf:
+            yield f"{line}\n".encode()
+        yield f"\n[{'done' if cloning_weights_ready() else 'failed'}] cloning={cloning_weights_ready()}\n".encode()
 
     return StreamingResponse(gen(), media_type="text/plain")
 
@@ -647,7 +682,8 @@ def voices(engine_name: str = Query("kokoro", alias="engine")):
                           "gender": "ref", "section": "✨ Cloned",
                           "needs_cloning": True})
         return {"voices": items, "count": len(items),
-                "cloning": pk_engine.has_cloning, "has_token": pk_engine.has_token()}
+                "cloning": pk_engine.has_cloning,
+                "cloning_installed": cloning_weights_ready()}
     items = []
     for v in engine.voices():
         lang = lang_for_voice(v)

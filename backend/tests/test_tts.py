@@ -398,61 +398,129 @@ class TestUnload:
         assert pk.unload() is False
         assert pk.has_cloning is False
 
-    def test_gated_weights_cached_detection(self, tmp_path, monkeypatch):
-        # gated_weights_cached() drives the token-free offline load + the app
-        # skipping the Keychain read. It must be true ONLY when the COMPLETED
-        # weights (a weights-sized file, in a subdir) sit in the HF cache — an
-        # incomplete download (only small files) must read False so the backend
-        # stays online and can finish it. No torch needed.
+    def test_cloning_weights_ready_is_size_exact(self, tmp_path, monkeypatch):
+        # ready() gates whether the app offers cloning at all, and it is called on
+        # every status poll, so it checks SIZE not hash. Exact size, not a floor: a
+        # truncated download is the failure it exists to catch. No torch needed.
         import pocket_engine
-        monkeypatch.setattr(pocket_engine, "_hf_hub_cache", lambda: str(tmp_path))
-        # Shrink the weights threshold so the test writes bytes, not 10 MB.
-        monkeypatch.setattr(pocket_engine, "_MIN_WEIGHT_BYTES", 100)
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path)
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_BYTES", 64)
+        assert pocket_engine.cloning_weights_ready() is False        # nothing there
 
-        assert pocket_engine.gated_weights_cached() is False   # empty cache
+        w = pocket_engine.cloning_weights_path()
+        w.write_bytes(b"\0" * 32)
+        assert pocket_engine.cloning_weights_ready() is False        # truncated
+        w.write_bytes(b"\0" * 128)
+        assert pocket_engine.cloning_weights_ready() is False        # too big
+        w.write_bytes(b"\0" * 64)
+        assert pocket_engine.cloning_weights_ready() is True
 
-        snaps = tmp_path / "models--kyutai--pocket-tts" / "snapshots"
-        (snaps / "abc123").mkdir(parents=True)
-        assert pocket_engine.gated_weights_cached() is False   # snapshot dir empty
+    def test_bad_checksum_is_discarded_not_installed(self, tmp_path, monkeypatch):
+        # The whole point of pinning: a mirror we control is still a network fetch.
+        # A file that downloads fine but hashes wrong must leave NOTHING behind —
+        # a half-installed weights file would be trusted forever after by the
+        # size-only ready() check. No torch, no network.
+        import pocket_engine
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path)
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_BYTES", 4)
+        monkeypatch.setattr(pocket_engine, "_legacy_hf_copy", lambda: None)
 
-        # Interrupted download: only small files present -> NOT cached.
-        (snaps / "abc123" / "config.json").write_text("{}")
-        assert pocket_engine.gated_weights_cached() is False
+        payload = b"junk"
+        def fake_urlopen(url, timeout=0):
+            import io, contextlib
+            return contextlib.closing(io.BytesIO(payload))
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-        # Completed: a weights-sized file in a subdir (mirrors languages/<lang>/…).
-        weights = snaps / "abc123" / "languages" / "english" / "model.safetensors"
-        weights.parent.mkdir(parents=True)
-        weights.write_bytes(b"\0" * 200)                       # > threshold (100)
-        assert pocket_engine.gated_weights_cached() is True
+        # Wrong hash -> refused, and no file (nor .part) survives.
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_SHA256", "00" * 32)
+        assert pocket_engine.ensure_cloning_weights() is False
+        assert not pocket_engine.cloning_weights_path().exists()
+        assert not list(tmp_path.glob("*.part"))
+        assert pocket_engine.cloning_weights_ready() is False
 
-        # The ungated catalog repo must NOT count as cloning weights.
-        import shutil
-        shutil.rmtree(tmp_path / "models--kyutai--pocket-tts")
-        catalog = tmp_path / "models--kyutai--pocket-tts-without-voice-cloning" / "snapshots" / "z"
-        catalog.mkdir(parents=True)
-        (catalog / "big.safetensors").write_bytes(b"\0" * 200)
-        assert pocket_engine.gated_weights_cached() is False
+        # Right hash -> installed.
+        import hashlib
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_SHA256",
+                            hashlib.sha256(payload).hexdigest())
+        assert pocket_engine.ensure_cloning_weights() is True
+        assert pocket_engine.cloning_weights_path().read_bytes() == payload
 
-    def test_hf_hub_offline_restored_when_load_fails(self, monkeypatch):
-        # If load() sets HF_HUB_OFFLINE=1 (cached weights) but the pocket_tts import
-        # or model load then fails, the env MUST be restored — a leaked offline flag
-        # would wedge a later first-time download offline. No torch needed.
-        import os, sys, types, pocket_engine
-        monkeypatch.setattr(pocket_engine, "gated_weights_cached", lambda: True)
-        eng = pocket_engine.PocketEngine()
-        monkeypatch.setattr(eng, "available", lambda: True)
-        # A stand-in pocket_tts module with no TTSModel -> the from-import raises,
-        # simulating a broken/half-installed Pocket environment.
+    def test_legacy_hf_cache_copy_is_reused_not_redownloaded(self, tmp_path, monkeypatch):
+        # Anyone who set cloning up under the old token flow already has the exact
+        # file. Reusing it saves a second 209 MB download, and it must still pass
+        # the same hash gate rather than being trusted for being local.
+        import hashlib, pocket_engine
+        payload = b"weights!"
+        cache = tmp_path / "hf" / "models--kyutai--pocket-tts" / "snapshots" / "r1" / "languages" / "english"
+        cache.mkdir(parents=True)
+        (cache / "model.safetensors").write_bytes(payload)
+
+        monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hf"))
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path / "dest")
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_BYTES", len(payload))
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_SHA256",
+                            hashlib.sha256(payload).hexdigest())
+        # Any network attempt is a failure of the test's premise.
+        import urllib.request
+        def boom(*a, **k):
+            raise AssertionError("downloaded despite a usable local copy")
+        monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+        assert pocket_engine.ensure_cloning_weights() is True
+        assert pocket_engine.cloning_weights_path().read_bytes() == payload
+
+    def test_catalog_voices_survive_a_custom_config(self, tmp_path, monkeypatch):
+        # Loading through our own config file broke ALL 26 catalog voices while
+        # cloning kept working: pocket_tts derives the language from the config's
+        # stem and refuses any config outside its own CONFIGS_DIR. Found end-to-end,
+        # not in review, so it gets a test. No torch needed.
+        import sys, types, pocket_engine
+        from pathlib import Path
+        cfgdir = tmp_path / "pkgconfigs"; cfgdir.mkdir()
+        mod = types.ModuleType("pocket_tts.models.tts_model")
+        mod.CONFIGS_DIR = cfgdir
         monkeypatch.setitem(sys.modules, "pocket_tts", types.ModuleType("pocket_tts"))
-        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        monkeypatch.setitem(sys.modules, "pocket_tts.models", types.ModuleType("pocket_tts.models"))
+        monkeypatch.setitem(sys.modules, "pocket_tts.models.tts_model", mod)
 
-        assert eng.load() is False                          # import failed
-        assert "HF_HUB_OFFLINE" not in os.environ           # restored (was unset)
+        class FakeModel:
+            origin = Path("/somewhere/else/english-local.yaml")
+        m = FakeModel()
+        pocket_engine._restore_language_origin(m)
+        # Both halves of pocket_tts's check: inside CONFIGS_DIR, and stem == language.
+        assert m.origin.is_relative_to(cfgdir), "config must look package-local"
+        assert m.origin.stem == "english", "stem is what selects the voice language"
 
-        # And when a prior value existed, it's put back verbatim (not clobbered).
-        monkeypatch.setenv("HF_HUB_OFFLINE", "0")
-        assert eng.load() is False
-        assert os.environ.get("HF_HUB_OFFLINE") == "0"
+    def test_local_config_swaps_only_the_weights_path(self, tmp_path, monkeypatch):
+        # The config carries the model architecture, so we copy pocket_tts's own
+        # YAML and change ONE line. If upstream renames the key we must return None
+        # (fall back to catalog) rather than emit a config that silently drops
+        # cloning or loads the wrong weights.
+        import sys, types, pocket_engine
+        cfgdir = tmp_path / "cfg"; cfgdir.mkdir()
+        (cfgdir / "english.yaml").write_text(
+            "weights_path: hf://kyutai/pocket-tts/x.safetensors@abc\n"
+            "weights_path_without_voice_cloning: hf://kyutai/other/y.safetensors\n"
+            "flow_lm:\n  dtype: float32\n")
+        mod = types.ModuleType("pocket_tts.models.tts_model")
+        mod.CONFIGS_DIR = cfgdir
+        monkeypatch.setitem(sys.modules, "pocket_tts", types.ModuleType("pocket_tts"))
+        monkeypatch.setitem(sys.modules, "pocket_tts.models", types.ModuleType("pocket_tts.models"))
+        monkeypatch.setitem(sys.modules, "pocket_tts.models.tts_model", mod)
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path / "out")
+
+        out = pocket_engine._cloning_config()
+        text = out.read_text()
+        assert text.startswith(f"weights_path: {pocket_engine.cloning_weights_path()}\n")
+        # Untouched: the catalog path, and the architecture below it.
+        assert "weights_path_without_voice_cloning: hf://kyutai/other/y.safetensors" in text
+        assert "flow_lm:\n  dtype: float32" in text
+        assert "hf://kyutai/pocket-tts/x.safetensors" not in text
+
+        # Upstream renamed the key -> refuse rather than guess.
+        (cfgdir / "english.yaml").write_text("model_weights: hf://x/y.safetensors\n")
+        assert pocket_engine._cloning_config() is None
 
     @pytest.mark.slow
     @pytest.mark.skipif(not PocketEngine().available(),

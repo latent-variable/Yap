@@ -55,21 +55,24 @@ the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
   - **Catalog voices** (built-in, no account): 26 predefined speakers from the
     *ungated* `kyutai/pocket-tts-without-voice-cloning` weights. A catalog name
     (e.g. `michael`) is passed straight to `get_state_for_audio_prompt`.
-  - **Cloning** (opt-in, gated): clone any ~20s reference WAV in `hd-voices/`.
-    Needs the *gated* `kyutai/pocket-tts` weights — the user supplies their OWN
-    HF token (read scope) AND accepts terms at huggingface.co/kyutai/pocket-tts.
-    Token reaches the backend as `HF_TOKEN` (app sets it from the macOS Keychain
-    via `HFToken`/`Keychain.swift`). `pocket_tts` silently falls back to
-    catalog-only if the token is absent OR terms aren't accepted (403), so
-    `engine.has_cloning` is the source of truth, surfaced as `/engines` →
-    `pocket.cloning`. A cloned-voice request with cloning off returns **403**.
-    **The token is a ONE-TIME download key.** Once the gated weights are cached,
-    `pocket_engine.gated_weights_cached()` is true and `load()` loads them with
-    `HF_HUB_OFFLINE=1` (scoped to that call) — cloning works with **no token**
-    (`has_token=false` yet `cloning=true`). Loading *online* without a token 403s
-    on the gated repo and silently drops to catalog-only, so offline-when-cached
-    is what keeps cloning alive token-free after setup — and it lets the app skip
-    the Keychain read entirely (no launch-time password prompt).
+  - **Cloning** (opt-in, no account): clone any ~20s reference WAV in `hd-voices/`.
+    Needs Kyutai's English cloning weights, which upstream ships in a **gated** HF
+    repo. Yap does **not** use that repo: the weights are CC-BY-4.0, so we serve a
+    byte-identical mirror (`CLONING_WEIGHTS_URL`, verified same SHA256 and same
+    219,029,196 bytes) and fetch it like any other model file. **No HF account, no
+    token, no Keychain** — that path is gone, `Keychain.swift` with it.
+    `ensure_cloning_weights()` downloads to a `.part`, checks the pinned SHA256,
+    and only then renames into place, so a bad fetch can never half-enable cloning.
+    `cloning_weights_ready()` is size-only because it runs on every status poll.
+    A cloned-voice request with cloning off still returns **403**.
+  - **A custom config breaks catalog voices unless `origin` is restored.** We load
+    through a copy of pocket_tts's own `english.yaml` with only `weights_path`
+    swapped to our local file. `pocket_tts` derives the voice language from the
+    config's *stem* and refuses any config outside its own `CONFIGS_DIR`, so
+    loading that way kept cloning working and broke all 26 catalog voices with
+    "Cannot use predefined voices". `_restore_language_origin()` points the loaded
+    model back at the canonical `english.yaml`. Don't remove it; test:
+    `test_catalog_voices_survive_a_custom_config`.
   Lazy — no torch import until first Pocket use; per-voice conditioning cached;
   inference serialized by a lock.
 
@@ -79,10 +82,9 @@ Key facts an agent must keep straight:
   **also** installs kokoro-onnx + onnxruntime there so ONE process serves both
   engines. Pocket pulls numpy ≥2; kokoro-onnx imports fine on it (verified).
 - `BackendManager` adds `hd-packages` to the backend's `PYTHONPATH` when present
-  (FIRST, so its torch/numpy win), and injects `HF_TOKEN` from the Keychain **only
-  when the gated weights are NOT yet cached** (`pocketCloningWeightsCached` false)
-  — i.e. only when a first-time download actually needs it. Cached ⇒ no Keychain
-  read ⇒ no password prompt. Restart the backend after install or a token change.
+  (FIRST, so its torch/numpy win). It injects no credentials of any kind. Restart
+  the backend after installing the engine or the cloning weights: Pocket resolves
+  its config once at load.
 - Cloning. **Never source or ship celebrity / non-consented voices.** The UI says
   clone only what you have rights to (Pocket has no built-in watermark, unlike the
   old Chatterbox). Starter voices are CMU ARCTIC (free); `/voices/hd/starters`
@@ -91,15 +93,12 @@ Key facts an agent must keep straight:
 - **A selected cloned voice must survive restart.** `refreshHD` demotes a cloned
   `hdVoice` to a catalog default ONLY when cloning is *genuinely* unavailable —
   the model **loaded** and `cloning` still came back off (weights absent + no
-  usable token, or terms not accepted). It keys on the loaded `cloning` verdict,
-  **NOT** `has_token`: once the gated weights are cached, cloning loads offline
-  with no token (`has_token=false` yet `cloning=true`), so a token check would
+  weights not installed). It keys on the loaded `cloning` verdict, **NOT**
+  `cloning_installed`: the engine is lazy, so the weights are on disk before they
+  are loaded (`cloning_installed=true` yet `cloning=false`), and a disk check would
   wrongly demote a working clone. It must NOT demote during the lazy warm-up
   window (Pocket loads on first use, so `cloning` reads false before `warmHD`
-  loads it) — that silently reset the user's clone on every launch. Caveat: a freshly re-signed build
-  re-prompts for the Keychain HF token; until "Always Allow" is granted the backend
-  sees `has_token=false`, so a cold-start demote can still happen once on a new
-  build. In steady state (token readable) the selection is sticky.
+  loads it) — that silently reset the user's clone on every launch.
 - **Pocket output is trimmed before it leaves the engine** (`trim_padding`): the
   model pads every utterance with its own silence, and playing that is what makes
   the `GAP_*` constants mean different things on the two engines. It only ever
@@ -311,17 +310,9 @@ bash scripts/install_local.sh --no-build   # reinstall the existing dist/Yap.app
 release/deploy. Burning a version number per throwaway build is churn; keep test
 builds on the current dev version and tell Lino verbally that it's fresh.
 
-Note on the Keychain prompt: re-signing any fresh build changes the binary hash,
-so macOS may re-prompt for the HF-token Keychain item ("Yap wants to access
-dev.latentvariable.yap") — the re-signed binary isn't in the item's ACL (which
-doesn't bind to the stable "Yap Local Signing" cert; TCC Accessibility/Mic grants
-DO, so those persist). **This prompt now only fires when the token is actually
-read, which is only during first-time cloning setup** (gated weights not yet
-cached — see the Pocket section). Once the weights are cached, the app never reads
-the Keychain, so a fresh build no longer nags on launch. A user who doesn't clone
-never has a token stored, so they never see it at all. The deeper cert-binding-the-
-ACL fix (deprecated Keychain APIs) is now unnecessary for the common case; only
-revisit it if the one-time download-setup prompt itself becomes a nuisance.
+Yap reads no Keychain items at all, so a re-signed build prompts for nothing.
+(TCC Accessibility/Mic grants bind to the stable "Yap Local Signing" cert, so those
+persist across rebuilds.)
 
 ## Releases
 

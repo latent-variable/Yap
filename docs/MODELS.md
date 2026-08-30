@@ -22,9 +22,10 @@ Nothing beats Kokoro on that set. So rather than replace it, Yap ships a second,
 | License | Apache-2.0 | MIT catalog; cloning weights gated |
 | First audio | ~0.2s | cold load, then fast |
 
-Pocket cloning needs the user's own Hugging Face token plus accepting the Pocket
-terms — one time, to download the gated weights. No watermark. Integration
-details live in AGENTS.md, "Two engines".
+Pocket cloning needs one extra model file (209 MB). Yap fetches it from its own
+CC-BY-4.0 mirror of Kyutai's weights and verifies the pinned SHA256 before use,
+so there is no account, no token and no terms click. Kyutai's acceptable-use
+terms still apply: clone only voices you have the right to use.
 
 ## Why Pocket, and what it settled
 

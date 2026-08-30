@@ -7,11 +7,10 @@ One model family, two capabilities:
     the *ungated* `kyutai/pocket-tts-without-voice-cloning` weights, downloaded
     automatically on first load. This is what every user gets out of the box.
   - **Voice cloning** (opt-in): clone any reference clip in `hd-voices/`. Needs
-    the *gated* `kyutai/pocket-tts` weights — the user supplies their OWN Hugging
-    Face token (read scope) AND accepts the repo terms once at
-    https://huggingface.co/kyutai/pocket-tts . Token is read from the HF_TOKEN
-    env var (the app sets it from the user's Keychain). Without it, cloning is
-    unavailable but the catalog still works.
+    Kyutai's English cloning weights, which upstream gates behind a Hugging Face
+    account. Yap fetches a byte-identical CC-BY-4.0 mirror instead (see
+    CLONING_WEIGHTS_URL) — no account, no token, no Keychain. Until those weights
+    are on disk, cloning is unavailable and the catalog still works.
 
 CPU, ~10x realtime on Apple Silicon — fast enough that it uses the normal
 per-segment pipeline (no buffer-aware HD chunking). Lazy: nothing here imports
@@ -22,8 +21,10 @@ on the backend's PYTHONPATH), same as the old HD engine.
 from __future__ import annotations
 
 import gc
+import hashlib
 import logging
 import os
+import shutil
 import sys
 import threading
 from pathlib import Path
@@ -118,61 +119,188 @@ def _ensure_path() -> None:
         sys.path.insert(0, p)
 
 
-def _hf_token() -> str:
-    return (os.environ.get("HF_TOKEN")
-            or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-            or os.environ.get("HUGGINGFACE_HUB_TOKEN")
-            or "").strip()
+# ── cloning weights: self-hosted, no account ────────────────────────────────
+#
+# Cloning needs Kyutai's English cloning weights. Upstream ships them in a GATED
+# HF repo, so every user needed a Hugging Face account, a terms click and a token
+# in their Keychain — the one part of Yap that required an account, in an app
+# whose whole promise is that it requires none.
+#
+# The weights are CC-BY-4.0, which permits redistribution with attribution, so we
+# serve a byte-identical mirror instead and fetch it like any other model file.
+# Verified identical to the gated original: same 219,029,196 bytes, same SHA256
+# (HF's own dedup collapsed the upload to zero new bytes). Kyutai's acceptable-use
+# terms travel with the file, and are carried in the mirror's model card and in
+# Yap's own cloning UI.
+CLONING_WEIGHTS_URL = (
+    "https://huggingface.co/latent-variable/pocket-tts-cloning-en/"
+    "resolve/main/languages/english/model.safetensors"
+)
+# Pinned and CHECKED before the file is handed to the loader. Same discipline as
+# STARTER_SHA256 in server.py: a mirror we control is still a network fetch, and a
+# swapped weights file would silently poison every cloned voice rather than fail.
+CLONING_WEIGHTS_SHA256 = "473f47d99560bd50eb8b4509d3cacfe7f316ab20bdca86505403a2e6a936a6e9"
+CLONING_WEIGHTS_BYTES = 219029196
 
 
-def _hf_hub_cache() -> str:
-    """Where huggingface_hub keeps downloaded repos, honoring its env overrides."""
+def weights_dir() -> Path:
+    return Path(os.environ.get("YAP_POCKET_WEIGHTS_DIR") or
+                (Path.home() / "Library/Application Support/Yap/pocket-weights"))
+
+
+def cloning_weights_path() -> Path:
+    return weights_dir() / "english-cloning.safetensors"
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def cloning_weights_ready() -> bool:
+    """Is a usable copy of the cloning weights on disk?
+
+    Size only, deliberately. This is called on every /health and /engines, and
+    hashing 209 MB each time would cost ~0.5s per status poll. The full digest is
+    checked where it actually matters — once, after the download, before the file
+    is ever used (see ensure_cloning_weights). A file of exactly the right size but
+    wrong content cannot arrive from a completed verified download; it could only
+    be put there by hand.
+    """
     try:
-        from huggingface_hub.constants import HF_HUB_CACHE
-        return HF_HUB_CACHE
-    except Exception:
-        if os.environ.get("HF_HUB_CACHE"):
-            return os.environ["HF_HUB_CACHE"]
-        if os.environ.get("HF_HOME"):
-            return os.path.join(os.environ["HF_HOME"], "hub")
-        return os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
-
-
-# A real weights file (kyutai/pocket-tts ships a ~219 MB model.safetensors) dwarfs
-# the repo's config/tokenizer JSON, so its presence means the download COMPLETED.
-_MIN_WEIGHT_BYTES = 10 * 1024 * 1024
-
-
-def gated_weights_cached() -> bool:
-    """True once the gated cloning weights (kyutai/pocket-tts) are FULLY in the HF
-    cache.
-
-    Requires an actual weights-sized file (>_MIN_WEIGHT_BYTES) somewhere under a
-    snapshot — a non-empty dir is NOT enough. An interrupted download can leave a
-    snapshot with only small files (config.json, a partial/lock file, or the repo's
-    subdir tree with the big model.safetensors still missing), and treating that as
-    "cached" would force an offline load that fails AND blocks the re-download,
-    bricking cloning. The weights live in a subdir (languages/<lang>/model.safetensors),
-    so walk the whole tree. os.path.getsize follows the snapshot's symlink into blobs.
-
-    When genuinely cached, the weights load straight from disk with no network and
-    no token — the token is ONLY ever needed to DOWNLOAD them the first time. Loading
-    online without a token 403s on the gated repo and silently drops to catalog-only,
-    so offline-when-cached is what keeps cloning working token-free after setup."""
-    snaps = os.path.join(_hf_hub_cache(), "models--kyutai--pocket-tts", "snapshots")
-    try:
-        snap_dirs = os.listdir(snaps)
+        return cloning_weights_path().stat().st_size == CLONING_WEIGHTS_BYTES
     except OSError:
         return False
-    for s in snap_dirs:
-        for root, _dirs, files in os.walk(os.path.join(snaps, s)):
-            for f in files:
+
+
+def _legacy_hf_copy() -> Optional[Path]:
+    """A copy already in the HF cache, from the old token-based setup.
+
+    Anyone who set cloning up before this change has the identical file sitting in
+    ~/.cache/huggingface. Reusing it saves them a second 209 MB download; the hash
+    check in ensure_cloning_weights still gates it, so a truncated or unrelated
+    cache entry is rejected exactly like a bad download.
+    """
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+        hub = HF_HUB_CACHE
+    except Exception:  # noqa: BLE001
+        hub = (os.environ.get("HF_HUB_CACHE")
+               or (os.path.join(os.environ["HF_HOME"], "hub") if os.environ.get("HF_HOME") else None)
+               or os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"))
+    snaps = Path(hub) / "models--kyutai--pocket-tts" / "snapshots"
+    try:
+        for snap in snaps.iterdir():
+            for f in snap.rglob("*.safetensors"):
                 try:
-                    if os.path.getsize(os.path.join(root, f)) > _MIN_WEIGHT_BYTES:
-                        return True
+                    if f.stat().st_size == CLONING_WEIGHTS_BYTES:
+                        return f
                 except OSError:
-                    pass
-    return False
+                    continue
+    except OSError:
+        pass
+    return None
+
+
+def ensure_cloning_weights(log_line=None) -> bool:
+    """Put a VERIFIED copy of the cloning weights on disk. Returns success.
+
+    Never leaves a partial file where a later run would trust it: the download goes
+    to a temp path, is hashed, and is only renamed into place once it matches. A
+    mismatch deletes the temp file and fails loudly rather than half-enabling
+    cloning.
+    """
+    say = log_line or (lambda _m: None)
+    dest = cloning_weights_path()
+    if cloning_weights_ready():
+        return True
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".part")
+
+    legacy = _legacy_hf_copy()
+    if legacy is not None:
+        say(f"reusing the cloning weights already in your Hugging Face cache ({legacy})")
+        try:
+            shutil.copyfile(legacy, tmp)
+        except OSError as e:
+            say(f"could not reuse the cached copy ({e}); downloading instead")
+            tmp.unlink(missing_ok=True)
+    if not tmp.exists():
+        say(f"downloading Pocket cloning weights ({CLONING_WEIGHTS_BYTES // (1 << 20)} MB, one time)")
+        try:
+            import urllib.request
+            with urllib.request.urlopen(CLONING_WEIGHTS_URL, timeout=60) as r, open(tmp, "wb") as f:
+                shutil.copyfileobj(r, f, length=1 << 20)
+        except Exception as e:  # noqa: BLE001
+            say(f"download failed: {e}")
+            tmp.unlink(missing_ok=True)
+            return False
+
+    got = _sha256(tmp)
+    if got != CLONING_WEIGHTS_SHA256:
+        say(f"checksum mismatch (got {got[:16]}…, want {CLONING_WEIGHTS_SHA256[:16]}…) — discarding")
+        tmp.unlink(missing_ok=True)
+        return False
+    tmp.replace(dest)
+    say("cloning weights verified and installed")
+    return True
+
+
+def _cloning_config() -> Optional[Path]:
+    """pocket_tts's own english.yaml with `weights_path` pointed at our local file.
+
+    Derived from the INSTALLED package rather than vendored: that YAML carries the
+    model architecture and the tokenizer revision, so pinning a copy here would
+    silently freeze us at today's architecture and break on the next pocket_tts
+    upgrade. Only the one line changes; `download_if_necessary` treats a value that
+    is neither http(s):// nor hf:// as a plain local path.
+    """
+    try:
+        from pocket_tts.models.tts_model import CONFIGS_DIR
+        src = Path(CONFIGS_DIR) / "english.yaml"
+        out = weights_dir() / "english-local.yaml"
+        weights = str(cloning_weights_path())
+        lines = []
+        replaced = False
+        for line in src.read_text().splitlines(keepends=True):
+            if line.startswith("weights_path:"):
+                lines.append(f"weights_path: {weights}\n")
+                replaced = True
+            else:
+                lines.append(line)
+        if not replaced:          # upstream renamed the key — don't guess
+            return None
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("".join(lines))
+        return out
+    except Exception:  # noqa: BLE001
+        log.exception("could not build a local Pocket config")
+        return None
+
+
+def _restore_language_origin(model) -> None:
+    """Point a config-loaded model back at the canonical english.yaml.
+
+    pocket_tts resolves a CATALOG voice by taking the language from the stem of the
+    config the model was loaded from, and refuses outright unless that config sits
+    inside its own CONFIGS_DIR (see get_state_for_audio_prompt). Loading through our
+    copy therefore keeps cloning working but breaks all 26 catalog voices with
+    "Cannot use predefined voices ...". Caught end-to-end, not in review.
+
+    Our config IS that english.yaml with a single line changed, so restoring the
+    origin states which language config this is rather than defeating a check. Best
+    effort: if upstream drops the attribute, catalog voices fail loudly the same way
+    they would have anyway, and cloning is unaffected.
+    """
+    try:
+        from pocket_tts.models.tts_model import CONFIGS_DIR
+        model.origin = Path(CONFIGS_DIR) / "english.yaml"
+    except Exception:  # noqa: BLE001
+        log.warning("could not restore the model's language origin; "
+                    "catalog voices may be unavailable this session", exc_info=True)
 
 
 class PocketEngine:
@@ -199,9 +327,6 @@ class PocketEngine:
         import importlib.util
         return importlib.util.find_spec("pocket_tts") is not None
 
-    def has_token(self) -> bool:
-        return bool(_hf_token())
-
     def load(self) -> bool:
         with self._lock:
             if self.model is not None:
@@ -211,39 +336,18 @@ class PocketEngine:
                 return False
             try:
                 _ensure_path()
-                tok = _hf_token()
-                cached = gated_weights_cached()
-                offline_prev = os.environ.get("HF_HUB_OFFLINE")
-                # The offline env mutation and BOTH the import and the load must sit
-                # inside one try/finally: `from pocket_tts import …` can itself fail on
-                # a broken Pocket install, and if it does with HF_HUB_OFFLINE already
-                # set, an un-restored value would wedge later hub calls (e.g. a
-                # first-time download after a delete) offline. Restore on every path.
-                try:
-                    if cached:
-                        # Weights already downloaded: load them straight from disk with
-                        # no network and no token. The token is only needed to DOWNLOAD
-                        # the gated weights once; after that this keeps cloning working
-                        # token-free (and stops the app from ever reading the Keychain).
-                        os.environ["HF_HUB_OFFLINE"] = "1"
-                    elif tok:
-                        # First-time download path. Direct assignment, not setdefault:
-                        # an inherited but EMPTY HF_TOKEN ("") would otherwise survive
-                        # and block auth even though we resolved a real token elsewhere.
-                        os.environ["HF_TOKEN"] = tok
-                    from pocket_tts import TTSModel
-                    log.info("loading Pocket TTS (token=%s, cached=%s)", bool(tok), cached)
-                    # Cached -> offline load (cloning works with no token). Otherwise a
-                    # valid token + accepted terms pulls the gated cloning weights; with
-                    # neither, pocket_tts drops to the ungated catalog-only weights
-                    # (has_voice_cloning=False).
+                from pocket_tts import TTSModel
+                # Cloning weights present -> load through a config pointing at our
+                # own verified copy. Absent -> the plain load, which pulls the
+                # UNGATED catalog weights. Neither path needs a token or an
+                # account, and neither touches the Keychain.
+                cfg = _cloning_config() if cloning_weights_ready() else None
+                log.info("loading Pocket TTS (cloning weights=%s)", cfg is not None)
+                if cfg is not None:
+                    m = TTSModel.load_model(config=str(cfg))
+                    _restore_language_origin(m)
+                else:
                     m = TTSModel.load_model()
-                finally:
-                    if cached:
-                        if offline_prev is None:
-                            os.environ.pop("HF_HUB_OFFLINE", None)
-                        else:
-                            os.environ["HF_HUB_OFFLINE"] = offline_prev
                 self.model = m
                 self.has_cloning = bool(getattr(m, "has_voice_cloning", False))
                 self.error = None
@@ -352,6 +456,10 @@ class PocketEngine:
             "installed": self.available(),
             "loaded": self.model is not None,
             "cloning": self.has_cloning,
-            "has_token": self.has_token(),
+            # Whether the weights are ON DISK, which is a different question from
+            # whether they are LOADED: the engine is lazy, so `cloning` reads false
+            # until something warms it. The app needs the disk answer to decide
+            # between offering cloning and offering to install it.
+            "cloning_installed": cloning_weights_ready(),
             "error": self.error,
         }

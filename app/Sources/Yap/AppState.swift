@@ -79,7 +79,8 @@ final class AppState: ObservableObject {
     /// like a crash: the pick 403s on the next read and `refreshHD` demotes it back
     /// to a catalog voice, so the voice simply refused to stick with nothing said.
     /// (Seen for real when a macOS update evicted the gated weights from the HF
-    /// cache and the Keychain token with them.)
+    /// cache. It cannot happen the same way now that Yap fetches and verifies
+    /// the weights itself, but cloning can still be simply not installed yet.)
     ///
     /// Pure + static so `--selftest` can exercise it headlessly.
     nonisolated static func pocketVoices(_ vs: [VoiceInfo], cloningReady: Bool) -> [EngineVoice] {
@@ -743,7 +744,9 @@ final class AppState: ObservableObject {
     }
 
     /// Whether the gated cloning model is loaded (token present + terms accepted).
-    @Published var cloningReady = false
+    @Published var cloningReady = false      // weights LOADED (engine is lazy)
+    @Published var cloningInstalled = false  // weights ON DISK
+    @Published var installingCloning = false // fetch in flight
 
     func refreshHD() {
         Task {
@@ -751,14 +754,14 @@ final class AppState: ObservableObject {
             hdInstalled = e.pocket?.installed ?? false
             hdWarm = e.pocket?.loaded ?? false
             cloningReady = e.pocket?.cloning ?? false
+            cloningInstalled = e.pocket?.cloning_installed ?? false
             hdVoices = await backend.client.voices(engine: "pocket")
             // Demote a cloned selection to a safe catalog voice ONLY when cloning
             // is *genuinely* unavailable — i.e. the model has loaded and cloning
-            // still came back off (weights absent + no usable token, or terms not
-            // accepted). Key on the *loaded* cloning verdict, NOT the token: once
-            // the gated weights are cached the backend loads cloning offline with
-            // no token (has_token == false yet cloning == true), so a token check
-            // would wrongly demote a perfectly working cloned voice. If the model
+            // still came back off (the weights are not on disk). Key on the *loaded*
+            // cloning verdict, never on whether the weights merely exist: the two
+            // disagree during the lazy warm-up, and demoting on the wrong one is
+            // what silently reset the user's clone on every launch. If the model
             // just isn't warm yet, cloning is merely *pending* (the engine is lazy,
             // so `cloning` reads false before warmHD() loads it) — leave it; warmHD()
             // below loads the model and a follow-up refreshHD() flips it true.
@@ -881,13 +884,19 @@ final class AppState: ObservableObject {
         onLine("Pocket ready: \(hdInstalled)")
     }
 
-    /// Reapply the Hugging Face token: persist to the Keychain and restart the
-    /// backend so it reloads Pocket with (or without) the gated cloning weights.
-    /// Async so the caller can await the restart instead of guessing with a sleep.
-    func applyHFToken(_ token: String) async {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { HFToken.clear() } else { HFToken.set(trimmed) }
-        await backend.restart()   // relaunch carries HF_TOKEN in the env
+    /// Fetch the voice-cloning weights, then bounce the backend so Pocket reloads
+    /// with them. No account and no token: the weights are a CC-BY-4.0 mirror Yap
+    /// fetches like any other model file, checksum-verified before use.
+    ///
+    /// The restart is what makes it take effect — Pocket resolves its config once
+    /// at load, so a running engine that started without the weights stays without
+    /// them until it reloads.
+    func installCloningWeights(onLine: @escaping (String) -> Void) async {
+        guard !installingCloning else { return }   // one fetch at a time
+        installingCloning = true
+        defer { installingCloning = false }
+        await backend.client.installCloningWeights(onLine: onLine)
+        await backend.restart()
         refreshHD()
     }
 
