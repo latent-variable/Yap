@@ -88,7 +88,7 @@ struct VoicePickerList: View {
             // Say why the locked rows are locked, once, instead of leaving a user
             // to guess at a voice that won't take. Only when something is locked.
             if scoped.contains(where: { !$0.available }) {
-                Text("🔒 Cloned voices need the gated Pocket weights — Settings ▸ Voices ▸ Voice cloning.")
+                Text("🔒 Cloned voices need the gated Pocket weights — Settings ▸ Engine ▸ Voice cloning.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -117,7 +117,7 @@ struct VoicePickerList: View {
     }
 
     static let lockedHelp =
-        "Voice cloning is off, so this voice can't be spoken. Set it up in Settings ▸ Voices ▸ Voice cloning."
+        "Voice cloning is off, so this voice can't be spoken. Set it up in Settings ▸ Engine ▸ Voice cloning."
 }
 
 /// Compact control showing the current voice; opens the unified list in a popover.
