@@ -252,12 +252,14 @@ class TestSynth:
         text = ("the quick brown fox jumps over the lazy dog " * 8)[:319] + "."
         assert len(self.synth(engine, text)) > 0
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("voice", ["af_heart", "am_michael", "bf_emma", "ef_dora"])
     def test_multiple_voices(self, engine, voice):
         assert len(self.synth(engine, "Testing this voice.", voice=voice)) > 0
 
     # Each non-English voice family must phonemize its own language. Regression
     # guard for the zh->cmn espeak code fix.
+    @pytest.mark.slow
     @pytest.mark.parametrize("voice,text", [
         ("ef_dora", "Hola, esto es una prueba."),
         ("ff_siwis", "Bonjour, ceci est un test."),
@@ -273,6 +275,12 @@ class TestSynth:
 
 
 # ── long-document streaming + latency (uses the chunk loop) ─────────────────
+# Slow by SCALE, not by kind: test_very_long_10x alone streams ~45 minutes of
+# audio. The three full-document cases are marked individually rather than on the
+# class, because the default run must keep one real multi-chunk stream — chunking
+# and synthesis are each covered alone (TestChunking, TestSynth), but only this
+# loop covers them TOGETHER, and a chunk that silently fails to synthesize is
+# exactly the kind of break that finishes green everywhere else.
 @needs_model
 class TestLongDocument:
     def stream(self, engine, text):
@@ -282,6 +290,11 @@ class TestLongDocument:
         first = None
         total = 0
         failed = 0
+        # Smallest per-chunk output. A chunk that returns an EMPTY array never
+        # raises, so it is not "failed" and the total still looks healthy off the
+        # other chunks — a silent hole in the middle of a read. Only a per-chunk
+        # floor catches that, so track it here rather than inferring from audio_s.
+        min_samples = None
         for c in chunks:
             try:
                 s = engine.synth(c, "af_heart", 1.0, None)
@@ -291,9 +304,29 @@ class TestLongDocument:
             if first is None:
                 first = time.time() - t0
             total += len(s)
+            min_samples = len(s) if min_samples is None else min(min_samples, len(s))
         return {"chunks": len(chunks), "first": first, "failed": failed,
-                "audio_s": total / SAMPLE_RATE, "wall": time.time() - t0}
+                "audio_s": total / SAMPLE_RATE, "wall": time.time() - t0,
+                "min_samples": min_samples}
 
+    def test_multi_chunk_stream_survives_every_chunk(self, engine):
+        """The default set's multi-chunk guard: several chunks, all synthesized.
+
+        Deliberately small — ~800 chars is a few chunks past the 320-char cap,
+        enough to cross chunk boundaries without streaming minutes of audio. The
+        scale cases below are the same loop with volume; this one is the loop.
+        """
+        text = ("Yap reads the text you select. " * 26)  # ~800 chars -> several chunks
+        r = self.stream(engine, text)   # session fixture — no second model load
+        assert r["chunks"] > 1, f"needs multiple chunks to be a multi-chunk test, got {r['chunks']}"
+        assert r["failed"] == 0, f"{r['failed']} of {r['chunks']} chunks failed to synthesize"
+        # Per-chunk, not just the total: an empty chunk raises nothing and hides
+        # behind its neighbours' audio, which is the silent hole this test exists
+        # to catch.
+        assert r["min_samples"], "a chunk produced no audio at all"
+        assert r["audio_s"] > 0
+
+    @pytest.mark.slow
     def test_readme_sized(self, engine):
         text = (Path(__file__).parents[2] / "README.md").read_text()
         r = self.stream(engine, text)
@@ -301,12 +334,14 @@ class TestLongDocument:
         assert r["first"] < 1.5, f"first chunk too slow: {r['first']:.2f}s"
         assert r["audio_s"] > 10
 
+    @pytest.mark.slow
     def test_very_long_10x(self, engine):
         text = (Path(__file__).parents[2] / "README.md").read_text() * 10  # ~44k chars
         r = self.stream(engine, text)
         assert r["failed"] == 0, f"{r['failed']} chunks failed out of {r['chunks']}"
         assert r["first"] < 1.5, f"first chunk latency {r['first']:.2f}s"
 
+    @pytest.mark.slow
     def test_huge_single_paragraph(self, engine):
         # 5000 chars, no paragraph breaks -> exercises sentence+hardwrap path
         text = "This is a sentence. " * 250
@@ -329,6 +364,7 @@ class TestProvider:
         # CPU EP is always present as the implicit fallback
         assert "CPUExecutionProvider" in e.active_providers
 
+    @pytest.mark.slow
     @needs_model
     def test_coreml_available_and_loads(self):
         # Apple Silicon should expose CoreML; loading it must not crash and must
@@ -418,6 +454,7 @@ class TestUnload:
         assert eng.load() is False
         assert os.environ.get("HF_HUB_OFFLINE") == "0"
 
+    @pytest.mark.slow
     @pytest.mark.skipif(not PocketEngine().available(),
                         reason="Pocket deps (torch) not installed")
     def test_pocket_unload_then_lazy_reload(self):
@@ -678,6 +715,7 @@ class TestPocketPadding:
         assert trim_padding(quiet).size == quiet.size
         assert trim_padding(np.zeros(0, np.float32)).size == 0
 
+    @pytest.mark.slow
     def test_synthesized_pocket_lines_are_not_front_loaded_with_silence(self):
         from pocket_engine import PocketEngine, LEAD_PAD, TRAIL_PAD
         eng = PocketEngine()
