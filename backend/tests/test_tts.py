@@ -446,6 +446,27 @@ class TestUnload:
         assert pocket_engine.ensure_cloning_weights() is True
         assert pocket_engine.cloning_weights_path().read_bytes() == payload
 
+    def test_oversized_response_is_refused_not_streamed_to_disk(self, tmp_path, monkeypatch):
+        # We know the exact byte count, so a longer response is junk by definition
+        # (an error page, a redirect loop, a swapped file). Writing it anyway turns
+        # a bad download into a full disk. It must stop and leave nothing behind.
+        import pocket_engine
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path)
+        monkeypatch.setattr(pocket_engine, "_legacy_hf_copy", lambda: None)
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_BYTES", 8)
+
+        # Far past the cap (size + 1 MB slack), delivered in chunks like a stream.
+        flood = b"x" * (8 + (1 << 20) + 4096)
+        def fake_urlopen(url, timeout=0):
+            import io, contextlib
+            return contextlib.closing(io.BytesIO(flood))
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        assert pocket_engine.ensure_cloning_weights() is False
+        assert not pocket_engine.cloning_weights_path().exists()
+        assert not list(tmp_path.glob("*.part")), "an oversized body was left on disk"
+
     def test_stale_part_file_does_not_block_a_retry(self, tmp_path, monkeypatch):
         # A .part left by a killed run must not be mistaken for the download we are
         # about to verify. urllib cannot resume, and the fetch only runs when tmp is

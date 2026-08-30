@@ -71,7 +71,9 @@ Key facts an agent must keep straight:
 - Pocket deps are **not** in `requirements.txt` (too heavy, pulls torch ~1 GB).
   They install on demand into `hd-packages/` via `/engines/pocket/install`, which
   **also** installs kokoro-onnx + onnxruntime there so ONE process serves both
-  engines. Pocket pulls numpy ≥2; kokoro-onnx imports fine on it (verified).
+  engines, and fetches the cloning weights (+209 MB) into `pocket-weights/`.
+  `/engines/pocket/cloning/install` does the weights alone, for a retry or for
+  someone who installed Pocket before they existed. Pocket pulls numpy ≥2; kokoro-onnx imports fine on it (verified).
 - `BackendManager` adds `hd-packages` to the backend's `PYTHONPATH` when present
   (FIRST, so its torch/numpy win). It injects no credentials of any kind. Restart
   the backend after installing the engine or the cloning weights: Pocket resolves
@@ -387,8 +389,10 @@ an agent must keep:
   60s. Kokoro presence is `kokoroFilesPresent` (from `/health`), tracked
   separately from `ready`. After re-downloading Kokoro the running (model-less)
   sidecar must be **restarted**, not just `start()`ed, to load the new files.
-- Deleting HD removes `hd-packages` only — **cloned voices (`hd-voices`) are
-  kept** — and falls back to the Kokoro engine.
+- Deleting HD removes `hd-packages` **and `pocket-weights/`** (the cloning weights
+  are engine data, and leaving 209 MB behind is the disk the user was reclaiming).
+  **Cloned voices (`hd-voices`) are kept** — those are the user's own recordings,
+  and nothing can re-download them. Falls back to the Kokoro engine.
 
 ## Menu-bar UI (the layout-loop gotcha)
 

@@ -237,8 +237,22 @@ def ensure_cloning_weights(log_line=None) -> bool:
         say(f"downloading Pocket cloning weights ({CLONING_WEIGHTS_BYTES // (1 << 20)} MB, one time)")
         try:
             import urllib.request
+            # Bounded on purpose. We know the exact byte count, so ANY response
+            # longer than it is junk (an error page, a redirect loop, a swapped
+            # file), and streaming it straight to disk turns that into a full disk
+            # rather than a failed download. Stop at the first byte past the cap.
+            cap = CLONING_WEIGHTS_BYTES + (1 << 20)   # slack for a re-cut upstream
+            written = 0
             with urllib.request.urlopen(CLONING_WEIGHTS_URL, timeout=60) as r, open(tmp, "wb") as f:
-                shutil.copyfileobj(r, f, length=1 << 20)
+                while True:
+                    block = r.read(1 << 20)
+                    if not block:
+                        break
+                    written += len(block)
+                    if written > cap:
+                        raise ValueError(
+                            f"response is larger than the expected {CLONING_WEIGHTS_BYTES} bytes")
+                    f.write(block)
         except Exception as e:  # noqa: BLE001
             say(f"download failed: {e}")
             tmp.unlink(missing_ok=True)

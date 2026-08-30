@@ -771,6 +771,10 @@ private struct ModelsTab: View {
     /// sizes — never size a directory inside the SwiftUI body.
     private func refreshSizes() {
         let kdir = state.backend.modelsDir, hdir = state.hdPackagesDir
+        // Deleting Pocket reclaims the cloning weights too, so the figure here has
+        // to include them. Counting only hd-packages understated it by 209 MB and
+        // made the delete look like it freed more than it claimed.
+        let wdir = state.hdVoicesDir.deletingLastPathComponent().appending(path: "pocket-weights")
         let kPresent = state.modelsPresent, hdPresent = state.hdInstalled
         sizeTask?.cancel()   // supersede any in-flight walk; avoid redundant disk I/O
         let pdir = Dictation.modelsDirOnDisk
@@ -778,7 +782,9 @@ private struct ModelsTab: View {
         sizeTask = Task {
             // static dirSizeBytes — no @MainActor state captured into this task.
             let kb = kPresent ? await Task.detached { AppState.dirSizeBytes(kdir) }.value : 0
-            let hb = hdPresent ? await Task.detached { AppState.dirSizeBytes(hdir) }.value : 0
+            let hb = hdPresent ? await Task.detached {
+                AppState.dirSizeBytes(hdir) + AppState.dirSizeBytes(wdir)
+            }.value : 0
             let pb = pPresent ? await Task.detached { AppState.dirSizeBytes(pdir) }.value : 0
             if Task.isCancelled { return }
             kokoroSize = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil
