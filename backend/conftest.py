@@ -8,10 +8,15 @@ do.
 
 So those are marked `slow` and are OFF by default:
 
-    pytest tests/                # fast set — every code path, one cheap case each
+    pytest tests/                # fast set — see below for what it does NOT cover
     pytest tests/ --runslow      # everything, including scale, Pocket and CoreML
 
-What the default set deliberately KEEPS, despite the cost: one real multi-chunk
+What the default set does NOT run, and you must not read as passing: the Pocket
+engine (both torch cases), the CoreML provider session, and the non-English voice
+families — including the zh->cmn phonemizer regression guard. Those code paths are
+covered ONLY under --runslow.
+
+What it deliberately KEEPS, despite the cost: one real multi-chunk
 stream (`TestLongDocument::test_multi_chunk_stream_survives_every_chunk`, ~800
 chars). Chunking and synthesis are each covered on their own, but only that loop
 covers them together, and a chunk that silently fails to synthesize is exactly

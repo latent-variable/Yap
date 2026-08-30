@@ -241,10 +241,14 @@ long (10x README ~44k chars) / huge-single-paragraph / unicode+emoji / code /
 URLs / punctuation-only / multi-voice / WAV export / provider load. Synthesis
 tests skip automatically if model files are absent.
 
-**The heaviest cases are marked `slow` and are OFF by default**; the default set
-keeps every code path, including one real multi-chunk stream. Run `--runslow`
-before cutting a release, and whenever you touch synthesis, chunking, the Pocket
-engine or the provider path. Which cases, and why each: `backend/conftest.py`.
+**The heaviest cases are marked `slow` and are OFF by default.** The default set
+covers the pure logic, single- and multi-chunk Kokoro synthesis, WAV export and
+the stream contract. It does **not** touch the Pocket engine, the CoreML
+provider, or the non-English voice families — `--runslow` is the only thing that
+runs those, so treat a green default run as silence about them, not a pass. Run
+it before cutting a release, and whenever you touch synthesis, chunking, the
+Pocket engine or the provider path. Which cases, and why each:
+`backend/conftest.py`.
 
 What "validated" means here, in order of confidence:
 

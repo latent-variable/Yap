@@ -290,6 +290,11 @@ class TestLongDocument:
         first = None
         total = 0
         failed = 0
+        # Smallest per-chunk output. A chunk that returns an EMPTY array never
+        # raises, so it is not "failed" and the total still looks healthy off the
+        # other chunks — a silent hole in the middle of a read. Only a per-chunk
+        # floor catches that, so track it here rather than inferring from audio_s.
+        min_samples = None
         for c in chunks:
             try:
                 s = engine.synth(c, "af_heart", 1.0, None)
@@ -299,8 +304,10 @@ class TestLongDocument:
             if first is None:
                 first = time.time() - t0
             total += len(s)
+            min_samples = len(s) if min_samples is None else min(min_samples, len(s))
         return {"chunks": len(chunks), "first": first, "failed": failed,
-                "audio_s": total / SAMPLE_RATE, "wall": time.time() - t0}
+                "audio_s": total / SAMPLE_RATE, "wall": time.time() - t0,
+                "min_samples": min_samples}
 
     def test_multi_chunk_stream_survives_every_chunk(self, engine):
         """The default set's multi-chunk guard: several chunks, all synthesized.
@@ -313,6 +320,10 @@ class TestLongDocument:
         r = self.stream(engine, text)   # session fixture — no second model load
         assert r["chunks"] > 1, f"needs multiple chunks to be a multi-chunk test, got {r['chunks']}"
         assert r["failed"] == 0, f"{r['failed']} of {r['chunks']} chunks failed to synthesize"
+        # Per-chunk, not just the total: an empty chunk raises nothing and hides
+        # behind its neighbours' audio, which is the silent hole this test exists
+        # to catch.
+        assert r["min_samples"], "a chunk produced no audio at all"
         assert r["audio_s"] > 0
 
     @pytest.mark.slow
