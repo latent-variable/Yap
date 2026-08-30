@@ -18,6 +18,13 @@ struct EngineVoice: Identifiable, Hashable {
     let voiceId: String
     let label: String
     let section: String
+    /// False when the backend lists the voice but cannot actually speak it — a
+    /// cloned Pocket voice while cloning is unavailable. Such a voice is shown
+    /// LOCKED rather than hidden: the user's own recordings vanishing from the
+    /// picker is its own confusion, and the lock names the reason. Offering it as
+    /// selectable is what made a dead selection look like a crash — the pick
+    /// 403s on the next read and refreshHD demotes it back to a catalog voice.
+    var available: Bool = true
     var id: String { "\(engine):\(voiceId)" }
 }
 
@@ -78,24 +85,39 @@ struct VoicePickerList: View {
                 .listStyle(.inset)
                 .onAppear { proxy.scrollTo(selectionId, anchor: .center) }
             }
+            // Say why the locked rows are locked, once, instead of leaving a user
+            // to guess at a voice that won't take. Only when something is locked.
+            if scoped.contains(where: { !$0.available }) {
+                Text("🔒 Cloned voices need the gated Pocket weights — Settings ▸ Voices ▸ Voice cloning.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     private func row(_ v: EngineVoice) -> some View {
         Button { onPick(v) } label: {
             HStack {
-                Text(v.label)
+                Text(v.label).foregroundStyle(v.available ? AnyShapeStyle(.primary)
+                                                          : AnyShapeStyle(.secondary))
                 Spacer()
-                if v.id == selectionId {
+                if !v.available {
+                    Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary)
+                } else if v.id == selectionId {
                     Image(systemName: "checkmark").foregroundStyle(.tint).font(.caption.bold())
                 }
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!v.available)
+        .help(v.available ? "" : Self.lockedHelp)
         .id(v.id)
         .listRowBackground(v.id == selectionId ? Color.accentColor.opacity(0.15) : Color.clear)
     }
+
+    static let lockedHelp =
+        "Voice cloning is off, so this voice can't be spoken. Set it up in Settings ▸ Voices ▸ Voice cloning."
 }
 
 /// Compact control showing the current voice; opens the unified list in a popover.

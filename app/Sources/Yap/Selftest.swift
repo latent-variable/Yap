@@ -467,6 +467,32 @@ enum Selftest {
             checkEq("no selection stays no selection", sel(""), "")
         }
 
+        print("Voice picker — a cloned voice is locked while cloning is off")
+        do {
+            // Shape the backend actually returns: catalog voices plus cloned refs
+            // flagged needs_cloning, listed even when cloning failed to load.
+            let vs = [
+                VoiceInfo(id: "eve", lang: "en", lang_label: "English", gender: "female",
+                          section: "Pocket Voices", needs_cloning: nil),
+                VoiceInfo(id: "Philip", lang: "en", lang_label: "English", gender: "male",
+                          section: "✨ Cloned", needs_cloning: true),
+            ]
+            // Absent reads as unavailable here, so presence is asserted separately —
+            // "locked" and "dropped from the list" are different bugs.
+            func avail(_ list: [EngineVoice], _ id: String) -> Bool {
+                list.first { $0.voiceId == id }?.available ?? false
+            }
+            let off = AppState.pocketVoices(vs, cloningReady: false)
+            checkBool("catalog voice stays available with cloning off", avail(off, "eve"), true)
+            checkBool("cloned voice is locked with cloning off", avail(off, "Philip"), false)
+            checkBool("a locked cloned voice is still LISTED, not hidden",
+                      off.contains { $0.voiceId == "Philip" }, true)
+
+            let on = AppState.pocketVoices(vs, cloningReady: true)
+            checkBool("cloned voice unlocks once cloning loads", avail(on, "Philip"), true)
+            checkBool("catalog voice unaffected by cloning state", avail(on, "eve"), true)
+        }
+
         print("UpdateChecker — semantic version compare")
         checkBool("newer patch is newer", UpdateChecker.isNewer("0.8.2", than: "0.8.1"), true)
         checkBool("older is not newer", UpdateChecker.isNewer("0.8.0", than: "0.8.1"), false)
