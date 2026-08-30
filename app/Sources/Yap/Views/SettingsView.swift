@@ -144,9 +144,7 @@ private struct EngineTab: View {
     @State private var newName = ""
     @State private var fetching = false
     @State private var fetchLog = ""
-    @State private var hfToken = ""
-    @State private var savingToken = false
-    @State private var tokenSaved = false
+    @State private var cloningLog = ""
 
     // A name that slugs to nothing (emoji only) can never become a voice id, so
     // it must not unlock recording — the failure would otherwise land after a
@@ -181,7 +179,7 @@ private struct EngineTab: View {
                     Text("Pocket TTS — natural voices + cloning").tag("pocket")
                 }
                 .pickerStyle(.radioGroup)
-                Text("Kokoro runs on CPU and starts instantly. Pocket TTS gives noticeably more natural speech with 26 built-in voices, also fully on CPU. Add your own voices by cloning a short clip (needs a free Hugging Face token, below). Switch any time — or just pick a voice from the dropdown.")
+                Text("Kokoro runs on CPU and starts instantly. Pocket TTS gives noticeably more natural speech with 26 built-in voices, also fully on CPU. Add your own voices by cloning a short clip (one extra download, no account). Switch any time — or just pick a voice from the dropdown.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -225,7 +223,7 @@ private struct EngineTab: View {
     // MARK: enable / download
     private var enableSection: some View {
         Section("Set up Pocket TTS") {
-            Text("Pocket downloads its engine once (~1 GB) into Application Support. It is not bundled, so the app stays small. The 26 built-in voices need no account; cloning your own needs a free Hugging Face token (set up after install).")
+            Text("Pocket downloads its engine once (~1 GB) into Application Support. It is not bundled, so the app stays small. Cloning your own voice adds one more file (209 MB), fetched during this install. No account either way.")
                 .font(.caption).foregroundStyle(.secondary)
             if installing {
                 HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
@@ -252,7 +250,7 @@ private struct EngineTab: View {
         }
     }
 
-    // MARK: cloned voices (require a token + accepted terms)
+    // MARK: cloned voices (require the cloning weights installed)
     private var voicesSection: some View {
         Section("Your cloned voices") {
             let cloned = state.hdVoices.filter { $0.needs_cloning == true }
@@ -283,55 +281,34 @@ private struct EngineTab: View {
         .onTapGesture { prefs.engine = "pocket"; prefs.hdVoice = v.id }
     }
 
-    // MARK: voice cloning (Hugging Face token)
+    // MARK: voice cloning (no account — a verified CC-BY-4.0 mirror)
     private var cloningSection: some View {
         Section("Voice cloning") {
             if state.cloningReady {
                 Label("Voice cloning is active — add your own voices below.",
                       systemImage: "checkmark.seal.fill")
                     .font(.caption).foregroundStyle(.green)
-                Text("The gated weights are downloaded, so the token isn't needed anymore — you can remove it below and cloning keeps working, fully offline. Removing it also stops any Keychain password prompt on launch.")
+            } else if state.cloningInstalled {
+                // On disk but not loaded: Pocket is lazy, so this is the window
+                // between install and the first read. Nothing for the user to do.
+                Label("Cloning is installed. It loads with the engine on your next read.",
+                      systemImage: "clock.fill")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("Cloning your own voice needs the gated Pocket weights. The token below is used ONCE, only to download them — afterwards cloning runs fully offline and the token can be removed:")
+                Text("Cloning your own voice needs one extra model file (209 MB, downloaded once). No account, no sign-in, and nothing leaves your Mac.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("1. Accept the terms (opens huggingface.co/kyutai/pocket-tts).\n2. Create a read-only token at huggingface.co/settings/tokens.\n3. Paste it below.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Link("Accept the Pocket TTS terms ↗",
-                     destination: URL(string: "https://huggingface.co/kyutai/pocket-tts")!)
-                    .font(.caption)
-            }
-            // We never read the saved secret back into the field (that made it
-            // look locked / un-editable). Just show that one is saved; typing a
-            // new token and saving replaces it.
-            if tokenSaved {
-                Label("A token is saved. Type a new one below to replace it.",
-                      systemImage: "key.fill").font(.caption).foregroundStyle(.secondary)
-            }
-            SecureField(tokenSaved ? "Enter a new token to replace" : "hf_… (read token)",
-                        text: $hfToken)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                Button(savingToken ? "Applying…" : (tokenSaved ? "Replace token" : "Save token & enable cloning")) {
-                    savingToken = true
-                    Task { await state.applyHFToken(hfToken); hfToken = ""; tokenSaved = HFToken.isSet; savingToken = false }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(savingToken || hfToken.trimmingCharacters(in: .whitespaces).isEmpty)
-                if tokenSaved {
-                    Button("Remove token") {
-                        savingToken = true
-                        hfToken = ""
-                        Task { await state.applyHFToken(""); tokenSaved = HFToken.isSet; savingToken = false }
+                if state.installingCloning {
+                    HStack { ProgressView().controlSize(.small); Text(cloningLog.isEmpty ? "Downloading…" : cloningLog).font(.caption).lineLimit(1) }
+                } else {
+                    Button("Download & enable cloning") {
+                        Task { await state.installCloningWeights { cloningLog = $0 } }
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(savingToken)   // guard against double-fire (backend restart)
+                    .buttonStyle(.borderedProminent)
                 }
             }
-            Text("Stored only in your macOS Keychain and sent only to the local engine. Never uploaded by Yap.")
+            Text("Model by Kyutai Labs, CC-BY-4.0. Yap downloads it from its own mirror and verifies the checksum before use.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
-        .onAppear { tokenSaved = HFToken.isSet }
     }
 
     // MARK: add a voice
@@ -794,6 +771,10 @@ private struct ModelsTab: View {
     /// sizes — never size a directory inside the SwiftUI body.
     private func refreshSizes() {
         let kdir = state.backend.modelsDir, hdir = state.hdPackagesDir
+        // Deleting Pocket reclaims the cloning weights too, so the figure here has
+        // to include them. Counting only hd-packages understated it by 209 MB and
+        // made the delete look like it freed more than it claimed.
+        let wdir = state.hdVoicesDir.deletingLastPathComponent().appending(path: "pocket-weights")
         let kPresent = state.modelsPresent, hdPresent = state.hdInstalled
         sizeTask?.cancel()   // supersede any in-flight walk; avoid redundant disk I/O
         let pdir = Dictation.modelsDirOnDisk
@@ -801,7 +782,9 @@ private struct ModelsTab: View {
         sizeTask = Task {
             // static dirSizeBytes — no @MainActor state captured into this task.
             let kb = kPresent ? await Task.detached { AppState.dirSizeBytes(kdir) }.value : 0
-            let hb = hdPresent ? await Task.detached { AppState.dirSizeBytes(hdir) }.value : 0
+            let hb = hdPresent ? await Task.detached {
+                AppState.dirSizeBytes(hdir) + AppState.dirSizeBytes(wdir)
+            }.value : 0
             let pb = pPresent ? await Task.detached { AppState.dirSizeBytes(pdir) }.value : 0
             if Task.isCancelled { return }
             kokoroSize = kb > 0 ? Self.sizeFmt.string(fromByteCount: kb) : nil

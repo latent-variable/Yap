@@ -79,7 +79,8 @@ final class AppState: ObservableObject {
     /// like a crash: the pick 403s on the next read and `refreshHD` demotes it back
     /// to a catalog voice, so the voice simply refused to stick with nothing said.
     /// (Seen for real when a macOS update evicted the gated weights from the HF
-    /// cache and the Keychain token with them.)
+    /// cache. It cannot happen the same way now that Yap fetches and verifies
+    /// the weights itself, but cloning can still be simply not installed yet.)
     ///
     /// Pure + static so `--selftest` can exercise it headlessly.
     nonisolated static func pocketVoices(_ vs: [VoiceInfo], cloningReady: Bool) -> [EngineVoice] {
@@ -743,7 +744,9 @@ final class AppState: ObservableObject {
     }
 
     /// Whether the gated cloning model is loaded (token present + terms accepted).
-    @Published var cloningReady = false
+    @Published var cloningReady = false      // weights LOADED (engine is lazy)
+    @Published var cloningInstalled = false  // weights ON DISK
+    @Published var installingCloning = false // fetch in flight
 
     func refreshHD() {
         Task {
@@ -751,14 +754,14 @@ final class AppState: ObservableObject {
             hdInstalled = e.pocket?.installed ?? false
             hdWarm = e.pocket?.loaded ?? false
             cloningReady = e.pocket?.cloning ?? false
+            cloningInstalled = e.pocket?.cloning_installed ?? false
             hdVoices = await backend.client.voices(engine: "pocket")
             // Demote a cloned selection to a safe catalog voice ONLY when cloning
             // is *genuinely* unavailable — i.e. the model has loaded and cloning
-            // still came back off (weights absent + no usable token, or terms not
-            // accepted). Key on the *loaded* cloning verdict, NOT the token: once
-            // the gated weights are cached the backend loads cloning offline with
-            // no token (has_token == false yet cloning == true), so a token check
-            // would wrongly demote a perfectly working cloned voice. If the model
+            // still came back off (the weights are not on disk). Key on the *loaded*
+            // cloning verdict, never on whether the weights merely exist: the two
+            // disagree during the lazy warm-up, and demoting on the wrong one is
+            // what silently reset the user's clone on every launch. If the model
             // just isn't warm yet, cloning is merely *pending* (the engine is lazy,
             // so `cloning` reads false before warmHD() loads it) — leave it; warmHD()
             // below loads the model and a follow-up refreshHD() flips it true.
@@ -781,6 +784,28 @@ final class AppState: ObservableObject {
 
     /// Install HD deps (streams progress), then restart the backend into the
     /// combined env so both engines are live.
+    /// Is `url` a directory we are allowed to delete, i.e. one of ours?
+    ///
+    /// Both delete targets are built by walking up from another path, so a bug in
+    /// that arithmetic would aim the delete somewhere real. This refuses anything
+    /// that is not a directory sitting directly inside Application Support/Yap, so
+    /// a miscomputed path fails instead of removing a user's folder. Pure + static
+    /// so `--selftest` can exercise it.
+    nonisolated static func isDeletableAppSupportDir(_ url: URL) -> Bool {
+        let support = URL(fileURLWithPath: NSHomeDirectory())
+            .appending(path: "Library/Application Support/Yap").standardizedFileURL
+        let target = url.standardizedFileURL
+        // Compare PATHS, not URLs: deletingLastPathComponent() leaves a trailing
+        // slash, so URL equality is false for the very directory we mean and the
+        // guard would refuse everything, making delete a silent no-op.
+        guard target.deletingLastPathComponent().path == support.path else { return false }
+        guard !target.lastPathComponent.isEmpty, target.lastPathComponent != "." else { return false }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDir),
+              isDir.boolValue else { return false }
+        return true
+    }
+
     /// Total on-disk size of a directory, in bytes (0 if missing). static + pure
     /// FileManager so callers run it off the main actor without capturing any
     /// @MainActor state (it walks the whole tree — never call it from a body).
@@ -845,14 +870,25 @@ final class AppState: ObservableObject {
         hdInstalled = false     // reflect immediately
         if prefs.engine == "pocket" { prefs.engine = "kokoro" }
         let dir = hdPackagesDir
+        // The cloning weights are Pocket's too, so "delete Pocket to reclaim disk"
+        // has to take them: leaving 209 MB behind is exactly the disk the user was
+        // trying to get back. Cloned VOICES (hd-voices) still stay -- those are the
+        // user's own recordings, not something we can re-download.
+        let weights = hdVoicesDir.deletingLastPathComponent().appending(path: "pocket-weights")
         Task {
             // Terminate the backend PROCESS and wait for it to exit so it isn't
             // importing torch from hd-packages while we delete it, then relaunch in
             // the Kokoro-only env.
             await backend.stopAndWait()
             await Task.detached(priority: .background) {
-                do { try FileManager.default.removeItem(at: dir) }
-                catch { Log.write("delete HD model failed: \(error)") }
+                // Both paths are COMPUTED, so guard before deleting and make the
+                // delete recoverable: validating stops the mistake, the Trash makes
+                // one survivable, and neither substitutes for the other.
+                for target in [dir, weights] where AppState.isDeletableAppSupportDir(target) {
+                    do { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
+                    catch CocoaError.fileNoSuchFile { continue }   // never installed
+                    catch { Log.write("delete \(target.lastPathComponent) failed: \(error)") }
+                }
             }.value
             await backend.start()
             refreshHD()
@@ -881,13 +917,41 @@ final class AppState: ObservableObject {
         onLine("Pocket ready: \(hdInstalled)")
     }
 
-    /// Reapply the Hugging Face token: persist to the Keychain and restart the
-    /// backend so it reloads Pocket with (or without) the gated cloning weights.
-    /// Async so the caller can await the restart instead of guessing with a sleep.
-    func applyHFToken(_ token: String) async {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { HFToken.clear() } else { HFToken.set(trimmed) }
-        await backend.restart()   // relaunch carries HF_TOKEN in the env
+    /// Fetch the voice-cloning weights, then bounce the backend so Pocket reloads
+    /// with them. No account and no token: the weights are a CC-BY-4.0 mirror Yap
+    /// fetches like any other model file, checksum-verified before use.
+    ///
+    /// The restart is what makes it take effect — Pocket resolves its config once
+    /// at load, so a running engine that started without the weights stays without
+    /// them until it reloads.
+    func installCloningWeights(onLine: @escaping (String) -> Void) async {
+        guard !installingCloning else { return }   // one fetch at a time
+        installingCloning = true
+        defer { installingCloning = false }
+        // BackendClient is a plain struct, so this closure fires on whatever
+        // executor the stream resumes on. `onLine` writes @State in the Settings
+        // view, so it must land on main — same hop installHD does.
+        await backend.client.installCloningWeights { line in
+            Task { @MainActor in onLine(line) }
+        }
+        // Did it actually land? Ask the backend rather than trusting the log text,
+        // and await the answer -- refreshHD() spawns a Task and returns before the
+        // reply arrives, so reading cloningInstalled straight after it races.
+        let installed = await backend.client.engines().pocket?.cloning_installed ?? false
+        cloningInstalled = installed
+        guard installed else {
+            onLine("cloning weights not installed; catalog voices are unaffected")
+            return                      // a failed fetch has nothing to reload
+        }
+        // Pocket resolves its config once at load, so the weights only take effect
+        // after a bounce. We can only bounce a backend we own: against a reused one
+        // stopAndWait has no handle, start() re-adopts the same process, and cloning
+        // would stay off after a 209 MB download with nothing said.
+        guard backend.ownsProcess else {
+            onLine("cloning installed — restart Yap to start using it")
+            return
+        }
+        await backend.restart()
         refreshHD()
     }
 

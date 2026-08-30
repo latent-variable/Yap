@@ -17,14 +17,15 @@ Nothing beats Kokoro on that set. So rather than replace it, Yap ships a second,
 |---|---|---|
 | Runtime | ONNX, CPU, bundled | PyTorch, **CPU**, ~10× realtime |
 | Size | ~310 MB, ships with the app | ~1 GB, on-demand download |
-| Voices | 54 across 8 languages | 26 built-in (ungated) |
+| Voices | 54 across 8 languages | 26 built-in, no account |
 | Cloning | no | yes, from a ~20s reference |
-| License | Apache-2.0 | MIT catalog; cloning weights gated |
+| License | Apache-2.0 | CC-BY-4.0 (Kyutai), catalog + cloning |
 | First audio | ~0.2s | cold load, then fast |
 
-Pocket cloning needs the user's own Hugging Face token plus accepting the Pocket
-terms — one time, to download the gated weights. No watermark. Integration
-details live in AGENTS.md, "Two engines".
+Pocket cloning needs one extra model file (209 MB). Yap fetches it from its own
+CC-BY-4.0 mirror of Kyutai's weights and verifies the pinned SHA256 before use,
+so there is no account, no token and no terms click. Kyutai's acceptable-use
+terms still apply: clone only voices you have the right to use.
 
 ## Why Pocket, and what it settled
 
@@ -44,8 +45,10 @@ anyway.
 - A CPU/ONNX model with a permissive license that clearly out-naturals Kokoro at
   comparable speed → would upgrade the **default**. Piper (faster, flatter),
   Kitten TTS and MatchaTTS were the closest and none of them qualified.
-- An opt-in engine matching Pocket's CPU speed and fidelity **without** the
-  cloning gate → would replace Pocket.
+- An opt-in engine matching Pocket's CPU speed and fidelity on a permissive
+  license → would replace Pocket. (Pocket's own cloning gate is no longer a
+  reason: the weights are CC-BY-4.0 and Yap mirrors them, so no account is
+  involved.)
 
 Adding one is backend-local: an `Engine` branch in `server.py` implementing
 `synth(text, voice, speed, lang) -> float32 ndarray @ 24 kHz`, a downloader entry

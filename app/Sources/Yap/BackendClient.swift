@@ -93,11 +93,12 @@ struct BackendClient {
     }
 
     /// Pocket engine status. `cloning` = the gated cloning model is loaded;
-    /// `has_token` = an HF token is present in the backend env.
+    /// `cloning_installed` = the cloning weights are on disk (which is a
+    /// different question from `cloning`, i.e. whether they are LOADED yet).
     struct EngineInfo: Decodable {
         let installed: Bool; let loaded: Bool
         var cloning: Bool? = nil
-        var has_token: Bool? = nil
+        var cloning_installed: Bool? = nil
     }
     func engines() async -> (kokoro: EngineInfo?, pocket: EngineInfo?) {
         struct Resp: Decodable { let kokoro: EngineInfo; let pocket: EngineInfo }
@@ -114,6 +115,21 @@ struct BackendClient {
         req.timeoutInterval = 1800
         let (bytes, _) = try await session.bytes(for: req)
         for try await line in bytes.lines { onLine(line) }
+    }
+
+    /// Stream the cloning-weights fetch. Never throws: cloning is an add-on, and a
+    /// failed fetch must leave the catalog voices working rather than surface as an
+    /// engine error. The caller checks `cloning_installed` for the verdict.
+    func installCloningWeights(onLine: @escaping (String) -> Void) async {
+        var req = authed(base.appending(path: "engines/pocket/cloning/install"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 1800
+        do {
+            let (bytes, _) = try await session.bytes(for: req)
+            for try await line in bytes.lines { onLine(line) }
+        } catch {
+            onLine("could not fetch the cloning weights: \(error.localizedDescription)")
+        }
     }
 
     /// Pre-load the Pocket model + a voice so the first read isn't a cold wait.

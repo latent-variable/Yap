@@ -467,6 +467,30 @@ enum Selftest {
             checkEq("no selection stays no selection", sel(""), "")
         }
 
+        print("Delete guard — only our own Application Support dirs")
+        do {
+            let support = URL(fileURLWithPath: NSHomeDirectory())
+                .appending(path: "Library/Application Support/Yap")
+            // Refuses anything outside, however it was computed.
+            checkBool("home itself is refused",
+                      AppState.isDeletableAppSupportDir(URL(fileURLWithPath: NSHomeDirectory())), false)
+            checkBool("Application Support itself is refused",
+                      AppState.isDeletableAppSupportDir(support.deletingLastPathComponent()), false)
+            checkBool("a nested path is refused",
+                      AppState.isDeletableAppSupportDir(support.appending(path: "a/b")), false)
+            checkBool("someone else's app dir is refused",
+                      AppState.isDeletableAppSupportDir(
+                        support.deletingLastPathComponent().appending(path: "OtherApp")), false)
+            // A real one of ours passes only when it actually exists as a directory.
+            checkBool("a non-existent dir of ours is refused (nothing to delete)",
+                      AppState.isDeletableAppSupportDir(support.appending(path: "no-such-dir-xyz")), false)
+            let tmp = support.appending(path: "selftest-delete-guard")
+            try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+            checkBool("a real dir of ours is allowed",
+                      AppState.isDeletableAppSupportDir(tmp), true)
+            try? FileManager.default.removeItem(at: tmp)
+        }
+
         print("Voice picker — a cloned voice is locked while cloning is off")
         do {
             // Shape the backend actually returns: catalog voices plus cloned refs

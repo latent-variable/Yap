@@ -29,7 +29,6 @@ Pocket TTS opt-in) behind one int16-PCM contract.
 | Logic self-test / pipe probe | `Selftest.swift`, `CLITest.swift` |
 | Inference server (both engines) | `backend/server.py` |
 | Pocket TTS engine (catalog + cloning, lazy) | `backend/pocket_engine.py` |
-| HF token storage (cloning) | `app/Sources/Yap/Keychain.swift` |
 
 ## Read pipeline
 
@@ -119,3 +118,31 @@ So `ownsProcess` means "we may end this process", not "we spawned it".
 `ready` means the backend can serve *some* engine: Kokoro loaded **or** the Pocket engine present on disk. So deleting one model doesn't make the backend look dead, and `waitForHealth()` fails fast (instead of polling 60s) when a model will never load. Kokoro presence is tracked separately as `kokoroFilesPresent`.
 
 Model management (Models tab) leans on both: delete is only offered when `ownsProcess` is true (an external backend can't be stopped to release the model files), and a delete does `stopAndWait()` → remove files → `start()` so disk is freed and the relaunched process reflects the change.
+
+
+## Pocket cloning weights (no account)
+
+Kyutai ships the English cloning weights in a **gated** HF repo, which cost every
+user an account, a terms click, a read token and a Keychain item to fetch one
+file. It was also fragile: on 2026-08-29 a macOS update evicted `~/.cache/hugging
+face` and the Keychain entry together, and every cloned voice silently reverted to
+a catalog default.
+
+The weights are **CC-BY-4.0**, which permits redistribution with attribution, so
+Yap serves its own mirror and fetches it like any other model file. Verified
+byte-identical to the gated original: same 219,029,196 bytes, same SHA256
+`473f47d9…a936a6e9` (HF's own dedup collapsed the upload to zero new bytes).
+Kyutai's acceptable-use terms travel with it and are carried in the mirror's model
+card and Yap's cloning UI.
+
+| step | where | note |
+|---|---|---|
+| fetch + verify | `ensure_cloning_weights()` | `.part` → pinned SHA256 → rename. A bad fetch can never half-enable cloning. Clears a stale `.part` first: urllib cannot resume, so a leftover would be hashed, rejected and reported as failure with nothing retried. |
+| reuse | `_legacy_hf_copy()` | Anyone set up under the old token flow already has the identical file; reused (still hash-gated) rather than re-downloading 209 MB. |
+| readiness | `cloning_weights_ready()` | Size-only, on purpose: it runs on every `/health` and `/engines`, and hashing 209 MB per poll would cost ~0.5s. The digest is checked once, at install. |
+| load | `_cloning_config()` | Copies pocket_tts's **own** `english.yaml`, swapping only `weights_path`. Derived, not vendored, so an upstream architecture or tokenizer change is inherited. Returns `None` if the key is renamed, rather than guessing. |
+| the trap | `_restore_language_origin()` | `pocket_tts` derives the voice language from the config's *stem* and refuses any config outside its own `CONFIGS_DIR`, so loading through ours kept cloning working and broke **all 26 catalog voices** with "Cannot use predefined voices". Ours is that same `english.yaml` with one line changed, so restoring `origin` states which language config it is. Found end-to-end, not in review. |
+
+Storage is `~/Library/Application Support/Yap/pocket-weights/`, removed with the
+Pocket engine (it is engine data). Cloned **voices** in `hd-voices/` are the user's
+own recordings and always survive.

@@ -178,15 +178,6 @@ final class BackendManager: NSObject, ObservableObject {
         // Hand the spawned backend the same token file we read, so it requires
         // our shared secret on every request (blocks website CSRF + impostors).
         env["YAP_AUTH_TOKEN_FILE"] = BackendAuth.tokenFileURL.path
-        // The Hugging Face token unlocks Pocket voice cloning, but ONLY to DOWNLOAD
-        // the gated weights the first time — once they're cached the backend loads
-        // them offline with no token (see pocket_engine.gated_weights_cached). So
-        // read the Keychain (which prompts for the password on a freshly-signed
-        // build) *only* when a download is actually needed. This is what stops the
-        // launch-time Keychain nag for anyone who isn't mid-setup.
-        if !Self.pocketCloningWeightsCached, let hf = HFToken.value {
-            env["HF_TOKEN"] = hf
-        }
         // If the Pocket (HD) engine is installed, run in the combined env (torch +
         // kokoro) so one process serves both engines. hd-packages must be FIRST on
         // PYTHONPATH so its numpy/torch import before the bundled ones.
@@ -275,47 +266,6 @@ final class BackendManager: NSObject, ObservableObject {
         process = nil
         adoptedPID = nil
         ownsProcess = false
-    }
-
-    /// True once the gated Pocket cloning weights (kyutai/pocket-tts) are in the
-    /// Hugging Face cache. When they are, the backend loads cloning offline with no
-    /// token, so we can skip the Keychain read (and its password prompt) entirely.
-    /// Mirrors huggingface_hub's cache resolution: HF_HUB_CACHE, then HF_HOME/hub,
-    /// then ~/.cache/huggingface/hub. Must stay in sync with
-    /// pocket_engine.gated_weights_cached on the backend side.
-    nonisolated static var pocketCloningWeightsCached: Bool {
-        let env = ProcessInfo.processInfo.environment
-        // Treat an empty env var as unset (an empty path would resolve to CWD).
-        let hubCache: URL
-        if let c = env["HF_HUB_CACHE"], !c.isEmpty {
-            hubCache = URL(fileURLWithPath: c)
-        } else if let home = env["HF_HOME"], !home.isEmpty {
-            hubCache = URL(fileURLWithPath: home).appendingPathComponent("hub")
-        } else {
-            hubCache = URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent(".cache/huggingface/hub")
-        }
-        let snaps = hubCache.appendingPathComponent("models--kyutai--pocket-tts/snapshots")
-        // Require an actual weights-sized file (>10 MB) somewhere under a snapshot,
-        // NOT just a non-empty dir. An interrupted download can leave only small
-        // files (config.json, the subdir tree with the big model.safetensors still
-        // missing); treating that as cached would force an offline load that fails
-        // and blocks the re-download, bricking cloning. Weights live in a subdir
-        // (languages/<lang>/model.safetensors ~219 MB) and are symlinks into blobs,
-        // so recurse and resolve the link before sizing. Must stay in sync with
-        // pocket_engine.gated_weights_cached / _MIN_WEIGHT_BYTES.
-        let minBytes = 10 * 1024 * 1024
-        guard let en = FileManager.default.enumerator(
-            at: snaps, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]) else { return false }
-        for case let fileURL as URL in en {
-            let resolved = fileURL.resolvingSymlinksInPath()
-            guard let vals = try? resolved.resourceValues(
-                    forKeys: [.isRegularFileKey, .fileSizeKey]),
-                  vals.isRegularFile == true, let size = vals.fileSize else { continue }
-            if size > minBytes { return true }
-        }
-        return false
     }
 
     // MARK: Orphan detection (lsof + ps, off the main actor)
