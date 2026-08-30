@@ -380,7 +380,7 @@ def wav_bytes(samples: np.ndarray) -> bytes:
 
 # --- app ------------------------------------------------------------------------
 from pocket_engine import (PocketEngine, CATALOG_NAMES,
-                           cloning_weights_ready, ensure_cloning_weights)
+                           cloning_weights_ready, ensure_cloning_weights_stream)
 
 engine: Engine  # set in main
 pk_engine = PocketEngine()  # optional HD/cloning engine; lazy, no torch import yet
@@ -616,10 +616,15 @@ def install_pocket():
         # people, so a flaky network costs cloning, not the whole engine.
         if rc == 0:
             yield b"\n[cloning] fetching voice-cloning weights\n"
-            buf: list[str] = []
-            ensure_cloning_weights(buf.append)
-            for line in buf:
-                yield f"[cloning] {line}\n".encode()
+            # Iterate rather than collect: a buffered callback only flushed once the
+            # 209 MB finished, so the dialog sat silent for the whole download and
+            # read as a hang.
+            gen = ensure_cloning_weights_stream()
+            while True:
+                try:
+                    yield f"[cloning] {next(gen)}\n".encode()
+                except StopIteration:
+                    break
             if not cloning_weights_ready():
                 yield b"[cloning] unavailable for now; catalog voices still work, retry later\n"
 
@@ -636,17 +641,19 @@ def install_cloning_weights():
 
     Separate from /engines/pocket/install so cloning can be added later by someone
     who already installed Pocket (and so a failed fetch during that install is
-    retryable without redoing the 1 GB of deps). Streams progress like the deps
-    install. The caller must restart the engine afterwards: Pocket resolves its
+    retryable without redoing the 1 GB of deps). Streams real byte progress as the
+    download runs, not a flush at the end. The caller must restart the engine afterwards: Pocket resolves its
     config once at load."""
     def gen() -> Iterator[bytes]:
         if cloning_weights_ready():
             yield b"cloning weights already installed\n"
             return
-        buf: list[str] = []
-        ensure_cloning_weights(buf.append)
-        for line in buf:
-            yield f"{line}\n".encode()
+        gen = ensure_cloning_weights_stream()
+        while True:
+            try:
+                yield f"{next(gen)}\n".encode()
+            except StopIteration:
+                break
         yield f"\n[{'done' if cloning_weights_ready() else 'failed'}] cloning={cloning_weights_ready()}\n".encode()
 
     return StreamingResponse(gen(), media_type="text/plain")
