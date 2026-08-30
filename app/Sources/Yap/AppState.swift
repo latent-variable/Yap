@@ -934,6 +934,23 @@ final class AppState: ObservableObject {
         await backend.client.installCloningWeights { line in
             Task { @MainActor in onLine(line) }
         }
+        // Did it actually land? Ask the backend rather than trusting the log text,
+        // and await the answer -- refreshHD() spawns a Task and returns before the
+        // reply arrives, so reading cloningInstalled straight after it races.
+        let installed = await backend.client.engines().pocket?.cloning_installed ?? false
+        cloningInstalled = installed
+        guard installed else {
+            onLine("cloning weights not installed; catalog voices are unaffected")
+            return                      // a failed fetch has nothing to reload
+        }
+        // Pocket resolves its config once at load, so the weights only take effect
+        // after a bounce. We can only bounce a backend we own: against a reused one
+        // stopAndWait has no handle, start() re-adopts the same process, and cloning
+        // would stay off after a 209 MB download with nothing said.
+        guard backend.ownsProcess else {
+            onLine("cloning installed — restart Yap to start using it")
+            return
+        }
         await backend.restart()
         refreshHD()
     }
