@@ -467,6 +467,45 @@ class TestUnload:
         assert not pocket_engine.cloning_weights_path().exists()
         assert not list(tmp_path.glob("*.part")), "an oversized body was left on disk"
 
+    def test_progress_arrives_during_the_download_not_after(self, tmp_path, monkeypatch):
+        # The install dialog sat silent for the whole 209 MB because a callback's
+        # lines could only be flushed once the work finished. The generator must
+        # emit WHILE bytes are still arriving, so the test reads one line and then
+        # asserts the stream has not finished reading the body yet.
+        import pocket_engine, hashlib
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path)
+        monkeypatch.setattr(pocket_engine, "_legacy_hf_copy", lambda: None)
+        payload = b"z" * (6 << 20)                      # 6 blocks of 1 MB
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_BYTES", len(payload))
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_SHA256",
+                            hashlib.sha256(payload).hexdigest())
+
+        reads = {"n": 0}
+        class CountingBody:
+            def __init__(self): self.buf = __import__("io").BytesIO(payload)
+            def read(self, n): reads["n"] += 1; return self.buf.read(n)
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        monkeypatch.setattr(__import__("urllib.request", fromlist=["x"]),
+                            "urlopen", lambda url, timeout=0: CountingBody())
+
+        gen = pocket_engine.ensure_cloning_weights_stream()
+        first = next(gen)                               # "downloading ... one time"
+        assert "download" in first.lower(), first
+        assert reads["n"] == 0, "the body was consumed before the first line was emitted"
+
+        seen = [first]
+        while True:
+            try:
+                seen.append(next(gen))
+            except StopIteration as done:
+                assert done.value is True
+                break
+        pct = [l for l in seen if "%" in l]
+        assert len(pct) >= 2, f"expected byte progress while downloading, got {seen}"
+        assert any("100%" in l for l in pct), f"never reported completion: {pct}"
+        assert pocket_engine.cloning_weights_ready() is True
+
     def test_stale_part_file_does_not_block_a_retry(self, tmp_path, monkeypatch):
         # A .part left by a killed run must not be mistaken for the download we are
         # about to verify. urllib cannot resume, and the fetch only runs when tmp is

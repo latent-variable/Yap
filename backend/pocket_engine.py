@@ -237,27 +237,45 @@ def adopt_legacy_copy() -> bool:
 def ensure_cloning_weights(log_line=None, allow_download: bool = True) -> bool:
     """Put a VERIFIED copy of the cloning weights on disk. Returns success.
 
-    Never leaves a partial file where a later run would trust it: the download goes
-    to a temp path, is hashed, and is only renamed into place once it matches. A
-    mismatch deletes the temp file and fails loudly rather than half-enabling
-    cloning.
+    Callback form, for callers that are not generators (the load path). To show a
+    user the download as it happens, iterate `ensure_cloning_weights_stream()`
+    instead: a callback cannot be yielded out of a StreamingResponse, which is what
+    made the install dialog sit silent for the whole 209 MB.
 
     `allow_download=False` restricts it to what is already on this machine, which is
     what the load path uses: adopting a local copy is cheap and silent, whereas
     pulling 209 MB is something the user asked for.
     """
+    gen = ensure_cloning_weights_stream(allow_download=allow_download)
     say = log_line or (lambda _m: None)
-    dest = cloning_weights_path()
+    while True:
+        try:
+            say(next(gen))
+        except StopIteration as done:
+            return bool(done.value)
+
+
+def ensure_cloning_weights_stream(allow_download: bool = True):
+    """Generator: yields progress lines AS THEY HAPPEN, returns success.
+
+    A generator rather than a callback because the HTTP endpoints are generators:
+    a callback's lines can only be collected and flushed after the work finishes,
+    which is a silent dialog for the length of a 209 MB download and looks exactly
+    like a hang. Yielding lets each line reach the app the moment it is produced.
+
+    Never leaves a partial file where a later run would trust it: the download goes
+    to a temp path, is hashed, and is renamed into place only once it matches.
+    """
     if cloning_weights_ready():
         return True
     with _weights_lock:
         # Another caller may have finished while we waited for the lock.
         if cloning_weights_ready():
             return True
-        return _fetch_and_verify(dest, say, allow_download)
+        return (yield from _fetch_and_verify(cloning_weights_path(), allow_download))
 
 
-def _fetch_and_verify(dest: Path, say, allow_download: bool) -> bool:
+def _fetch_and_verify(dest: Path, allow_download: bool):
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".part")
     # A .part left by a crashed or killed run is NOT a download to finish: urllib
@@ -268,16 +286,17 @@ def _fetch_and_verify(dest: Path, say, allow_download: bool) -> bool:
 
     legacy = _legacy_hf_copy()
     if legacy is not None:
-        say(f"reusing the cloning weights already in your Hugging Face cache ({legacy})")
+        yield "found the weights already on this Mac, copying them across"
         try:
             shutil.copyfile(legacy, tmp)
         except OSError as e:
-            say(f"could not reuse the cached copy ({e}); downloading instead")
+            yield f"could not reuse the local copy ({e}), downloading instead"
             tmp.unlink(missing_ok=True)
     if not tmp.exists():
         if not allow_download:
             return False          # nothing local to adopt; the user hasn't asked to fetch
-        say(f"downloading Pocket cloning weights ({CLONING_WEIGHTS_BYTES // (1 << 20)} MB, one time)")
+        total_mb = CLONING_WEIGHTS_BYTES / (1 << 20)
+        yield f"downloading voice-cloning model ({total_mb:.0f} MB, one time)"
         try:
             import urllib.request
             # Bounded on purpose. We know the exact byte count, so ANY response
@@ -286,6 +305,7 @@ def _fetch_and_verify(dest: Path, say, allow_download: bool) -> bool:
             # rather than a failed download. Stop at the first byte past the cap.
             cap = CLONING_WEIGHTS_BYTES + (1 << 20)   # slack for a re-cut upstream
             written = 0
+            next_mark = 0
             with urllib.request.urlopen(CLONING_WEIGHTS_URL, timeout=60) as r, open(tmp, "wb") as f:
                 while True:
                     block = r.read(1 << 20)
@@ -296,18 +316,25 @@ def _fetch_and_verify(dest: Path, say, allow_download: bool) -> bool:
                         raise ValueError(
                             f"response is larger than the expected {CLONING_WEIGHTS_BYTES} bytes")
                     f.write(block)
+                    # Every 5%, not every block: 209 lines of progress is its own
+                    # kind of unreadable, and the app renders the latest line.
+                    pct = int(written * 100 / CLONING_WEIGHTS_BYTES)
+                    if pct >= next_mark:
+                        yield f"downloading… {min(pct, 100)}% ({written / (1 << 20):.0f} of {total_mb:.0f} MB)"
+                        next_mark = pct + 5
         except Exception as e:  # noqa: BLE001
-            say(f"download failed: {e}")
+            yield f"download failed: {e}"
             tmp.unlink(missing_ok=True)
             return False
 
+    yield "verifying the download"
     got = _sha256(tmp)
     if got != CLONING_WEIGHTS_SHA256:
-        say(f"checksum mismatch (got {got[:16]}…, want {CLONING_WEIGHTS_SHA256[:16]}…) — discarding")
+        yield f"checksum mismatch (got {got[:16]}…, want {CLONING_WEIGHTS_SHA256[:16]}…), discarding"
         tmp.unlink(missing_ok=True)
         return False
     tmp.replace(dest)
-    say("cloning weights verified and installed")
+    yield "voice cloning is ready"
     return True
 
 
