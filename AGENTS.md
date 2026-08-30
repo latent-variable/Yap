@@ -227,8 +227,10 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 # Does a read survive to its LAST word? (runs in realtime — 1500 chars ≈ 2 min)
 "$(swift build --show-bin-path)/Yap" --tailtest ../README.md 1500 [port]
 
-# backend robustness suite (chunking, synth edges, long docs, providers, export)
-cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -v
+# backend robustness suite — fast set (82 of 100; every code path, one cheap case each)
+cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q
+# ...and the full net, incl. scale synthesis + Pocket/torch + CoreML (~17 min, pegs the CPU)
+cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q --runslow
 
 # package a release DMG
 bash scripts/make_dmg.sh        # -> dist/Yap-<version>.dmg
@@ -237,8 +239,18 @@ bash scripts/make_dmg.sh        # -> dist/Yap-<version>.dmg
 The pytest suite (`backend/tests/test_tts.py`) is the robustness net: short /
 long (10x README ~44k chars) / huge-single-paragraph / unicode+emoji / code /
 URLs / punctuation-only / multi-voice / WAV export / provider load. Synthesis
-tests skip automatically if model files are absent. The full run is slow
-(~8 min) because every case actually synthesizes.
+tests skip automatically if model files are absent.
+
+**18 of the 100 are marked `slow` and are OFF by default** (`backend/conftest.py`):
+the 44k-char document stream, the voice-breadth sweeps, the CoreML session, and
+the two that pull in torch. They were what made the full run 16m51s of pegged
+CPU — a run nobody makes. The default set is the same coverage at one cheap case
+per path; `--runslow` is the whole net. **Marking changed selection only** — no
+bounds or assertions were weakened, so a slow case still fails on a real
+regression when you run it.
+
+Run `--runslow` before cutting a release, and whenever you touch synthesis,
+chunking, the Pocket engine or the provider path.
 
 What "validated" means here, in order of confidence:
 

@@ -252,12 +252,14 @@ class TestSynth:
         text = ("the quick brown fox jumps over the lazy dog " * 8)[:319] + "."
         assert len(self.synth(engine, text)) > 0
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("voice", ["af_heart", "am_michael", "bf_emma", "ef_dora"])
     def test_multiple_voices(self, engine, voice):
         assert len(self.synth(engine, "Testing this voice.", voice=voice)) > 0
 
     # Each non-English voice family must phonemize its own language. Regression
     # guard for the zh->cmn espeak code fix.
+    @pytest.mark.slow
     @pytest.mark.parametrize("voice,text", [
         ("ef_dora", "Hola, esto es una prueba."),
         ("ff_siwis", "Bonjour, ceci est un test."),
@@ -273,6 +275,10 @@ class TestSynth:
 
 
 # ── long-document streaming + latency (uses the chunk loop) ─────────────────
+# Slow by scale, not by kind: test_very_long_10x alone streams ~45 minutes of
+# audio. The chunk loop it exercises is already covered cheaply by TestChunking
+# and TestSegmentation, so the default run keeps the logic and skips the volume.
+@pytest.mark.slow
 @needs_model
 class TestLongDocument:
     def stream(self, engine, text):
@@ -329,6 +335,7 @@ class TestProvider:
         # CPU EP is always present as the implicit fallback
         assert "CPUExecutionProvider" in e.active_providers
 
+    @pytest.mark.slow
     @needs_model
     def test_coreml_available_and_loads(self):
         # Apple Silicon should expose CoreML; loading it must not crash and must
@@ -418,6 +425,7 @@ class TestUnload:
         assert eng.load() is False
         assert os.environ.get("HF_HUB_OFFLINE") == "0"
 
+    @pytest.mark.slow
     @pytest.mark.skipif(not PocketEngine().available(),
                         reason="Pocket deps (torch) not installed")
     def test_pocket_unload_then_lazy_reload(self):
@@ -678,6 +686,7 @@ class TestPocketPadding:
         assert trim_padding(quiet).size == quiet.size
         assert trim_padding(np.zeros(0, np.float32)).size == 0
 
+    @pytest.mark.slow
     def test_synthesized_pocket_lines_are_not_front_loaded_with_silence(self):
         from pocket_engine import PocketEngine, LEAD_PAD, TRAIL_PAD
         eng = PocketEngine()
