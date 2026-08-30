@@ -227,7 +227,7 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 # Does a read survive to its LAST word? (runs in realtime — 1500 chars ≈ 2 min)
 "$(swift build --show-bin-path)/Yap" --tailtest ../README.md 1500 [port]
 
-# backend robustness suite — fast set (82 of 100; every code path, one cheap case each)
+# backend robustness suite — fast set (every code path, one cheap case each)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q
 # ...and the full net, incl. scale synthesis + Pocket/torch + CoreML (~17 min, pegs the CPU)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q --runslow
