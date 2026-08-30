@@ -142,6 +142,14 @@ CLONING_WEIGHTS_URL = (
 CLONING_WEIGHTS_SHA256 = "473f47d99560bd50eb8b4509d3cacfe7f316ab20bdca86505403a2e6a936a6e9"
 CLONING_WEIGHTS_BYTES = 219029196
 
+# /engines/pocket/install fetches the weights AND /engines/pocket/cloning/install
+# fetches them alone, guarded by separate flags in the app, so both can be in
+# flight at once. They share one .part path: unserialized, two writers interleave
+# into it and one deletes it under the other, so both fail a checksum that was
+# never going to match. One lock makes the second call wait and then find the
+# work already done.
+_weights_lock = threading.Lock()
+
 
 def weights_dir() -> Path:
     return Path(os.environ.get("YAP_POCKET_WEIGHTS_DIR") or
@@ -184,13 +192,18 @@ def _legacy_hf_copy() -> Optional[Path]:
     check in ensure_cloning_weights still gates it, so a truncated or unrelated
     cache entry is rejected exactly like a bad download.
     """
-    try:
-        from huggingface_hub.constants import HF_HUB_CACHE
-        hub = HF_HUB_CACHE
-    except Exception:  # noqa: BLE001
-        hub = (os.environ.get("HF_HUB_CACHE")
-               or (os.path.join(os.environ["HF_HOME"], "hub") if os.environ.get("HF_HOME") else None)
-               or os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"))
+    # Env FIRST, then huggingface_hub's constant. That constant is computed when
+    # huggingface_hub is imported, so reading it first makes this ignore any later
+    # change to HF_HUB_CACHE / HF_HOME and silently answer for the wrong cache.
+    hub = os.environ.get("HF_HUB_CACHE") or ""
+    if not hub and os.environ.get("HF_HOME"):
+        hub = os.path.join(os.environ["HF_HOME"], "hub")
+    if not hub:
+        try:
+            from huggingface_hub.constants import HF_HUB_CACHE
+            hub = HF_HUB_CACHE
+        except Exception:  # noqa: BLE001
+            hub = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
     snaps = Path(hub) / "models--kyutai--pocket-tts" / "snapshots"
     try:
         for snap in snaps.iterdir():
@@ -205,18 +218,46 @@ def _legacy_hf_copy() -> Optional[Path]:
     return None
 
 
-def ensure_cloning_weights(log_line=None) -> bool:
+def adopt_legacy_copy() -> bool:
+    """Migrate a token-era install in place, locally, with no network.
+
+    Anyone who set cloning up before this change has the identical file sitting in
+    the HF cache. Without this they would load catalog-only on the first launch
+    after upgrading, and `refreshHD` would demote their cloned voice to a catalog
+    default: the exact silent demote this whole change exists to stop. Adoption
+    therefore runs from load(), not only from the install endpoints a user has to
+    go and click.
+
+    Local copy plus the same hash gate, never a download, so it is safe to call on
+    every load: it is a no-op the moment the weights are in place.
+    """
+    return ensure_cloning_weights(allow_download=False)
+
+
+def ensure_cloning_weights(log_line=None, allow_download: bool = True) -> bool:
     """Put a VERIFIED copy of the cloning weights on disk. Returns success.
 
     Never leaves a partial file where a later run would trust it: the download goes
     to a temp path, is hashed, and is only renamed into place once it matches. A
     mismatch deletes the temp file and fails loudly rather than half-enabling
     cloning.
+
+    `allow_download=False` restricts it to what is already on this machine, which is
+    what the load path uses: adopting a local copy is cheap and silent, whereas
+    pulling 209 MB is something the user asked for.
     """
     say = log_line or (lambda _m: None)
     dest = cloning_weights_path()
     if cloning_weights_ready():
         return True
+    with _weights_lock:
+        # Another caller may have finished while we waited for the lock.
+        if cloning_weights_ready():
+            return True
+        return _fetch_and_verify(dest, say, allow_download)
+
+
+def _fetch_and_verify(dest: Path, say, allow_download: bool) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".part")
     # A .part left by a crashed or killed run is NOT a download to finish: urllib
@@ -234,6 +275,8 @@ def ensure_cloning_weights(log_line=None) -> bool:
             say(f"could not reuse the cached copy ({e}); downloading instead")
             tmp.unlink(missing_ok=True)
     if not tmp.exists():
+        if not allow_download:
+            return False          # nothing local to adopt; the user hasn't asked to fetch
         say(f"downloading Pocket cloning weights ({CLONING_WEIGHTS_BYTES // (1 << 20)} MB, one time)")
         try:
             import urllib.request
@@ -360,6 +403,10 @@ class PocketEngine:
                 # own verified copy. Absent -> the plain load, which pulls the
                 # UNGATED catalog weights. Neither path needs a token or an
                 # account, and neither touches the Keychain.
+                # Migrate a token-era install before deciding, or an upgrading
+                # user loads catalog-only and has their clone demoted.
+                if not cloning_weights_ready():
+                    adopt_legacy_copy()
                 cfg = _cloning_config() if cloning_weights_ready() else None
                 log.info("loading Pocket TTS (cloning weights=%s)", cfg is not None)
                 if cfg is not None:

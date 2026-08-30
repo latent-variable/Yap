@@ -784,6 +784,28 @@ final class AppState: ObservableObject {
 
     /// Install HD deps (streams progress), then restart the backend into the
     /// combined env so both engines are live.
+    /// Is `url` a directory we are allowed to delete, i.e. one of ours?
+    ///
+    /// Both delete targets are built by walking up from another path, so a bug in
+    /// that arithmetic would aim the delete somewhere real. This refuses anything
+    /// that is not a directory sitting directly inside Application Support/Yap, so
+    /// a miscomputed path fails instead of removing a user's folder. Pure + static
+    /// so `--selftest` can exercise it.
+    nonisolated static func isDeletableAppSupportDir(_ url: URL) -> Bool {
+        let support = URL(fileURLWithPath: NSHomeDirectory())
+            .appending(path: "Library/Application Support/Yap").standardizedFileURL
+        let target = url.standardizedFileURL
+        // Compare PATHS, not URLs: deletingLastPathComponent() leaves a trailing
+        // slash, so URL equality is false for the very directory we mean and the
+        // guard would refuse everything, making delete a silent no-op.
+        guard target.deletingLastPathComponent().path == support.path else { return false }
+        guard !target.lastPathComponent.isEmpty, target.lastPathComponent != "." else { return false }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDir),
+              isDir.boolValue else { return false }
+        return true
+    }
+
     /// Total on-disk size of a directory, in bytes (0 if missing). static + pure
     /// FileManager so callers run it off the main actor without capturing any
     /// @MainActor state (it walks the whole tree — never call it from a body).
@@ -859,13 +881,13 @@ final class AppState: ObservableObject {
             // the Kokoro-only env.
             await backend.stopAndWait()
             await Task.detached(priority: .background) {
-                do { try FileManager.default.removeItem(at: dir) }
-                catch { Log.write("delete HD model failed: \(error)") }
-                // Best effort and separate: a missing weights dir is the normal
-                // case for anyone who never enabled cloning.
-                if FileManager.default.fileExists(atPath: weights.path) {
-                    do { try FileManager.default.removeItem(at: weights) }
-                    catch { Log.write("delete cloning weights failed: \(error)") }
+                // Both paths are COMPUTED, so guard before deleting and make the
+                // delete recoverable: validating stops the mistake, the Trash makes
+                // one survivable, and neither substitutes for the other.
+                for target in [dir, weights] where AppState.isDeletableAppSupportDir(target) {
+                    do { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
+                    catch CocoaError.fileNoSuchFile { continue }   // never installed
+                    catch { Log.write("delete \(target.lastPathComponent) failed: \(error)") }
                 }
             }.value
             await backend.start()

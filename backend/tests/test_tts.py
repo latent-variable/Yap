@@ -498,6 +498,46 @@ class TestUnload:
         assert pocket_engine.cloning_weights_path().read_bytes() == payload
         assert not stale.exists()
 
+    def test_upgrade_adopts_the_old_install_without_network(self, tmp_path, monkeypatch):
+        # The regression this PR exists to prevent, reintroduced by the PR itself:
+        # an existing token-era user has the weights only in the HF cache, so on the
+        # first launch after upgrading load() would go catalog-only and refreshHD
+        # would demote their cloned voice. Adoption must therefore happen on LOAD,
+        # locally, and must never reach for the network to do it.
+        import hashlib, pocket_engine
+        payload = b"existing users weights"
+        cache = tmp_path / "hf" / "models--kyutai--pocket-tts" / "snapshots" / "r" / "languages" / "english"
+        cache.mkdir(parents=True)
+        (cache / "model.safetensors").write_bytes(payload)
+        monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hf"))
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path / "dest")
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_BYTES", len(payload))
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_SHA256",
+                            hashlib.sha256(payload).hexdigest())
+        import urllib.request
+        def boom(*a, **k):
+            raise AssertionError("adoption must be local; it downloaded instead")
+        monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+        assert pocket_engine.cloning_weights_ready() is False     # pre-upgrade state
+        assert pocket_engine.adopt_legacy_copy() is True
+        assert pocket_engine.cloning_weights_ready() is True      # cloning survives
+
+    def test_adoption_never_downloads_when_there_is_nothing_local(self, tmp_path, monkeypatch):
+        # allow_download=False is the whole safety of calling adoption on every
+        # load: a fresh user with no local copy must get a cheap False, not 209 MB
+        # pulled behind their back.
+        import pocket_engine
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path / "dest")
+        monkeypatch.setattr(pocket_engine, "_legacy_hf_copy", lambda: None)
+        import urllib.request
+        def boom(*a, **k):
+            raise AssertionError("adoption downloaded without being asked")
+        monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+        assert pocket_engine.adopt_legacy_copy() is False
+        assert not pocket_engine.cloning_weights_path().exists()
+
     def test_legacy_hf_cache_copy_is_reused_not_redownloaded(self, tmp_path, monkeypatch):
         # Anyone who set cloning up under the old token flow already has the exact
         # file. Reusing it saves a second 209 MB download, and it must still pass
