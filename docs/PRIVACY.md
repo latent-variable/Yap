@@ -8,11 +8,14 @@ it touches, and why — so you don't have to take "private" on faith.
 - Runs entirely on your Mac. Speech is synthesized locally (Kokoro, or Pocket
   TTS if you enable it); dictation is transcribed locally on the Apple Neural
   Engine (Parakeet).
-- No account, no sign-in, no analytics, no telemetry, no crash reporting.
+- No account, no sign-in, no analytics, no telemetry, no crash reporting. That
+  now covers voice cloning too: it used to need your own Hugging Face token, and
+  it no longer needs one, so Yap stores no credential of yours anywhere and reads
+  nothing from your Keychain.
 - No telemetry, no account, nothing about you is ever sent. Yap's only network
   activity is fetching assets you opt into, plus an optional update check: the
   one-time Kokoro model download (~340 MB); the Pocket engine's packages and
-  voices if you set that up; the gated weights if you clone a voice; and a
+  voices if you set that up; the voice-cloning model if you clone a voice; and a
   once-a-day check for a newer release (default on, toggle off in Settings ▸
   General). With the update check off and nothing downloading, idle Yap makes no
   outbound connections — verify with Little Snitch / `nettop`.
