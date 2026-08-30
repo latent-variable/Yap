@@ -389,6 +389,14 @@ an agent must keep:
   60s. Kokoro presence is `kokoroFilesPresent` (from `/health`), tracked
   separately from `ready`. After re-downloading Kokoro the running (model-less)
   sidecar must be **restarted**, not just `start()`ed, to load the new files.
+<!-- canon-override: destructive filesystem commands (use trash, not rm) — a user
+     pressing Delete in Settings to reclaim ~1.2 GB gets nothing back if it goes to
+     the Trash, and every byte is re-downloadable. Applies ONLY to the model/engine
+     deletes below, never to how an agent deletes files. (Lino, 2026-08-30) -->
+- **Model deletes are REAL deletes, not the Trash**, and the paths are validated
+  first (`AppState.isDeletableAppSupportDir`). Guarding stops the mistake;
+  recoverability was deliberately traded away because the button exists to free
+  disk. Don't "fix" this back to `trashItem`.
 - Deleting HD removes `hd-packages` **and `pocket-weights/`** (the cloning weights
   are engine data, and leaving 209 MB behind is the disk the user was reclaiming).
   **Cloned voices (`hd-voices`) are kept** — those are the user's own recordings,

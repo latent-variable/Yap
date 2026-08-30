@@ -881,11 +881,18 @@ final class AppState: ObservableObject {
             // the Kokoro-only env.
             await backend.stopAndWait()
             await Task.detached(priority: .background) {
-                // Both paths are COMPUTED, so guard before deleting and make the
-                // delete recoverable: validating stops the mistake, the Trash makes
-                // one survivable, and neither substitutes for the other.
+                // A REAL delete, not the Trash. The user pressed Delete in Settings
+                // to get ~1.2 GB back, and trashing it frees nothing until they
+                // empty the Trash, so the button would not do the one thing it is
+                // for. Safe because every byte here is re-downloadable: the engine
+                // reinstalls from pip and the cloning weights from their mirror.
+                // (Lino, 2026-08-30. This is a product decision about a button the
+                // user clicked, distinct from how an AGENT deletes files.)
+                //
+                // The paths are COMPUTED, though, so they are still guarded first:
+                // recoverability was the half that got dropped, not validation.
                 for target in [dir, weights] where AppState.isDeletableAppSupportDir(target) {
-                    do { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
+                    do { try FileManager.default.removeItem(at: target) }
                     catch CocoaError.fileNoSuchFile { continue }   // never installed
                     catch { Log.write("delete \(target.lastPathComponent) failed: \(error)") }
                 }
