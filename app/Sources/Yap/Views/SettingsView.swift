@@ -179,7 +179,7 @@ private struct EngineTab: View {
                     Text("Pocket TTS — natural voices + cloning").tag("pocket")
                 }
                 .pickerStyle(.radioGroup)
-                Text("Kokoro runs on CPU and starts instantly. Pocket TTS gives noticeably more natural speech with 26 built-in voices, also fully on CPU. Add your own voices by cloning a short clip (needs a free Hugging Face token, below). Switch any time — or just pick a voice from the dropdown.")
+                Text("Kokoro runs on CPU and starts instantly. Pocket TTS gives noticeably more natural speech with 26 built-in voices, also fully on CPU. Add your own voices by cloning a short clip (one extra download, no account). Switch any time — or just pick a voice from the dropdown.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -223,7 +223,7 @@ private struct EngineTab: View {
     // MARK: enable / download
     private var enableSection: some View {
         Section("Set up Pocket TTS") {
-            Text("Pocket downloads its engine once (~1 GB) into Application Support. It is not bundled, so the app stays small. The 26 built-in voices need no account; cloning your own needs a free Hugging Face token (set up after install).")
+            Text("Pocket downloads its engine once (~1 GB) into Application Support. It is not bundled, so the app stays small. Cloning your own voice adds one more file (209 MB), fetched during this install. No account either way.")
                 .font(.caption).foregroundStyle(.secondary)
             if installing {
                 HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
@@ -250,7 +250,7 @@ private struct EngineTab: View {
         }
     }
 
-    // MARK: cloned voices (require a token + accepted terms)
+    // MARK: cloned voices (require the cloning weights installed)
     private var voicesSection: some View {
         Section("Your cloned voices") {
             let cloned = state.hdVoices.filter { $0.needs_cloning == true }

@@ -56,22 +56,13 @@ the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
     *ungated* `kyutai/pocket-tts-without-voice-cloning` weights. A catalog name
     (e.g. `michael`) is passed straight to `get_state_for_audio_prompt`.
   - **Cloning** (opt-in, no account): clone any ~20s reference WAV in `hd-voices/`.
-    Needs Kyutai's English cloning weights, which upstream ships in a **gated** HF
-    repo. Yap does **not** use that repo: the weights are CC-BY-4.0, so we serve a
-    byte-identical mirror (`CLONING_WEIGHTS_URL`, verified same SHA256 and same
-    219,029,196 bytes) and fetch it like any other model file. **No HF account, no
-    token, no Keychain** — that path is gone, `Keychain.swift` with it.
-    `ensure_cloning_weights()` downloads to a `.part`, checks the pinned SHA256,
-    and only then renames into place, so a bad fetch can never half-enable cloning.
-    `cloning_weights_ready()` is size-only because it runs on every status poll.
+    Kyutai's cloning weights are CC-BY-4.0, so Yap fetches a byte-identical mirror
+    (`CLONING_WEIGHTS_URL`) and checks the pinned SHA256 before use. **No HF
+    account, no token, no Keychain** — that path is gone, `Keychain.swift` with it.
     A cloned-voice request with cloning off still returns **403**.
-  - **A custom config breaks catalog voices unless `origin` is restored.** We load
-    through a copy of pocket_tts's own `english.yaml` with only `weights_path`
-    swapped to our local file. `pocket_tts` derives the voice language from the
-    config's *stem* and refuses any config outside its own `CONFIGS_DIR`, so
-    loading that way kept cloning working and broke all 26 catalog voices with
-    "Cannot use predefined voices". `_restore_language_origin()` points the loaded
-    model back at the canonical `english.yaml`. Don't remove it; test:
+  - **Don't remove `_restore_language_origin()`.** Loading through our own config
+    silently breaks all 26 catalog voices while cloning keeps working. Mechanism
+    and the rest of the weights pipeline: `docs/ARCHITECTURE.md`. Test:
     `test_catalog_voices_survive_a_custom_config`.
   Lazy — no torch import until first Pocket use; per-voice conditioning cached;
   inference serialized by a lock.

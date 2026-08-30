@@ -219,6 +219,11 @@ def ensure_cloning_weights(log_line=None) -> bool:
         return True
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".part")
+    # A .part left by a crashed or killed run is NOT a download to finish: urllib
+    # gives us no resume, and the code below only downloads when tmp is absent. A
+    # leftover would therefore be hashed, rejected, and reported as a failed fetch
+    # while nothing was ever retried. Clear it and start clean.
+    tmp.unlink(missing_ok=True)
 
     legacy = _legacy_hf_copy()
     if legacy is not None:

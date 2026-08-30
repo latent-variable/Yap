@@ -848,6 +848,11 @@ final class AppState: ObservableObject {
         hdInstalled = false     // reflect immediately
         if prefs.engine == "pocket" { prefs.engine = "kokoro" }
         let dir = hdPackagesDir
+        // The cloning weights are Pocket's too, so "delete Pocket to reclaim disk"
+        // has to take them: leaving 209 MB behind is exactly the disk the user was
+        // trying to get back. Cloned VOICES (hd-voices) still stay -- those are the
+        // user's own recordings, not something we can re-download.
+        let weights = hdVoicesDir.deletingLastPathComponent().appending(path: "pocket-weights")
         Task {
             // Terminate the backend PROCESS and wait for it to exit so it isn't
             // importing torch from hd-packages while we delete it, then relaunch in
@@ -856,6 +861,12 @@ final class AppState: ObservableObject {
             await Task.detached(priority: .background) {
                 do { try FileManager.default.removeItem(at: dir) }
                 catch { Log.write("delete HD model failed: \(error)") }
+                // Best effort and separate: a missing weights dir is the normal
+                // case for anyone who never enabled cloning.
+                if FileManager.default.fileExists(atPath: weights.path) {
+                    do { try FileManager.default.removeItem(at: weights) }
+                    catch { Log.write("delete cloning weights failed: \(error)") }
+                }
             }.value
             await backend.start()
             refreshHD()
@@ -895,7 +906,12 @@ final class AppState: ObservableObject {
         guard !installingCloning else { return }   // one fetch at a time
         installingCloning = true
         defer { installingCloning = false }
-        await backend.client.installCloningWeights(onLine: onLine)
+        // BackendClient is a plain struct, so this closure fires on whatever
+        // executor the stream resumes on. `onLine` writes @State in the Settings
+        // view, so it must land on main — same hop installHD does.
+        await backend.client.installCloningWeights { line in
+            Task { @MainActor in onLine(line) }
+        }
         await backend.restart()
         refreshHD()
     }

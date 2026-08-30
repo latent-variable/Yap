@@ -446,6 +446,37 @@ class TestUnload:
         assert pocket_engine.ensure_cloning_weights() is True
         assert pocket_engine.cloning_weights_path().read_bytes() == payload
 
+    def test_stale_part_file_does_not_block_a_retry(self, tmp_path, monkeypatch):
+        # A .part left by a killed run must not be mistaken for the download we are
+        # about to verify. urllib cannot resume, and the fetch only runs when tmp is
+        # absent, so a leftover would be hashed, rejected and reported as a failed
+        # fetch having retried nothing. The retry must actually re-download.
+        import hashlib, pocket_engine
+        monkeypatch.setattr(pocket_engine, "weights_dir", lambda: tmp_path)
+        monkeypatch.setattr(pocket_engine, "_legacy_hf_copy", lambda: None)
+        payload = b"the real weights"
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_BYTES", len(payload))
+        monkeypatch.setattr(pocket_engine, "CLONING_WEIGHTS_SHA256",
+                            hashlib.sha256(payload).hexdigest())
+
+        calls = []
+        def fake_urlopen(url, timeout=0):
+            import io, contextlib
+            calls.append(url)
+            return contextlib.closing(io.BytesIO(payload))
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        # Truncated leftover from a previous crash.
+        stale = pocket_engine.cloning_weights_path().with_suffix(".part")
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_bytes(b"half")
+
+        assert pocket_engine.ensure_cloning_weights() is True
+        assert calls, "a stale .part suppressed the retry entirely"
+        assert pocket_engine.cloning_weights_path().read_bytes() == payload
+        assert not stale.exists()
+
     def test_legacy_hf_cache_copy_is_reused_not_redownloaded(self, tmp_path, monkeypatch):
         # Anyone who set cloning up under the old token flow already has the exact
         # file. Reusing it saves a second 209 MB download, and it must still pass
