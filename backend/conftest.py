@@ -11,6 +11,13 @@ So those are marked `slow` and are OFF by default:
     pytest tests/                # fast set — every code path, one cheap case each
     pytest tests/ --runslow      # everything, including scale, Pocket and CoreML
 
+What the default set deliberately KEEPS, despite the cost: one real multi-chunk
+stream (`TestLongDocument::test_multi_chunk_stream_survives_every_chunk`, ~800
+chars). Chunking and synthesis are each covered on their own, but only that loop
+covers them together, and a chunk that silently fails to synthesize is exactly
+the break that finishes green everywhere else. The scale cases are the same loop
+with volume; skipping the volume is fine, skipping the loop is not.
+
 **This changes SELECTION only.** No test's inputs, bounds or assertions were
 weakened to make the default faster — every slow case is intact and still runs
 under `--runslow`. Deselected cases report as skipped rather than vanishing, so

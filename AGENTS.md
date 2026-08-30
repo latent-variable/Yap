@@ -241,16 +241,10 @@ long (10x README ~44k chars) / huge-single-paragraph / unicode+emoji / code /
 URLs / punctuation-only / multi-voice / WAV export / provider load. Synthesis
 tests skip automatically if model files are absent.
 
-**18 of the 100 are marked `slow` and are OFF by default** (`backend/conftest.py`):
-the 44k-char document stream, the voice-breadth sweeps, the CoreML session, and
-the two that pull in torch. They were what made the full run 16m51s of pegged
-CPU — a run nobody makes. The default set is the same coverage at one cheap case
-per path; `--runslow` is the whole net. **Marking changed selection only** — no
-bounds or assertions were weakened, so a slow case still fails on a real
-regression when you run it.
-
-Run `--runslow` before cutting a release, and whenever you touch synthesis,
-chunking, the Pocket engine or the provider path.
+**The heaviest cases are marked `slow` and are OFF by default**; the default set
+keeps every code path, including one real multi-chunk stream. Run `--runslow`
+before cutting a release, and whenever you touch synthesis, chunking, the Pocket
+engine or the provider path. Which cases, and why each: `backend/conftest.py`.
 
 What "validated" means here, in order of confidence:
 

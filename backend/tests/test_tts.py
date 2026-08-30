@@ -275,10 +275,12 @@ class TestSynth:
 
 
 # ── long-document streaming + latency (uses the chunk loop) ─────────────────
-# Slow by scale, not by kind: test_very_long_10x alone streams ~45 minutes of
-# audio. The chunk loop it exercises is already covered cheaply by TestChunking
-# and TestSegmentation, so the default run keeps the logic and skips the volume.
-@pytest.mark.slow
+# Slow by SCALE, not by kind: test_very_long_10x alone streams ~45 minutes of
+# audio. The three full-document cases are marked individually rather than on the
+# class, because the default run must keep one real multi-chunk stream — chunking
+# and synthesis are each covered alone (TestChunking, TestSynth), but only this
+# loop covers them TOGETHER, and a chunk that silently fails to synthesize is
+# exactly the kind of break that finishes green everywhere else.
 @needs_model
 class TestLongDocument:
     def stream(self, engine, text):
@@ -300,6 +302,20 @@ class TestLongDocument:
         return {"chunks": len(chunks), "first": first, "failed": failed,
                 "audio_s": total / SAMPLE_RATE, "wall": time.time() - t0}
 
+    def test_multi_chunk_stream_survives_every_chunk(self, engine):
+        """The default set's multi-chunk guard: several chunks, all synthesized.
+
+        Deliberately small — ~800 chars is a few chunks past the 320-char cap,
+        enough to cross chunk boundaries without streaming minutes of audio. The
+        scale cases below are the same loop with volume; this one is the loop.
+        """
+        text = ("Yap reads the text you select. " * 26)  # ~800 chars -> several chunks
+        r = self.stream(engine, text)   # session fixture — no second model load
+        assert r["chunks"] > 1, f"needs multiple chunks to be a multi-chunk test, got {r['chunks']}"
+        assert r["failed"] == 0, f"{r['failed']} of {r['chunks']} chunks failed to synthesize"
+        assert r["audio_s"] > 0
+
+    @pytest.mark.slow
     def test_readme_sized(self, engine):
         text = (Path(__file__).parents[2] / "README.md").read_text()
         r = self.stream(engine, text)
@@ -307,12 +323,14 @@ class TestLongDocument:
         assert r["first"] < 1.5, f"first chunk too slow: {r['first']:.2f}s"
         assert r["audio_s"] > 10
 
+    @pytest.mark.slow
     def test_very_long_10x(self, engine):
         text = (Path(__file__).parents[2] / "README.md").read_text() * 10  # ~44k chars
         r = self.stream(engine, text)
         assert r["failed"] == 0, f"{r['failed']} chunks failed out of {r['chunks']}"
         assert r["first"] < 1.5, f"first chunk latency {r['first']:.2f}s"
 
+    @pytest.mark.slow
     def test_huge_single_paragraph(self, engine):
         # 5000 chars, no paragraph breaks -> exercises sentence+hardwrap path
         text = "This is a sentence. " * 250
