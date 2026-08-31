@@ -32,7 +32,15 @@ codesign --force --deep --timestamp --options runtime --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP" && echo "[notarize] signature OK"
 
 echo "[notarize] packaging DMG"
-bash "$ROOT/scripts/make_dmg.sh" "$VERSION" >/dev/null
+# --no-build is load-bearing: without it make_dmg.sh runs build_app.sh, which
+# rm -rf's dist/Yap.app and re-signs it ad-hoc, discarding the Developer ID
+# signature applied above and guaranteeing a notarization rejection.
+bash "$ROOT/scripts/make_dmg.sh" "$VERSION" --no-build >/dev/null
+
+# The DMG carries the bundle Apple will judge, so prove the signature survived
+# staging before spending a submission round on it.
+codesign --verify --deep --strict "$APP" \
+  || { echo "[notarize] signature did not survive packaging — aborting" >&2; exit 1; }
 
 echo "[notarize] submitting to Apple (this can take a few minutes)"
 xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait

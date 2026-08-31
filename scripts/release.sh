@@ -40,6 +40,30 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 fi
 if [ -n "$NOTES_FILE" ] && [ ! -f "$NOTES_FILE" ]; then echo "no notes file: $NOTES_FILE"; exit 1; fi
 
+# A real run commits both targets, so any edit already sitting in them would ride
+# into a tagged, published release commit (and the cask push). Refuse instead.
+# --dry-run is exempt: it restores the exact bytes it found (see the trap below).
+if [ "$DRY" = 0 ]; then
+  if ! git -C "$ROOT" diff --quiet -- "$PLIST"; then
+    echo "uncommitted changes in $PLIST — commit or stash them first"; exit 1
+  fi
+  if ! git -C "$TAP_DIR" diff --quiet -- "$CASK"; then
+    echo "uncommitted changes in $CASK — commit or stash them first"; exit 1
+  fi
+fi
+
+# Snapshot both targets before editing them. --dry-run used to undo itself with
+# `git checkout -- <file>`, which restores HEAD rather than what was there, so it
+# silently destroyed any uncommitted edit the operator already had. Restore the
+# bytes instead, from a trap so a mid-run failure can't leave the files bumped.
+PLIST_ORIG="$(mktemp)"; CASK_ORIG="$(mktemp)"
+cp "$PLIST" "$PLIST_ORIG"; cp "$CASK" "$CASK_ORIG"
+restore_targets() {
+  if [ "$DRY" = 1 ]; then cp "$PLIST_ORIG" "$PLIST"; cp "$CASK_ORIG" "$CASK"; fi
+  rm -f "$PLIST_ORIG" "$CASK_ORIG"
+}
+trap restore_targets EXIT INT TERM
+
 # ---- bump version ----
 say "bumping version -> $VERSION"
 BUILDNO="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$PLIST")"
@@ -65,10 +89,8 @@ say "cask updated: $(grep -E 'version|sha256' "$CASK" | tr -s ' ' | tr '\n' ' ')
 
 if [ "$DRY" = 1 ]; then
   say "DRY RUN — not committing or publishing. Reverting version bump + cask."
-  git -C "$ROOT" checkout -- "$PLIST"
-  git -C "$TAP_DIR" checkout -- "$CASK"
   echo "would publish $TAG with $DMG and bump the cask. Looks good? re-run without --dry-run."
-  exit 0
+  exit 0   # restore_targets runs on EXIT
 fi
 
 # ---- publish ----
@@ -81,7 +103,8 @@ say "creating GitHub release $TAG"
 gh release create "$TAG" "$DMG" --title "Yap $VERSION" "${NOTES_ARGS[@]}"
 
 say "bumping Homebrew cask"
-git -C "$TAP_DIR" commit -aqm "Yap $VERSION"
+git -C "$TAP_DIR" add "$CASK"
+git -C "$TAP_DIR" commit -qm "Yap $VERSION"
 git -C "$TAP_DIR" push -q origin HEAD
 
 say "done — $TAG published, cask points at it."

@@ -3,15 +3,32 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$ROOT/app/Resources/Info.plist")}"
+VERSION=""; BUILD=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-build) BUILD=0; shift;;
+    -*) echo "unknown arg: $1" >&2; exit 1;;
+    *) VERSION="$1"; shift;;
+  esac
+done
+VERSION="${VERSION:-$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$ROOT/app/Resources/Info.plist")}"
 OUT="$ROOT/dist"
 APP="$OUT/Yap.app"
 DMG="$OUT/Yap-$VERSION.dmg"
 STAGE="$OUT/dmg-stage"
 VOL="Yap"
 
-echo "[dmg] building app bundle"
-bash "$ROOT/scripts/build_app.sh" release >/dev/null
+# --no-build packages the bundle already sitting in dist/. notarize.sh needs it:
+# it signs dist/Yap.app with the Developer ID identity, and a rebuild here would
+# replace that bundle with a fresh ad-hoc/self-signed one, so the DMG submitted to
+# Apple would carry the wrong signature and always fail notarization.
+if [ "$BUILD" = 1 ]; then
+  echo "[dmg] building app bundle"
+  bash "$ROOT/scripts/build_app.sh" release >/dev/null
+else
+  echo "[dmg] --no-build: packaging the existing $APP"
+  [ -d "$APP" ] || { echo "no app bundle at $APP — drop --no-build or build first" >&2; exit 1; }
+fi
 
 echo "[dmg] staging"
 rm -rf "$STAGE" "$DMG"
