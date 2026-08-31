@@ -3,6 +3,9 @@
 # ~/Library/Application Support/Yap/hd-packages when the user enables Pocket.
 # Kept separate so the default Kokoro app stays light.
 #
-# Catalog voices need no account. Voice cloning needs the user's own Hugging Face
-# token (read scope) + accepting the terms at huggingface.co/kyutai/pocket-tts.
+# No account, for either half. Catalog voices ship with the model. Voice cloning
+# pulls one extra weights file, which Yap serves from its own SHA256-pinned
+# CC-BY-4.0 mirror of Kyutai's rather than the gated upstream repo (see
+# CLONING_WEIGHTS_URL in pocket_engine.py). Kyutai's acceptable-use terms travel
+# with the file: clone only voices you have the right to use.
 pocket-tts>=2.1.0

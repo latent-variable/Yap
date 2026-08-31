@@ -730,8 +730,11 @@ def _segment_synth(req: SynthReq):
         elif req.voice in CATALOG_NAMES:
             target = req.voice
         elif ref is not None:
-            raise HTTPException(403, "voice cloning unavailable — add a Hugging "
-                                "Face token and accept the Pocket TTS terms")
+            # Name the remedy the app actually has. This used to tell the user to
+            # add a Hugging Face token and accept Kyutai's terms, a flow that no
+            # longer exists (the weights come from our own CC-BY-4.0 mirror).
+            raise HTTPException(403, "voice cloning is not installed. Enable it in "
+                                "Settings ▸ Engine ▸ Voice cloning")
         else:
             raise HTTPException(400, f"voice '{req.voice}' not found")
         return lambda text: pk_engine.synth(text, target, req.speed)

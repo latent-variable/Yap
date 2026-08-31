@@ -116,7 +116,7 @@ final class AppState: ObservableObject {
 
     /// The voice a first-time Pocket switch lands on. Prefer **Eve** (catalog,
     /// en) — the nicest-sounding default — then any other usable catalog voice,
-    /// then whatever's first. Never a cloned ref (would 403 without a token).
+    /// then whatever's first. Never a cloned ref (403s unless cloning is loaded).
     static let preferredPocketVoice = "eve"
     var defaultPocketVoiceId: String? {
         hdVoices.first(where: { $0.id == Self.preferredPocketVoice && $0.needs_cloning != true })?.id
