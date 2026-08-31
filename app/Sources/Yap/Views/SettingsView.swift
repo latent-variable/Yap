@@ -966,9 +966,12 @@ private struct DiagnosticsTab: View {
                 LabeledContent("Available", value: availableProviders)
                 Text("Kokoro is small (82M); the vectorized CPU path benchmarks as fast as or faster than CoreML. Changing this restarts the engine.")
                     .font(.caption).foregroundStyle(.secondary)
+                // restart() (not stop() + start()): stop() only sends SIGTERM, so the
+                // old backend is still answering /health when start() runs, gets
+                // reused as-is — the new provider never applied — and then exits,
+                // leaving port 8766 dead. restart() awaits stopAndWait() first.
                 Button("Apply & restart engine") {
-                    Task { state.backend.stop(); state.backend.ready = false
-                           await state.backend.start(); await refresh() }
+                    Task { await state.backend.restart(); await refresh() }
                 }
             }
             Section("Capture") {

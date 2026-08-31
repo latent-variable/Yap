@@ -242,3 +242,82 @@ extension CLITest {
         return max(0, bytes.count - 44)
     }
 }
+
+extension CLITest {
+    /// `Yap --providertest [port]` — does Settings ▸ Diagnostics ▸ "Apply &
+    /// restart engine" actually apply the provider you picked, and leave the
+    /// engine up?
+    ///
+    /// The failure this guards is half-silent. The button used to run
+    /// `stop(); start()`. `stop()` only sends SIGTERM, so the old backend is
+    /// still answering `/health` a moment later, and `start()` reuses whatever
+    /// answers — it adopted the dying process, never launched one carrying the
+    /// new `YAP_PROVIDER`, and then the SIGTERM landed and left port 8766 dead.
+    /// Nothing errors along the way: Diagnostics keeps reporting the provider you
+    /// didn't pick, until the engine stops responding at all.
+    ///
+    /// `/health.provider_mode` echoes the mode the running process was LAUNCHED
+    /// with, so it separates "relaunched with the new setting" from "reused the
+    /// old process" without needing a model on disk.
+    ///
+    /// Defaults to port 8767, not 8766: the probe drives a real backend of its
+    /// own, and it must not evict the one a running Yap owns.
+    ///
+    /// `legacy: true` runs the pre-fix sequence instead. It is the control — the
+    /// probe asserts nothing useful unless the sequence it replaced actually
+    /// fails — and it is why the old code is reproduced here rather than deleted.
+    /// Being a race, it is not guaranteed to fail on every run; a single failure
+    /// is proof, a single pass is not absolution.
+    static func runProviderRestart(port: Int, legacy: Bool) -> Never {
+        Task { @MainActor in
+            let prefs = Prefs.shared
+            let mgr = BackendManager(port: port)
+            let original = prefs.providerMode
+
+            /// Single exit: the probe mutates a real user preference to drive the
+            /// spawn, so every path restores it and kills the backend it started.
+            ///
+            /// `stopAndWait`, not `stop`: SIGTERM without waiting leaves the dying
+            /// backend holding the port, and the next run of this probe then trips
+            /// over it and reports a failure the product did not cause. Which is
+            /// the same mistake the bug under test was made of.
+            @MainActor func finish(_ message: String, _ code: Int32) async -> Never {
+                prefs.providerMode = original
+                await mgr.stopAndWait()
+                print(message)
+                exit(code)
+            }
+
+            print("── provider restart probe  port=\(port)  sequence=\(legacy ? "legacy stop()+start()" : "restart()")")
+            prefs.providerMode = "cpu"
+            await mgr.start()
+            guard let baseline = await mgr.client.health()?.provider_mode else {
+                await finish("   ✗ backend never came up on \(port) — cannot probe", 1)
+            }
+            print("   baseline provider_mode=\(baseline)  ownsProcess=\(mgr.ownsProcess)")
+            guard baseline == "cpu", mgr.ownsProcess else {
+                // Something else is on this port; measuring it proves nothing.
+                await finish("   · backend was not launched by this probe — skipping", 0)
+            }
+
+            // The button's path, verbatim.
+            prefs.providerMode = "coreml"
+            if legacy {
+                mgr.stop(); mgr.ready = false; await mgr.start()
+            } else {
+                await mgr.restart()
+            }
+
+            switch await mgr.client.health()?.provider_mode {
+            case nil:
+                await finish("   ✗ engine unreachable after restart\n\n1 FAILURE(S)", 1)
+            case "coreml":
+                print("   ✓ engine alive and relaunched on provider_mode=coreml")
+                await finish("\nPROVIDER OK", 0)
+            case let other?:
+                await finish("   ✗ provider_mode still \(other) — the picked setting was never applied\n\n1 FAILURE(S)", 1)
+            }
+        }
+        dispatchMain()
+    }
+}
