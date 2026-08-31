@@ -138,7 +138,7 @@ Key facts an agent must keep straight:
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.
 - **CLI probes that park the run loop run from `YapMain`, not the app delegate.**
-  `--pipetest` / `--backpressure` / `--tailtest` end in `dispatchMain()`; started from
+  `--pipetest` / `--backpressure` / `--tailtest` / `--providertest` end in `dispatchMain()`; started from
   `applicationDidFinishLaunching` they SIGTRAP on
   `NSViewIsCurrentlyBuildingLayerTreeForDisplay` because the MenuBarExtra's layer
   tree is mid-build. Flags that just print and `exit(0)` are fine where they are.
@@ -218,6 +218,10 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 "$(swift build --show-bin-path)/Yap" --backpressure ../README.md
 # Does a read survive to its LAST word? (runs in realtime — 1500 chars ≈ 2 min)
 "$(swift build --show-bin-path)/Yap" --tailtest ../README.md 1500 [port]
+# Does "Apply & restart engine" apply the provider AND leave the engine up?
+# Runs on port 8767 so it never evicts a running Yap's backend. --legacy runs the
+# pre-fix stop()+start() sequence, i.e. the control that must fail.
+"$(swift build --show-bin-path)/Yap" --providertest [port] [--legacy]
 
 # backend robustness suite — fast set (every code path, one cheap case each)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q

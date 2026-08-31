@@ -1,11 +1,6 @@
 import SwiftUI
 
 extension VoiceInfo {
-    /// "Puck · English (US) ♂"
-    var display: String {
-        let base = id.split(separator: "_").last.map(String.init)?.capitalized ?? id
-        return "\(base) · \(lang_label) \(gender == "female" ? "♀" : "♂")"
-    }
     var shortName: String {
         let base = id.split(separator: "_").last.map(String.init)?.capitalized ?? id
         return "\(base) \(gender == "female" ? "♀" : "♂")"

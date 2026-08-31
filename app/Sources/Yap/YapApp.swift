@@ -28,6 +28,11 @@ enum YapMain {
             let port = CommandLine.arguments.count > i + 3 ? Int(CommandLine.arguments[i + 3]) : nil
             CLITest.runTailTest(path: path, maxChars: cap ?? 3000, port: port ?? 8766)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--providertest") {
+            let port = CommandLine.arguments.count > i + 1 ? Int(CommandLine.arguments[i + 1]) : nil
+            CLITest.runProviderRestart(port: port ?? 8767,
+                                       legacy: CommandLine.arguments.contains("--legacy"))
+        }
         YapApp.main()
     }
 }

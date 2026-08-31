@@ -15,10 +15,17 @@ final class BackendManager: NSObject, ObservableObject {
     /// PID of an orphaned Yap backend we've adopted (we have no Process handle
     /// to it — it outlived its spawner — so we manage it by PID/signal instead).
     private var adoptedPID: pid_t?
-    let client = BackendClient()
-    let port = 8766
+    let client: BackendClient
+    /// Injectable so a probe (`--providertest`) can drive a real backend on a
+    /// spare port without evicting the one the running app owns. The app itself
+    /// always uses the default.
+    let port: Int
 
-    override init() {
+    init(port: Int = 8766) {
+        self.port = port
+        var c = BackendClient()
+        c.base = URL(string: "http://127.0.0.1:\(port)")!
+        self.client = c
         super.init()
         // Kill our own backend when the app quits so it doesn't linger as an
         // orphan (reparented to launchd) that the next launch can't cleanly own.
