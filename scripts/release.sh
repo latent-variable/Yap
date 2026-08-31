@@ -40,6 +40,65 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 fi
 if [ -n "$NOTES_FILE" ] && [ ! -f "$NOTES_FILE" ]; then echo "no notes file: $NOTES_FILE"; exit 1; fi
 
+# A real run commits both targets, so any edit already sitting in them would ride
+# into a tagged, published release commit (and the cask push). Refuse instead.
+# --dry-run is exempt: it restores the exact bytes it found (see the trap below).
+# diff-index against HEAD, not `git diff`: `git diff` compares the worktree with
+# the INDEX, so an edit that is already staged reads clean and then rides into the
+# release commit anyway. Refresh first, or stale stat info reports a false dirty.
+if [ "$DRY" = 0 ]; then
+  git -C "$ROOT" update-index -q --refresh || true
+  git -C "$TAP_DIR" update-index -q --refresh || true
+  if ! git -C "$ROOT" diff-index --quiet HEAD -- "$PLIST"; then
+    echo "uncommitted or staged changes in $PLIST — commit or stash them first"; exit 1
+  fi
+  if ! git -C "$TAP_DIR" diff-index --quiet HEAD -- "$CASK"; then
+    echo "uncommitted or staged changes in $CASK — commit or stash them first"; exit 1
+  fi
+fi
+
+# Snapshot both targets before editing them. --dry-run used to undo itself with
+# `git checkout -- <file>`, which restores HEAD rather than what was there, so it
+# silently destroyed any uncommitted edit the operator already had. Restore the
+# bytes instead, from a trap so a mid-run failure or a Ctrl-C can't leave the
+# files bumped either.
+#
+# Held base64-encoded in variables, not in temp files: command substitution eats
+# trailing newlines (so a plain "$(cat …)" is not byte-exact), and a temp file is
+# a thing that has to be cleaned up on every exit path, including the ones that
+# skip the trap. Both files are a few KB.
+PLIST_ORIG="$(base64 < "$PLIST")"
+CASK_ORIG="$(base64 < "$CASK")"
+# Restore anything this run edited but did not manage to COMMIT — on a dry run
+# that is both files by definition, and on a real run it is whatever the failure
+# got to before it died. Committed work is left alone: git owns it from then on.
+PLIST_COMMITTED=0; CASK_COMMITTED=0
+# Write beside the target, then rename over it. `> "$target"` truncates FIRST, so
+# a signal landing between the truncate and the write leaves an empty file — this
+# restore ran during a SIGPIPE and zeroed Info.plist, which is the very data loss
+# the script is here to stop. rename(2) is atomic: either the old file is intact
+# or the new one is complete, never a half of either. A kill inside that window
+# leaves a <target>.release-restore holding the original bytes; that is left
+# visible on purpose, since an untracked file next to a crashed release is a
+# useful signal and a recovery copy, not litter to hide in .gitignore.
+restore_one() {
+  local encoded="$1" target="$2" tmp="$2.release-restore"
+  printf '%s' "$encoded" | base64 -d > "$tmp" && mv -f "$tmp" "$target"
+}
+restore_targets() {
+  if [ "$DRY" = 1 ] || [ "$PLIST_COMMITTED" = 0 ]; then restore_one "$PLIST_ORIG" "$PLIST"; fi
+  if [ "$DRY" = 1 ] || [ "$CASK_COMMITTED" = 0 ]; then restore_one "$CASK_ORIG" "$CASK"; fi
+}
+# Separate handlers on purpose. A trapped INT/TERM does NOT end a bash script:
+# the handler runs and execution RESUMES, so one restore-only trap for all three
+# would restore the files and then carry on bumping, committing, pushing and
+# publishing a release the operator just cancelled. Verified: a probe with a
+# restore-only handler printed its post-signal lines. `exit` re-enters the EXIT
+# trap, which is harmless — restoring the same bytes twice is idempotent.
+trap restore_targets EXIT
+trap 'restore_targets; exit 130' INT
+trap 'restore_targets; exit 143' TERM
+
 # ---- bump version ----
 say "bumping version -> $VERSION"
 BUILDNO="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$PLIST")"
@@ -65,23 +124,22 @@ say "cask updated: $(grep -E 'version|sha256' "$CASK" | tr -s ' ' | tr '\n' ' ')
 
 if [ "$DRY" = 1 ]; then
   say "DRY RUN — not committing or publishing. Reverting version bump + cask."
-  git -C "$ROOT" checkout -- "$PLIST"
-  git -C "$TAP_DIR" checkout -- "$CASK"
   echo "would publish $TAG with $DMG and bump the cask. Looks good? re-run without --dry-run."
-  exit 0
+  exit 0   # restore_targets runs on EXIT
 fi
 
 # ---- publish ----
 say "committing version bump"
-git -C "$ROOT" add "$PLIST"
-git -C "$ROOT" commit -qm "Release $TAG"
+git -C "$ROOT" commit --only "$PLIST" -qm "Release $TAG"
+PLIST_COMMITTED=1
 git -C "$ROOT" push -q origin HEAD
 
 say "creating GitHub release $TAG"
 gh release create "$TAG" "$DMG" --title "Yap $VERSION" "${NOTES_ARGS[@]}"
 
 say "bumping Homebrew cask"
-git -C "$TAP_DIR" commit -aqm "Yap $VERSION"
+git -C "$TAP_DIR" commit --only "$CASK" -qm "Yap $VERSION"
+CASK_COMMITTED=1
 git -C "$TAP_DIR" push -q origin HEAD
 
 say "done — $TAG published, cask points at it."
