@@ -37,10 +37,29 @@ echo "[notarize] packaging DMG"
 # signature applied above and guaranteeing a notarization rejection.
 bash "$ROOT/scripts/make_dmg.sh" "$VERSION" --no-build >/dev/null
 
-# The DMG carries the bundle Apple will judge, so prove the signature survived
-# staging before spending a submission round on it.
-codesign --verify --deep --strict "$APP" \
-  || { echo "[notarize] signature did not survive packaging — aborting" >&2; exit 1; }
+# Verify the bundle INSIDE the DMG, not $APP. Apple judges the copy that was
+# staged, xattr-stripped and compressed, and that copy is the whole reason this
+# step exists: make_dmg.sh used to rebuild over the signed bundle, and the only
+# symptom was an opaque rejection minutes later. Check the artifact, not a proxy.
+MNT="$(mktemp -d)"
+hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null
+# Detach on any exit, or a failed check leaves the volume mounted.
+trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true; rmdir "$MNT" 2>/dev/null || true' EXIT
+codesign --verify --deep --strict "$MNT/Yap.app" \
+  || { echo "[notarize] the DMG's bundle is not validly signed — aborting" >&2; exit 1; }
+# --deep --strict passes on an ad-hoc signature too, so also require that the
+# identity actually made it in. That is the failure #66 was: a correctly signed
+# bundle carrying the WRONG signature.
+codesign -dvv "$MNT/Yap.app" 2>&1 | grep -q "^Authority=Developer ID Application" \
+  || { echo "[notarize] the DMG's bundle is not Developer ID signed — make_dmg.sh rebuilt it" >&2
+       codesign -dvv "$MNT/Yap.app" 2>&1 | grep -E "^Authority=|^Signature=" >&2
+       exit 1; }
+# Detach BEFORE submitting: stapler writes the ticket into this DMG, and doing
+# that under a live read-only mount of the same file is asking for trouble. The
+# trap stays armed as a safety net for the failure paths above.
+hdiutil detach "$MNT" >/dev/null; rmdir "$MNT" 2>/dev/null || true
+trap - EXIT
+echo "[notarize] DMG contents verified: Developer ID signature intact"
 
 echo "[notarize] submitting to Apple (this can take a few minutes)"
 xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
