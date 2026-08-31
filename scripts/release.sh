@@ -55,12 +55,20 @@ fi
 # Snapshot both targets before editing them. --dry-run used to undo itself with
 # `git checkout -- <file>`, which restores HEAD rather than what was there, so it
 # silently destroyed any uncommitted edit the operator already had. Restore the
-# bytes instead, from a trap so a mid-run failure can't leave the files bumped.
-PLIST_ORIG="$(mktemp)"; CASK_ORIG="$(mktemp)"
-cp "$PLIST" "$PLIST_ORIG"; cp "$CASK" "$CASK_ORIG"
+# bytes instead, from a trap so a mid-run failure or a Ctrl-C can't leave the
+# files bumped either.
+#
+# Held base64-encoded in variables, not in temp files: command substitution eats
+# trailing newlines (so a plain "$(cat …)" is not byte-exact), and a temp file is
+# a thing that has to be cleaned up on every exit path, including the ones that
+# skip the trap. Both files are a few KB.
+PLIST_ORIG="$(base64 < "$PLIST")"
+CASK_ORIG="$(base64 < "$CASK")"
 restore_targets() {
-  if [ "$DRY" = 1 ]; then cp "$PLIST_ORIG" "$PLIST"; cp "$CASK_ORIG" "$CASK"; fi
-  rm -f "$PLIST_ORIG" "$CASK_ORIG"
+  if [ "$DRY" = 1 ]; then
+    printf '%s' "$PLIST_ORIG" | base64 -d > "$PLIST"
+    printf '%s' "$CASK_ORIG"  | base64 -d > "$CASK"
+  fi
 }
 trap restore_targets EXIT INT TERM
 
