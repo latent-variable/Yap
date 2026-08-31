@@ -14,6 +14,30 @@ enum Selftest {
             if ok { print("  ✓ \(name)") } else { failures += 1; print("    got: \(got.replacingOccurrences(of: "\n", with: "⏎"))") }
         }
 
+        print("Settings tab bar fits")
+        // Regression: the Settings scene sizes its window to CONTENT, so when the
+        // bar needed more width than the widest tab body, macOS collapsed the tail
+        // into a `>>` chevron whose items do not switch tabs. Diagnostics was
+        // visible and unreachable, with no way to widen the window.
+        let needed = SettingsView.requiredTabBarWidth(SettingsView.guardedTabTitles)
+        let cap = SettingsView.minTabBarWidth
+        if needed <= cap {
+            print(String(format: "  ✓ %d tabs need %.0fpt, window floor is %.0fpt",
+                         SettingsView.guardedTabTitles.count, needed, cap))
+        } else {
+            failures += 1
+            print(String(format: "  ✗ tab bar needs %.0fpt but the window floor is only %.0fpt — raise SettingsView.minTabBarWidth or shorten a label",
+                         needed, cap))
+        }
+        // Control: the guard must actually fire. A label long enough to overflow
+        // has to be caught, or the check above passes for any input.
+        let overflowing = SettingsView.guardedTabTitles + [String(repeating: "X", count: 60)]
+        if SettingsView.requiredTabBarWidth(overflowing) > cap {
+            print("  ✓ control: an over-long label is detected")
+        } else {
+            failures += 1; print("  ✗ control: the width guard does not fire on overflow")
+        }
+
         print("Preprocess — Markdown profile")
         let md = "## Title\n\nSee **bold** and [link](https://x.com) plus `code`.\n- one\n- two"
         let mdOut = Preprocess.clean(md, options: Preprocess.options(for: .markdown), custom: [])

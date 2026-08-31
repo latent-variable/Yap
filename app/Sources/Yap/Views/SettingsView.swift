@@ -2,6 +2,35 @@ import SwiftUI
 import Carbon.HIToolbox
 
 struct SettingsView: View {
+    /// Window floor applied by the `Settings` scene in YapApp.
+    ///
+    /// Below this the tab bar does not fit and macOS collapses the tail into a
+    /// `>>` chevron whose items DO NOT switch tabs, so the last tabs become
+    /// visible-but-unreachable. Nine labels need ~744pt at the system small font;
+    /// 760 leaves headroom for a rename or a larger text size.
+    ///
+    /// ADDING A TAB? Add it to `guardedTabTitles` and raise this. `--selftest`
+    /// fails if the labels listed there stop fitting.
+    static let minTabBarWidth: CGFloat = 760
+
+    /// The tab titles the width guard measures. It is NOT what the bar renders —
+    /// the labels below are literals, paired with their own view and icon — so a
+    /// tab added to `TabView` without being added here is invisible to the guard.
+    /// `--selftest` checks these labels still fit in `minTabBarWidth`, which
+    /// catches the likelier mistake: a rename that pushes the bar over.
+    static let guardedTabTitles = ["General", "Voice & Audio", "Engine", "Capture",
+                                   "Cleanup", "Shortcut", "History", "Models", "Diagnostics"]
+
+    /// Width the macOS tab bar needs for `titles` at the current system font.
+    /// Icon-over-title items size to their title plus fixed horizontal padding.
+    static func requiredTabBarWidth(_ titles: [String]) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let items = titles.reduce(0.0) { total, t in
+            total + max((t as NSString).size(withAttributes: [.font: font]).width + 32, 60)
+        }
+        return items + 40   // window chrome + the TabView's own padding
+    }
+
     var body: some View {
         TabView {
             GeneralTab().tabItem { Label("General", systemImage: "gearshape") }

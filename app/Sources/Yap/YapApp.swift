@@ -56,7 +56,13 @@ struct YapApp: App {
             SettingsView()
                 .environmentObject(state)
                 .environmentObject(prefs)
-                .frame(width: 560, height: 460)
+                // MINIMUM, not an exact size. This was `.frame(width: 560, height: 460)`,
+                // which pinned the window: 560pt is narrower than the nine-tab bar
+                // needs (~744pt at the system small font), so macOS collapsed the
+                // tail into a `>>` chevron — and items in that chevron menu do not
+                // switch tabs. Diagnostics was visible and unreachable, and the
+                // exact frame also meant the window could not be widened to fix it.
+                .frame(minWidth: SettingsView.minTabBarWidth, minHeight: 460)
         }
     }
 }
