@@ -19,11 +19,11 @@ enum Selftest {
         // bar needed more width than the widest tab body, macOS collapsed the tail
         // into a `>>` chevron whose items do not switch tabs. Diagnostics was
         // visible and unreachable, with no way to widen the window.
-        let needed = SettingsView.requiredTabBarWidth(SettingsView.guardedTabTitles)
+        let needed = SettingsView.requiredTabBarWidth(SettingsTab.allCases.map(\.title))
         let cap = SettingsView.minTabBarWidth
         if needed <= cap {
             print(String(format: "  ✓ %d tabs need %.0fpt, window floor is %.0fpt",
-                         SettingsView.guardedTabTitles.count, needed, cap))
+                         SettingsTab.allCases.count, needed, cap))
         } else {
             failures += 1
             print(String(format: "  ✗ tab bar needs %.0fpt but the window floor is only %.0fpt — raise SettingsView.minTabBarWidth or shorten a label",
@@ -31,7 +31,7 @@ enum Selftest {
         }
         // Control: the guard must actually fire. A label long enough to overflow
         // has to be caught, or the check above passes for any input.
-        let overflowing = SettingsView.guardedTabTitles + [String(repeating: "X", count: 60)]
+        let overflowing = SettingsTab.allCases.map(\.title) + [String(repeating: "X", count: 60)]
         if SettingsView.requiredTabBarWidth(overflowing) > cap {
             print("  ✓ control: an over-long label is detected")
         } else {
