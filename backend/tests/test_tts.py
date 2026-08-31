@@ -929,3 +929,71 @@ class TestPocketPadding:
             lead, trail = self._edges(eng.synth(line, "eve", 1.0))
             assert lead <= 0.25, f"{line!r} still leads with {lead:.2f}s"
             assert trail <= 0.30, f"{line!r} still trails {trail:.2f}s"
+
+
+class TestClonedVoiceRefusal:
+    """A cloned voice must refuse, loudly and usefully, when cloning is off.
+
+    Two things can go wrong here and neither announces itself. If the guard
+    stopped firing, the clone would silently fall through to some catalog voice
+    and the user would just hear the wrong person. And the refusal is the only
+    place the backend tells anyone how to fix it — it used to name a Hugging Face
+    token and a terms click, a flow that no longer exists anywhere in Yap.
+
+    Calls `_segment_synth` directly: the branch is pure resolution, so this stays
+    out of the `slow` set (no torch, no model).
+    """
+
+    @staticmethod
+    def _req(voice):
+        from server import SynthReq
+        return SynthReq(text="hi", voice=voice, engine="pocket")
+
+    @pytest.fixture
+    def clip(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PARLEY_HD_VOICES", str(tmp_path))
+        (tmp_path / "Philip.wav").write_bytes(b"RIFF")
+        import server
+        monkeypatch.setattr(server.pk_engine, "load", lambda: True, raising=False)
+        return tmp_path / "Philip.wav"
+
+    def test_cloned_voice_refuses_and_names_the_real_remedy(self, clip, monkeypatch):
+        import server
+        from fastapi import HTTPException
+        monkeypatch.setattr(server.pk_engine, "has_cloning", False, raising=False)
+
+        with pytest.raises(HTTPException) as e:
+            server._segment_synth(self._req("Philip"))
+
+        assert e.value.status_code == 403
+        detail = e.value.detail
+        # The remedy the app actually offers.
+        assert "Settings" in detail and "Voice cloning" in detail
+        # The remedy it does NOT: that path is gone, Keychain.swift with it.
+        low = detail.lower()
+        assert "hugging face" not in low and "token" not in low and "terms" not in low
+
+    def test_control_same_voice_resolves_when_cloning_is_loaded(self, clip, monkeypatch):
+        # Without this the 403 test would pass for a voice that never resolves at
+        # all, proving nothing about the cloning gate.
+        import server
+        monkeypatch.setattr(server.pk_engine, "has_cloning", True, raising=False)
+        captured = {}
+        monkeypatch.setattr(server.pk_engine, "synth",
+                            lambda text, target, speed: captured.setdefault("target", target),
+                            raising=False)
+        server._segment_synth(self._req("Philip"))("hi")
+        assert captured["target"] == str(clip)
+
+    def test_control_catalog_voice_still_speaks_with_cloning_off(self, clip, monkeypatch):
+        # The gate must refuse clones only. A catalog name is unaffected.
+        import server
+        from pocket_engine import CATALOG_NAMES
+        monkeypatch.setattr(server.pk_engine, "has_cloning", False, raising=False)
+        captured = {}
+        monkeypatch.setattr(server.pk_engine, "synth",
+                            lambda text, target, speed: captured.setdefault("target", target),
+                            raising=False)
+        name = "eve" if "eve" in CATALOG_NAMES else sorted(CATALOG_NAMES)[0]
+        server._segment_synth(self._req(name))("hi")
+        assert captured["target"] == name
