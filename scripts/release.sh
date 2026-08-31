@@ -89,7 +89,15 @@ restore_targets() {
   if [ "$DRY" = 1 ] || [ "$PLIST_COMMITTED" = 0 ]; then restore_one "$PLIST_ORIG" "$PLIST"; fi
   if [ "$DRY" = 1 ] || [ "$CASK_COMMITTED" = 0 ]; then restore_one "$CASK_ORIG" "$CASK"; fi
 }
-trap restore_targets EXIT INT TERM
+# Separate handlers on purpose. A trapped INT/TERM does NOT end a bash script:
+# the handler runs and execution RESUMES, so one restore-only trap for all three
+# would restore the files and then carry on bumping, committing, pushing and
+# publishing a release the operator just cancelled. Verified: a probe with a
+# restore-only handler printed its post-signal lines. `exit` re-enters the EXIT
+# trap, which is harmless — restoring the same bytes twice is idempotent.
+trap restore_targets EXIT
+trap 'restore_targets; exit 130' INT
+trap 'restore_targets; exit 143' TERM
 
 # ---- bump version ----
 say "bumping version -> $VERSION"
