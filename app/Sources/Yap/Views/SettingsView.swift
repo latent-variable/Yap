@@ -1,18 +1,77 @@
 import SwiftUI
 import Carbon.HIToolbox
 
+/// One case per Settings tab. Both the `.tabItem` labels and the `--selftest`
+/// width guard read from here, so a rename cannot drift between what the bar
+/// renders and what the test measures — and a new tab needs a case to get a
+/// label, which puts it in `allCases` and under the guard automatically.
+enum SettingsTab: CaseIterable {
+    case general, voice, engine, capture, cleanup, shortcut, history, models, diagnostics
+
+    var title: String {
+        switch self {
+        case .general:     return "General"
+        case .voice:       return "Voice & Audio"
+        case .engine:      return "Engine"
+        case .capture:     return "Capture"
+        case .cleanup:     return "Cleanup"
+        case .shortcut:    return "Shortcut"
+        case .history:     return "History"
+        case .models:      return "Models"
+        case .diagnostics: return "Diagnostics"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general:     return "gearshape"
+        case .voice:       return "waveform"
+        case .engine:      return "cpu"
+        case .capture:     return "text.viewfinder"
+        case .cleanup:     return "wand.and.stars"
+        case .shortcut:    return "command"
+        case .history:     return "clock.arrow.circlepath"
+        case .models:      return "cube.box"
+        case .diagnostics: return "stethoscope"
+        }
+    }
+
+    var label: some View { Label(title, systemImage: icon) }
+}
+
 struct SettingsView: View {
+    /// Window floor applied by the `Settings` scene in YapApp.
+    ///
+    /// Below this the tab bar does not fit and macOS collapses the tail into a
+    /// `>>` chevron whose items DO NOT switch tabs, so the last tabs become
+    /// visible-but-unreachable. Nine labels need ~744pt at the system small font;
+    /// 760 leaves headroom for a rename or a larger text size.
+    ///
+    /// ADDING A TAB? Add a `SettingsTab` case and raise this if needed;
+    /// `--selftest` fails when the labels stop fitting.
+    static let minTabBarWidth: CGFloat = 760
+
+    /// Width the macOS tab bar needs for `titles` at the current system font.
+    /// Icon-over-title items size to their title plus fixed horizontal padding.
+    static func requiredTabBarWidth(_ titles: [String]) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let items = titles.reduce(0.0) { total, t in
+            total + max((t as NSString).size(withAttributes: [.font: font]).width + 32, 60)
+        }
+        return items + 40   // window chrome + the TabView's own padding
+    }
+
     var body: some View {
         TabView {
-            GeneralTab().tabItem { Label("General", systemImage: "gearshape") }
-            VoiceTab().tabItem { Label("Voice & Audio", systemImage: "waveform") }
-            EngineTab().tabItem { Label("Engine", systemImage: "cpu") }
-            CaptureTab().tabItem { Label("Capture", systemImage: "text.viewfinder") }
-            CleanupTab().tabItem { Label("Cleanup", systemImage: "wand.and.stars") }
-            ShortcutTab().tabItem { Label("Shortcut", systemImage: "command") }
-            HistoryTab().tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-            ModelsTab().tabItem { Label("Models", systemImage: "cube.box") }
-            DiagnosticsTab().tabItem { Label("Diagnostics", systemImage: "stethoscope") }
+            GeneralTab().tabItem { SettingsTab.general.label }
+            VoiceTab().tabItem { SettingsTab.voice.label }
+            EngineTab().tabItem { SettingsTab.engine.label }
+            CaptureTab().tabItem { SettingsTab.capture.label }
+            CleanupTab().tabItem { SettingsTab.cleanup.label }
+            ShortcutTab().tabItem { SettingsTab.shortcut.label }
+            HistoryTab().tabItem { SettingsTab.history.label }
+            ModelsTab().tabItem { SettingsTab.models.label }
+            DiagnosticsTab().tabItem { SettingsTab.diagnostics.label }
         }
         .padding(16)
         // Keep "on" toggles visibly accent-colored even when the window isn't key
