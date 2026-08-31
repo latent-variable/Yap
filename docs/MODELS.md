@@ -15,8 +15,8 @@ Nothing beats Kokoro on that set. So rather than replace it, Yap ships a second,
 
 | | Kokoro (default) | Pocket TTS (opt-in) |
 |---|---|---|
-| Runtime | ONNX, CPU, bundled | PyTorch, **CPU**, ~10× realtime |
-| Size | ~310 MB, ships with the app | ~1 GB, on-demand download |
+| Runtime | ONNX, CPU | PyTorch, **CPU**, ~10× realtime |
+| Size | ~340 MB, first-launch download | ~1 GB, on-demand download |
 | Voices | 54 across 8 languages | 26 built-in, no account |
 | Cloning | no | yes, from a ~20s reference |
 | License | Apache-2.0 | CC-BY-4.0 (Kyutai), catalog + cloning |
@@ -50,9 +50,14 @@ anyway.
   reason: the weights are CC-BY-4.0 and Yap mirrors them, so no account is
   involved.)
 
-Adding one is backend-local: an `Engine` branch in `server.py` implementing
+Adding one starts in the backend: an `Engine` branch in `server.py` implementing
 `synth(text, voice, speed, lang) -> float32 ndarray @ 24 kHz`, a downloader entry
-for its weights, and a selector entry. The app only speaks the HTTP contract
-(int16 PCM stream), so it needs no change beyond the picker.
+for its weights, and a selector entry. The audio path needs nothing, because every
+engine speaks the same HTTP contract (int16 PCM stream). The Swift side is where
+the rest of the work is: `Prefs.engine` persists `"kokoro" | "pocket"` against a
+separate voice slot per engine (`voice` / `hdVoice`), and `AppState` branches on
+`"pocket"` by name throughout (`activeVoice`, `selectVoice`, `combinedVoices`, and
+the install / warm / offload paths). A third engine means generalizing that
+routing first.
 
-_Last reviewed: 2026-08-22._
+_Last reviewed: 2026-08-31._

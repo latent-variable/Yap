@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Render the README/hero demo voiceover in Yap's default HD voice (Pocket "Eve").
+"""Render the README/hero demo voiceover in the Pocket voice the shipped take uses.
 
 Single source of truth for the narration is docs/demo-script.md (the "## Script"
 section), so the audio can't drift from the written script. Chunks + natural
-pauses go through the same server helpers the app uses, then Pocket/Eve synth,
+pauses go through the same server helpers the app uses, then Pocket synth,
 concatenated to one WAV at docs/demo-voiceover.wav.
+
+The default voice is the cloned "Philip" reference the committed audio was rendered
+in. That clip is machine-local, so any other checkout falls back to the catalog
+voice "eve" (see VOICE / FALLBACK_VOICE below).
 
 Every chunk is trimmed before the pause is added — see trim_silence(). Pocket
 returns each utterance padded with its own leading/trailing silence, and stacking

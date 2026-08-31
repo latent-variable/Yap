@@ -72,7 +72,7 @@ Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 ![Yap's Settings window and menu-bar dropdown — pick a voice, speed, and read the selection](docs/settings.png)
 
 - **Ears — dictate into anything.** Hold the shortcut, talk, release. Streaming Parakeet STT on the Apple Neural Engine: a live, self-correcting preview as you speak, then an accurate final pass pasted at your cursor. English or 25-language multilingual. Optional chime + filler-word cleanup ("um"/"uh", never real words).
-- **Voice — read from anywhere.** Chrome, PDFs, Terminal, VS Code, Slack, Gmail. **Auto** capture grabs your selection directly where it can (Accessibility) and falls back to your clipboard for apps that don't expose their selection (iTerm, other terminals), or right-click → **Services ▸ Read with Yap**.
+- **Voice — read from anywhere.** Chrome, PDFs, Terminal, VS Code, Slack, Gmail. Reads the text you have selected (Accessibility), or right-click → **Services ▸ Read with Yap**. Opt into **Auto** and it falls back to your clipboard for apps that don't expose their selection (iTerm, other terminals).
 - **Two engines, one dropdown.** **Kokoro** — 54 voices, 8 languages, instant, CPU. **Pocket TTS** (opt-in) — 26 markedly more natural built-in voices, ~10x realtime on CPU, plus **voice cloning** from a ~20s clip (one extra 209 MB download, no account).
 - **Streaming playback** — audio starts while the rest synthesizes; live speed/pitch/volume, natural pauses. **Smart cleanup** strips Markdown/code/citations (General/Markdown/Code/Blog/LLM profiles + custom regex).
 - **Flexible shortcuts** — a normal chord (⌘⇧R) or a **modifier-only chord** like ⌥⌘ (the "Alt+Win" press), held and released — handy for push-to-dictate.

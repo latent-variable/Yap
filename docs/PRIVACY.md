@@ -73,8 +73,10 @@ grant it. The read-aloud half works without it.
 - No screen reading or screenshots.
 - No background scraping. Nothing is captured unless you trigger it.
 - No clipboard hijacking. The fallback restores whatever was on your clipboard.
-- No data leaves the machine. There is no server, no API key, no upload path in
-  the code.
+- Nothing about you leaves the machine. There is no server, no API key, no upload
+  path in the code. The only outbound requests are the downloads you opt into
+  (models, Pocket packages, cloning weights) and the optional update check below,
+  and neither one sends anything about you.
 
 ## The update check (the one optional network call)
 
@@ -94,10 +96,12 @@ and something you initiate. The whole thing is one file:
 
 ## The Auto read source and your clipboard
 
-The default **Auto** read source grabs your selection directly where it can.
-Some apps (iTerm and other terminals) don't expose their selection to the
-Accessibility API and also block the synthetic ⌘C, so in those apps Yap reads
-your clipboard instead. Two things worth knowing:
+Yap ships in **Selected text** mode, which reads a live selection and nothing
+else. **Auto** is opt-in (Settings ▸ General ▸ Read source): it grabs your
+selection directly where it can, and some apps (iTerm and other terminals) don't
+expose their selection to the Accessibility API and also block the synthetic ⌘C,
+so in those apps Yap reads your clipboard instead. If you turn Auto on, two things
+are worth knowing:
 
 - **Yap never overwrites your clipboard doing this.** The synthetic-⌘C path
   saves and restores it; the plain clipboard read only reads.
@@ -106,8 +110,8 @@ your clipboard instead. Two things worth knowing:
   That's the terminal, not Yap. So after reading in iTerm, your previous
   clipboard contents are gone, replaced by what you selected.
 
-It's a small quirk you get used to. For strict selection-only behavior with no
-clipboard involvement, set **Read source → Selected text**.
+It's a small quirk you get used to. **Read source → Selected text**, the shipped
+default, has no clipboard involvement at all.
 
 ## The no-permission option
 
