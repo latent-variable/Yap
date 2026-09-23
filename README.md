@@ -71,7 +71,8 @@ Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 
 ![Yap's Settings window and menu-bar dropdown — pick a voice, speed, and read the selection](docs/settings.png)
 
-- **Ears — dictate into anything.** Hold the shortcut, talk, release. Streaming Parakeet STT on the Apple Neural Engine: a live, self-correcting preview as you speak, then an accurate final pass pasted at your cursor. English or 25-language multilingual. Optional chime + filler-word cleanup ("um"/"uh", never real words).
+- **Ears:** dictate into apps that accept a paste. Press the shortcut to start, speak, then press again to insert. A live preview updates in the floating HUD; the final, more accurate transcript is pasted at your cursor. English mode or the 25-language multilingual mode. Optional chime and cleanup for filler sounds such as "um" and "uh".
+- **Free alternative to the dictation features of [Wispr Flow Pro](https://wisprflow.ai/pricing), [Superwhisper Pro](https://ai.superwhisper.com/), and [MacWhisper Pro](https://goodsnooze.gumroad.com/l/macwhisper).** Yap covers the core shortcut-to-cursor workflow with on-device Parakeet transcription.
 - **Voice — read from anywhere.** Chrome, PDFs, Terminal, VS Code, Slack, Gmail. Reads the text you have selected (Accessibility), or right-click → **Services ▸ Read with Yap**. Opt into **Auto** and it falls back to your clipboard for apps that don't expose their selection (iTerm, other terminals).
 - **Two engines, one dropdown.** **Kokoro** — 54 voices, 8 languages, instant, CPU. **Pocket TTS** (opt-in) — 26 markedly more natural built-in voices, ~10x realtime on CPU, plus **voice cloning** from a ~20s clip (one extra 209 MB download, no account).
 - **Streaming playback** — audio starts while the rest synthesizes; live speed/pitch/volume, natural pauses. **Smart cleanup** strips Markdown/code/citations (General/Markdown/Code/Blog/LLM profiles + custom regex).
