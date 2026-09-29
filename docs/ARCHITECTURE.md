@@ -1,8 +1,10 @@
 # Architecture
 
-Two processes. A native SwiftUI menu-bar app drives a local Python sidecar over
-loopback HTTP. The sidecar hosts two interchangeable engines (Kokoro default,
-Pocket TTS opt-in) behind one int16-PCM contract.
+Voice runs across two local processes: a native SwiftUI menu-bar app talks to a
+Python TTS sidecar over loopback HTTP. Ears stay in the app: AVAudioEngine
+captures the microphone and FluidAudio runs local streaming and batch ASR. The
+sidecar hosts two interchangeable engines (Kokoro default, Pocket TTS opt-in)
+behind one int16-PCM contract.
 
 ## Modules
 
@@ -22,11 +24,23 @@ Pocket TTS opt-in) behind one int16-PCM contract.
 | Streaming audio engine (pre-buffer, live speed) | `AudioPlayer.swift` |
 | Reference-clip import (→ mono 24k WAV) | `AudioImport.swift` |
 | Unified voice picker (both engines) | `Views/VoiceSelector.swift` |
+| Cloned Pocket voice ID rules | `VoiceID.swift` |
+| Cloning reference-clip recorder | `VoiceRecorder.swift` |
 | Model download | `ModelDownloader.swift` (owned by `AppState` so a download survives closing Settings) |
 | Model management (size on disk, delete, re-download) | `AppState.swift` + `Views/SettingsView.swift` (Models tab) |
 | Launch at login | `LoginItem.swift` |
-| Views | `Views/MenuContent.swift`, `Views/SettingsView.swift` |
+| Views | `Views/MenuContent.swift`, `Views/SettingsView.swift`, `Views/VoiceSelector.swift`, `Views/StableToggleStyle.swift` |
 | Logic self-test / pipe probe | `Selftest.swift`, `CLITest.swift` |
+| **Dictation (ears)** | |
+| Microphone capture, streaming ASR, accurate batch transcription + rolling preview | `Dictation.swift` |
+| Dictation hotkey, floating HUD, transcript stitching + orchestration | `DictationController.swift` |
+| Paste transcript at cursor | `TextInsert.swift` |
+| Optional speech-filler cleanup | `Fillers.swift` |
+| **App support** | |
+| Shared-secret authentication with the backend | `BackendAuth.swift` |
+| Release version check | `UpdateChecker.swift` |
+| One-time Parley → Yap state migration | `AppMigration.swift` |
+| File and stderr logging | `Logger.swift` |
 | Inference server (both engines) | `backend/server.py` |
 | Pocket TTS engine (catalog + cloning, lazy) | `backend/pocket_engine.py` |
 
@@ -45,6 +59,22 @@ hotkey ⌘⇧R
 A generation counter in `AppState` cancels a stale stream when a new read starts (configurable via "stop on new trigger").
 
 The **Services menu** ("Read with Yap") is a second entry point: macOS hands the selected text straight to `ServiceProvider`, which calls `AppState.readAloud(_:)` — skipping capture, joining the pipeline at preprocess.
+
+## Ears pipeline
+
+```
+dictation hotkey
+  → ensure the selected streaming model is ready (warmed at launch when enabled; downloads if needed)
+  → AVAudioEngine mic tap → BufferQueue
+  → streaming ASR supplies the live partial; the batch model refines captured audio when loaded
+  → TranscriptStitch merges the accurate preview + live tail → floating HUD
+stop hotkey
+  → finish streaming ASR; use full-capture batch transcription when available, otherwise use the live result
+  → optional Fillers.clean
+  → with Accessibility, TextInsert pastes at the cursor; otherwise the transcript stays on the clipboard for ⌘V
+```
+
+Streaming ASR provides the low-latency transcript. The batch model loads in the background and supplies the rolling accurate preview and final transcript when ready; the HUD combines the preview with any newer streaming words.
 
 ## Audio
 
