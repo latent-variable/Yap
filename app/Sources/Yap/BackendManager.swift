@@ -98,7 +98,14 @@ final class BackendManager: NSObject, ObservableObject {
     /// A ready flag can outlive its child by a small scheduling window after a
     /// crash. Read the Process state synchronously so a read still enters start().
     var needsStart: Bool {
-        !ready || (process.map { !$0.isRunning } ?? false)
+        !ready || (process.map { !$0.isRunning } ?? false) || adoptedExited
+    }
+
+    /// An adopted orphan has no Process handle, only its PID, so its death is
+    /// read from the kernel: ESRCH means gone (EPERM would mean alive).
+    private var adoptedExited: Bool {
+        guard let pid = adoptedPID, pid > 1 else { return false }
+        return kill(pid, 0) != 0 && errno == ESRCH
     }
 
     /// Apply a /health response to published state. `ready` means the backend can
@@ -267,8 +274,13 @@ final class BackendManager: NSObject, ObservableObject {
     /// Drop an exited child before health checks or launch guards can mistake its
     /// retained Process handle for a live backend.
     private func discardExitedProcess() {
-        guard let process, !process.isRunning else { return }
-        self.process = nil
+        if let process, !process.isRunning {
+            self.process = nil
+        } else if adoptedExited {
+            adoptedPID = nil
+        } else {
+            return
+        }
         ownsProcess = false
         ready = false
         if lastError == nil { lastError = "Backend exited unexpectedly." }
