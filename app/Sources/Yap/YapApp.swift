@@ -33,6 +33,10 @@ enum YapMain {
             CLITest.runProviderRestart(port: port ?? 8767,
                                        legacy: CommandLine.arguments.contains("--legacy"))
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--backendrecoverytest") {
+            let port = CommandLine.arguments.count > i + 1 ? Int(CommandLine.arguments[i + 1]) : nil
+            CLITest.runBackendRecovery(port: port ?? 18768)
+        }
         YapApp.main()
     }
 }

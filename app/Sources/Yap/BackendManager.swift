@@ -20,9 +20,11 @@ final class BackendManager: NSObject, ObservableObject {
     /// spare port without evicting the one the running app owns. The app itself
     /// always uses the default.
     let port: Int
+    private let repoRootOverride: URL?
 
-    init(port: Int = 8766) {
+    init(port: Int = 8766, repoRootOverride: URL? = nil) {
         self.port = port
+        self.repoRootOverride = repoRootOverride
         var c = BackendClient()
         c.base = URL(string: "http://127.0.0.1:\(port)")!
         self.client = c
@@ -54,6 +56,7 @@ final class BackendManager: NSObject, ObservableObject {
     /// Locate the repo (containing scripts/run_backend.sh). Checks the app
     /// bundle, an env override, then walks up from the executable.
     func repoRoot() -> URL? {
+        if let repoRootOverride { return repoRootOverride }
         if let env = ProcessInfo.processInfo.environment["YAP_REPO"] ?? ProcessInfo.processInfo.environment["PARLEY_REPO"] {
             return URL(fileURLWithPath: env)
         }
@@ -92,6 +95,19 @@ final class BackendManager: NSObject, ObservableObject {
     /// from `ready`: the backend can be ready (HD) with Kokoro deleted.
     @Published private(set) var kokoroFilesPresent = false
 
+    /// A ready flag can outlive its child by a small scheduling window after a
+    /// crash. Read the Process state synchronously so a read still enters start().
+    var needsStart: Bool {
+        !ready || (process.map { !$0.isRunning } ?? false) || adoptedExited
+    }
+
+    /// An adopted orphan has no Process handle, only its PID, so its death is
+    /// read from the kernel: ESRCH means gone (EPERM would mean alive).
+    private var adoptedExited: Bool {
+        guard let pid = adoptedPID, pid > 1 else { return false }
+        return kill(pid, 0) != 0 && errno == ESRCH
+    }
+
     /// Apply a /health response to published state. `ready` means the backend can
     /// serve *some* engine — Kokoro loaded OR HD installed — so deleting one model
     /// doesn't make the backend look dead.
@@ -103,6 +119,7 @@ final class BackendManager: NSObject, ObservableObject {
 
     /// Ensure the backend is up: reuse a running one, else launch it.
     func start() async {
+        discardExitedProcess()
         if let h = await client.health() {
             // A server we didn't spawn answers on our port. Don't trust it with
             // captured text until it proves it's a genuine Yap backend (knows the
@@ -175,6 +192,7 @@ final class BackendManager: NSObject, ObservableObject {
     }
 
     private func launchProcess() async {
+        discardExitedProcess()
         guard process == nil else { return }
         if bundledPython != nil { await stripQuarantine() }
         let p = Process()
@@ -237,11 +255,35 @@ final class BackendManager: NSObject, ObservableObject {
             p.standardOutput = fh
             p.standardError = fh
         }
+        p.terminationHandler = { [weak self, weak p] _ in
+            Task { @MainActor [weak self, weak p] in
+                guard let self, let p, self.process === p else { return }
+                self.process = nil
+                self.ownsProcess = false
+                self.ready = false
+                if self.lastError == nil { self.lastError = "Backend exited unexpectedly." }
+            }
+        }
         do { try p.run(); process = p; ownsProcess = true }
         catch { lastError = "Failed to launch backend: \(error.localizedDescription)" }
         // The child dup'd the log fd at run(); close the parent's copy so we
         // don't leak a descriptor on every launch.
         try? fh?.close()
+    }
+
+    /// Drop an exited child before health checks or launch guards can mistake its
+    /// retained Process handle for a live backend.
+    private func discardExitedProcess() {
+        if let process, !process.isRunning {
+            self.process = nil
+        } else if adoptedExited {
+            adoptedPID = nil
+        } else {
+            return
+        }
+        ownsProcess = false
+        ready = false
+        if lastError == nil { lastError = "Backend exited unexpectedly." }
     }
 
     private func waitForHealth() async {

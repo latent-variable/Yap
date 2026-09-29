@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Headless exercise of the real Swift pipeline (clean → stream) without UI or
 /// audio. Run: `Yap --pipetest <file> [profile]`. Reports per-profile
@@ -319,5 +320,114 @@ extension CLITest {
             }
         }
         dispatchMain()
+    }
+
+    /// `Yap --backendrecoverytest [port]` — kill an owned backend after it is
+    /// ready, then drive the same start decision the next read uses. A fake local
+    /// sidecar keeps the probe independent of installed TTS models.
+    static func runBackendRecovery(port: Int) -> Never {
+        Task { @MainActor in
+            let fm = FileManager.default
+            let fixture = fm.temporaryDirectory.appending(path: "yap-backend-recovery-\(UUID().uuidString)")
+            let scripts = fixture.appending(path: "scripts")
+            let server = fixture.appending(path: "fake_backend.py")
+            let pidFile = fixture.appending(path: "backend.pid")
+            let startsFile = fixture.appending(path: "starts")
+            let models = fixture.appending(path: "models")
+            let launcher = scripts.appending(path: "run_backend.sh")
+            do {
+                try fm.createDirectory(at: scripts, withIntermediateDirectories: true)
+                try fm.createDirectory(at: models, withIntermediateDirectories: true)
+                let python = #"""
+                import http.server, json, os, sys
+
+                port, pid_file, starts_file, models_dir = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+                try:
+                    with open(starts_file) as f:
+                        starts = int(f.read()) + 1
+                except FileNotFoundError:
+                    starts = 1
+                with open(starts_file, "w") as f:
+                    f.write(str(starts))
+                with open(pid_file, "w") as f:
+                    f.write(str(os.getpid()))
+
+                class Handler(http.server.BaseHTTPRequestHandler):
+                    def do_GET(self):
+                        if self.path != "/health":
+                            self.send_error(404)
+                            return
+                        body = json.dumps({
+                            "status": "ok", "model_loaded": True, "files_present": True,
+                            "models_dir": models_dir, "error": None, "sample_rate": 24000,
+                            "provider_mode": "cpu", "active_providers": ["CPUExecutionProvider"],
+                            "available_providers": ["CPUExecutionProvider"]
+                        }).encode()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                    def log_message(self, *_):
+                        pass
+
+                class Server(http.server.ThreadingHTTPServer):
+                    allow_reuse_address = True
+
+                Server(("127.0.0.1", port), Handler).serve_forever()
+                """#
+                let script = "#!/bin/bash\nexec python3 \(shellQuote(server.path)) \"$YAP_PORT\" \(shellQuote(pidFile.path)) \(shellQuote(startsFile.path)) \(shellQuote(models.path))\n"
+                try Data(python.utf8).write(to: server)
+                try Data(script.utf8).write(to: launcher)
+            } catch {
+                print("✗ could not prepare recovery fixture: \(error.localizedDescription)")
+                try? fm.trashItem(at: fixture, resultingItemURL: nil)
+                exit(1)
+            }
+
+            let manager = BackendManager(port: port, repoRootOverride: fixture)
+            @MainActor func finish(_ message: String, _ code: Int32) async -> Never {
+                await manager.stopAndWait()
+                do { try fm.trashItem(at: fixture, resultingItemURL: nil) }
+                catch { print("   · could not trash temporary fixture: \(error.localizedDescription)") }
+                print(message)
+                exit(code)
+            }
+
+            print("── backend recovery probe  port=\(port)")
+            await manager.start()
+            guard manager.ready, manager.ownsProcess,
+                  let firstPIDText = try? String(contentsOf: pidFile, encoding: .utf8),
+                  let firstPID = Int32(firstPIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  firstPID > 1 else {
+                await finish("   ✗ fake backend did not become ready and owned\n\n1 FAILURE(S)", 1)
+            }
+
+            if kill(firstPID, SIGKILL) != 0 {
+                await finish("   ✗ could not terminate the owned backend\n\n1 FAILURE(S)", 1)
+            }
+            for _ in 0..<100 where !manager.needsStart {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            guard manager.needsStart else {
+                await finish("   ✗ dead child still looked ready to the next read\n\n1 FAILURE(S)", 1)
+            }
+
+            await manager.start()
+            let starts = (try? String(contentsOf: startsFile, encoding: .utf8))
+                .flatMap(Int.init) ?? 0
+            let secondPID = (try? String(contentsOf: pidFile, encoding: .utf8))
+                .flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            guard manager.ready, manager.ownsProcess, starts >= 2,
+                  let secondPID, secondPID != firstPID else {
+                await finish("   ✗ next start did not launch a fresh ready backend (starts=\(starts))\n\n1 FAILURE(S)", 1)
+            }
+            await finish("   ✓ dead backend was replaced (pid \(firstPID) → \(secondPID))\n\nBACKEND RECOVERY OK", 0)
+        }
+        dispatchMain()
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
