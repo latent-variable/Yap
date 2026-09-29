@@ -10,9 +10,7 @@ case, not a pattern match.
   transport layer and the loop pulls from that in-memory buffer; the per-element
   `next()` cost is negligible, and the bytes are accumulated into a contiguous
   `[UInt8]` and flushed in ~0.2s chunks. This streams audio smoothly in
-  production. A `URLSessionDataDelegate` rewrite is tracked for the Phase 1
-  streaming work, where it can be exercised against the live-audio path — not a
-  blocking issue in the current code.
+  production.
 
 - **Blocking/parking the main thread in `CLITest` / `Selftest`.** These are
   headless CLI entry points (`--pipetest`, `--selftest`) that run to completion
