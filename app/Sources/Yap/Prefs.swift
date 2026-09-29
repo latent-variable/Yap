@@ -107,7 +107,6 @@ final class Prefs: ObservableObject {
     // start/stop) in one switch, regardless of the individual chime toggles.
     @Published var muteAllSounds: Bool { didSet { d.set(muteAllSounds, forKey: "muteAllSounds") } }
     @Published var providerMode: String { didSet { d.set(providerMode, forKey: "providerMode") } }  // auto|cpu|coreml
-    @Published var showMiniPlayer: Bool { didSet { d.set(showMiniPlayer, forKey: "showMiniPlayer") } }
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin") } }
     @Published var customRules: [CleanRule] { didSet { saveRules() } }
     @Published var hotKey: HotKeyCombo { didSet { saveHotKey() } }
@@ -172,7 +171,6 @@ final class Prefs: ObservableObject {
         dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true
         removeFillers = d.object(forKey: "removeFillers") as? Bool ?? true
         autoUpdateCheck = d.object(forKey: "autoUpdateCheck") as? Bool ?? true
-        showMiniPlayer = d.object(forKey: "showMiniPlayer") as? Bool ?? true
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false
         if let data = d.data(forKey: "customRules"),
            let r = try? JSONDecoder().decode([CleanRule].self, from: data) {
