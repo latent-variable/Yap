@@ -14,11 +14,12 @@ it touches, and why — so you don't have to take "private" on faith.
   nothing from your Keychain.
 - No telemetry, no account, nothing about you is ever sent. Yap's only network
   activity is fetching assets you opt into, plus an optional update check: the
-  one-time Kokoro model download (~340 MB); the Pocket engine's packages and
-  voices if you set that up; the voice-cloning model if you clone a voice; and a
-  once-a-day check for a newer release (default on, toggle off in Settings ▸
-  General). With the update check off and nothing downloading, idle Yap makes no
-  outbound connections — verify with Little Snitch / `nettop`.
+  one-time Kokoro model download (~340 MB); the Pocket engine's packages, plus
+  209 MB of voice-cloning weights downloaded during setup if no usable local copy
+  exists, even if you only use catalog voices; and a once-a-day check for a newer
+  release (default on, toggle off in Settings ▸ General). With the update check
+  off and nothing downloading, idle Yap makes no outbound connections — verify
+  with Little Snitch / `nettop`.
 - Open source. Every capability described here is in this repo.
 - Don't trust the prose? It's 2026. Point your coding agent (Claude Code or
   similar) at this repo and let it confirm these claims, or read the source
