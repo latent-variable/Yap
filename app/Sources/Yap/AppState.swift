@@ -543,7 +543,7 @@ final class AppState: ObservableObject {
         // readAloud() hops through a Task before calling us, so a newer trigger
         // may have bumped generation already — bail before touching shared state.
         guard gen == generation else { return }
-        if !backend.ready {
+        if backend.needsStart {
             status = .loadingModel
             await backend.start()
             guard gen == generation else { return }
