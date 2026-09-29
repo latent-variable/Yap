@@ -95,24 +95,28 @@ download (the model, optional Pocket packages, cloned-voice weights) is one-time
 and something you initiate. The whole thing is one file:
 [`UpdateChecker.swift`](../app/Sources/Yap/UpdateChecker.swift).
 
-## The Auto read source and your clipboard
+## Read source modes and your clipboard
 
-Yap ships in **Selected text** mode, which reads a live selection and nothing
-else. **Auto** is opt-in (Settings ▸ General ▸ Read source): it grabs your
-selection directly where it can, and some apps (iTerm and other terminals) don't
-expose their selection to the Accessibility API and also block the synthetic ⌘C,
-so in those apps Yap reads your clipboard instead. If you turn Auto on, two things
-are worth knowing:
+Yap ships with **Read source → Selected text** and **Capture method → Clipboard**.
+For a selected-text read, Yap saves the pasteboard, posts a synthetic ⌘C to read
+the selection, then restores the saved contents. This needs Accessibility
+permission to post the key event. Set **Capture method → Accessibility** to read
+a live selection through the Accessibility API without using the clipboard.
 
-- **Yap never overwrites your clipboard doing this.** The synthetic-⌘C path
-  saves and restores it; the plain clipboard read only reads.
+**Auto** is opt-in (Settings ▸ General ▸ Read source). It tries to read the live
+selection using the selected Capture method, then falls back to the clipboard
+when no text is returned. Some apps (iTerm and other terminals) don't expose
+their selection to the Accessibility API and block synthetic ⌘C, so Yap reads
+the clipboard instead. If you turn Auto on, two things are worth knowing:
+
+- **Yap restores the pasteboard after synthetic ⌘C.** The Auto fallback only
+  reads the clipboard.
 - **The one clipboard change you'll see in a terminal is its own doing.** iTerm's
   copy-on-select feature replaces your clipboard the moment you highlight text.
   That's the terminal, not Yap. So after reading in iTerm, your previous
   clipboard contents are gone, replaced by what you selected.
 
-It's a small quirk you get used to. **Read source → Selected text**, the shipped
-default, has no clipboard involvement at all.
+It's a small quirk you get used to.
 
 ## The no-permission option
 
