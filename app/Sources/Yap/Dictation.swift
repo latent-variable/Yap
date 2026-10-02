@@ -608,17 +608,20 @@ private final class BufferQueue: @unchecked Sendable {
     /// stop accumulating — bounds memory for the (optional) final pass on a very
     /// long hold; the live transcript is unaffected.
     func pushCapped(_ b: AVAudioPCMBuffer, maxFrames: Int) {
-        let db = SpeechGate.peakDB(b)   // outside the lock: it reads every sample
+        let dbs = SpeechGate.windowDBs(b)   // outside the lock: it reads every sample
+        let win = max(Int(b.format.sampleRate / 100), 1)
         lock.lock()
         if frames >= maxFrames { overflowedFlag = true }
         else {
+            for (k, db) in dbs.enumerated() {
+                levelLog.append(.init(endFrame: frames + min((k + 1) * win, Int(b.frameLength)), db: db))
+            }
             items.append(b); frames += Int(b.frameLength)
-            levelLog.append(.init(endFrame: frames, db: db))
         }
         lock.unlock()
     }
 
-    /// Per-buffer loudness of everything pushed with `pushCapped`, in order.
+    /// 10 ms loudness of everything pushed with `pushCapped`, in order.
     var levels: [SpeechGate.Level] { lock.lock(); defer { lock.unlock() }; return levelLog }
 
     var overflowed: Bool { lock.lock(); defer { lock.unlock() }; return overflowedFlag }
@@ -693,7 +696,7 @@ private final class BufferQueue: @unchecked Sendable {
     }
 }
 
-/// Where the speech is in a recording, from per-buffer loudness. Lets stop reuse
+/// Where the speech is in a recording, from 10 ms loudness. Lets stop reuse
 /// a preview pass instead of re-transcribing: a pass covers every word when
 /// nothing but silence was captured after the audio it saw.
 ///
@@ -703,16 +706,19 @@ private final class BufferQueue: @unchecked Sendable {
 ///
 /// Pure and nonisolated so `--selftest` can cover it.
 enum SpeechGate {
-    /// One entry per captured buffer: the recorder frame it ends at, and its
-    /// loudest 10 ms window in dBFS (a short word can't hide in a quiet buffer).
+    /// One entry per 10 ms of captured audio: the recorder frame it ends at, and
+    /// its RMS in dBFS. 10 ms is fine enough to tell a key click (tens of ms)
+    /// from a spoken word (a hundred ms and more of voicing).
     struct Level: Equatable { let endFrame: Int; let db: Float }
 
     /// A word cut by a preview's snapshot edge sits just before it, so coverage
     /// is checked from this far back.
     static let edgeMargin = 0.25
-    /// The tail of a recording ends with the stop hotkey's own key click; this
-    /// much is ignored so the click doesn't read as speech every time.
+    /// The tail of a recording can end with the stop hotkey's own key click. In
+    /// this last stretch a burst of up to `clickWindows` loud 10 ms windows is
+    /// taken for that click; anything longer is a word, and blocks reuse.
     static let stopClick = 0.2
+    static let clickWindows = 5
     /// Trailing silence that counts as "you paused" for the preview loop.
     static let pause = 0.3
 
@@ -722,23 +728,28 @@ enum SpeechGate {
     /// way to the loudest buffer. The 15 dB cap keeps one loud click from lifting
     /// it over a quietly spoken word.
     static func threshold(_ levels: [Level]) -> Float? {
-        guard levels.count >= 8 else { return nil }
+        guard levels.count >= 80 else { return nil }   // under ~0.8s: can't judge
         let dbs = levels.map(\.db).sorted()
         let floor = dbs[dbs.count / 20]
         guard let top = dbs.last, top - floor >= 12 else { return nil }
         return floor + min(max(0.25 * (top - floor), 6), 15)
     }
 
-    /// True when every buffer overlapping frames `from...to` is below `threshold`.
-    static func silent(_ levels: [Level], from: Int, to: Int, threshold: Float) -> Bool {
-        var start = 0
+    /// How many windows overlapping frames `from...to` are at or above `threshold`.
+    static func loudWindows(_ levels: [Level], from: Int, to: Int, threshold: Float) -> Int {
+        var start = 0, n = 0
         for l in levels {
             defer { start = l.endFrame }
             if l.endFrame <= from { continue }
             if start > max(to, from) { break }
-            if l.db >= threshold { return false }
+            if l.db >= threshold { n += 1 }
         }
-        return true
+        return n
+    }
+
+    /// True when every window overlapping frames `from...to` is below `threshold`.
+    static func silent(_ levels: [Level], from: Int, to: Int, threshold: Float) -> Bool {
+        loudWindows(levels, from: from, to: to, threshold: threshold) == 0
     }
 
     /// Did a transcription of frames `0..<covered` hear every word of a
@@ -746,26 +757,28 @@ enum SpeechGate {
     static func covers(_ levels: [Level], covered: Int, total: Int, rate: Double) -> Bool {
         guard let th = threshold(levels) else { return false }
         let from = covered - Int(edgeMargin * rate)
-        let to = total - Int(stopClick * rate)
-        return silent(levels, from: from, to: to, threshold: th)
+        let clickFrom = max(total - Int(stopClick * rate), from)
+        return silent(levels, from: from, to: clickFrom - 1, threshold: th)
+            && loudWindows(levels, from: clickFrom, to: total, threshold: th) <= clickWindows
     }
 
-    /// Loudest 10 ms RMS window of a buffer's first channel, in dBFS. A format we
-    /// can't read reports 0 dB (full-scale), i.e. speech: the safe answer.
-    static func peakDB(_ b: AVAudioPCMBuffer) -> Float {
-        guard let ch = b.floatChannelData, b.frameLength > 0 else { return 0 }
+    /// RMS of each 10 ms window of a buffer's first channel, in dBFS. A format we
+    /// can't read reports one full-scale (0 dB) window, i.e. speech: the safe answer.
+    static func windowDBs(_ b: AVAudioPCMBuffer) -> [Float] {
+        guard let ch = b.floatChannelData, b.frameLength > 0 else { return [0] }
         let n = Int(b.frameLength)
         let stride = b.format.isInterleaved ? Int(b.format.channelCount) : 1
         let win = max(Int(b.format.sampleRate / 100), 1)
-        var peak: Float = 0
+        var out: [Float] = []
+        out.reserveCapacity(n / win + 1)
         var i = 0
         while i < n {
             let end = min(i + win, n)
             var sum: Float = 0
             for j in i..<end { let s = ch[0][j * stride]; sum += s * s }
-            peak = max(peak, sum / Float(end - i))
+            out.append(10 * log10(max(sum / Float(end - i), 1e-12)))
             i = end
         }
-        return 10 * log10(max(peak, 1e-12))
+        return out
     }
 }
