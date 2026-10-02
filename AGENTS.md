@@ -154,10 +154,10 @@ Two-model design (mirrors FluidVoice), an agent must keep these straight:
 
 - **Streaming model** (Parakeet EOU Flash English / Nemotron multilingual) drives
   the *instant* live transcript — low latency, but lossy (cuts/misses words).
-- **Accurate batch model** (Parakeet TDT v2 English / v3 multilingual) does the
-  authoritative final pass on stop, and also powers a **rolling preview**:
-  `refineLoop` re-transcribes everything-so-far ~1/sec while you talk, published
-  as `Dictation.refined`. Sequential passes self-throttle (no pile-up); past the
+- **Accurate batch model** (Parakeet TDT v2 English / v3 multilingual) produces
+  the inserted text, and also powers a **rolling preview**: `refineLoop`
+  re-transcribes everything-so-far ~1/sec while you talk (and at once when you
+  pause), published as `Dictation.refined`. Sequential passes self-throttle (no pile-up); past the
   180s recorder cap it falls back to the live partial. The concat runs off the
   main actor (`Task.detached`, result wrapped in `SendableBufferBox`); only a
   cheap `frameCount` is read on main.
@@ -165,9 +165,17 @@ Two-model design (mirrors FluidVoice), an agent must keep these straight:
   live streaming tail, anchored on refined's last two words so the two models'
   differing tokenization doesn't dup/drop at the seam. Pure + unit-tested in
   `--selftest`.
-- **Stop serializes the ASR engine:** `stopAndTranscribe` awaits `refineTask`
-  before the final pass — both use the same `finalASR` (`AsrManager`), which
-  isn't thread-safe.
+- **Stop pastes the preview when it already heard every word.** A pass costs
+  seconds under load and grows with the utterance (`--dictbench`), and the old
+  stop ran a full final pass after waiting out the running preview. Now, if only
+  silence came after the newest preview (`SpeechGate`, levels relative to the
+  recording's own noise floor, doubt = speech), that text is pasted as-is; the
+  full pass runs only when speech is uncovered. Words match the full pass;
+  punctuation can differ, as it does between two full passes with different
+  trailing silence. Proof: `--dictstop`.
+- **Two passes never share `finalASR`** (`AsrManager`, not thread-safe). The
+  final pass awaits `refineTask`; a stop that pasted a preview leaves its pass
+  running, and the next session's `startRefineLoop` chains on it.
 
 Gotchas: `@Published` writes from the streaming callback / refine loop must hop
 to the main actor. Models download on first dictation into the FluidAudio cache
@@ -222,6 +230,11 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 # Runs on port 8767 so it never evicts a running Yap's backend. --legacy runs the
 # pre-fix stop()+start() sequence, i.e. the control that must fail.
 "$(swift build --show-bin-path)/Yap" --providertest [port] [--legacy]
+# Dictation (needs the English models downloaded; any speech file, e.g. `say -o`):
+# cost of one batch pass by utterance length, then stop latency + path + words
+# vs a full pass, real time. --legacy forces the full final pass (the control).
+"$(swift build --show-bin-path)/Yap" --dictbench speech.aiff
+"$(swift build --show-bin-path)/Yap" --dictstop speech.aiff [seconds] [--legacy]
 
 # backend robustness suite — fast set (every code path, one cheap case each)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q

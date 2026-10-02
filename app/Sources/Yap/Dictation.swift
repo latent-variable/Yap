@@ -113,6 +113,23 @@ final class Dictation: ObservableObject {
     private var finalVersionLoaded: AsrModelVersion?
     private var finalTask: Task<Void, Never>?   // tracked final-pass (v2/v3) warm-up
     private var refineTask: Task<Void, Never>?  // rolling accurate-preview loop
+    /// Bumped per capture session, so a preview pass that outlives its session
+    /// (stop doesn't always wait for one) can't write into the next.
+    private var session = 0
+    /// The newest finished preview pass this session: its text and how many
+    /// recorder frames it heard. Stop pastes it as-is when nothing but silence
+    /// came after — the same model over the same words, so a second pass would
+    /// return the same text, slower.
+    private var settled: (text: String, frames: Int)?
+    /// Frames the preview pass running right now will cover, if one is running.
+    private var inflightFrames: Int?
+    /// How the last stop got its text, and how long it took. For the log and
+    /// `--dictstop`.
+    private(set) var lastStop = ""
+    /// Probe control: always run the full final pass (the pre-reuse behaviour).
+    static var forceFinalPass = false
+    /// A probe session feeds audio itself; there is no mic tap to tear down.
+    private var simulated = false
 
     var isListening: Bool { state == .listening }
 
@@ -230,9 +247,7 @@ final class Dictation: ObservableObject {
                 guard granted else { self.state = .error("Microphone access denied"); return }
                 do {
                     try await manager.reset()
-                    self.partial = ""
-                    self.refined = ""
-                    _ = self.recorder.drain()   // clear last session's audio
+                    self.beginSession()
                     try self.beginCapture(into: manager)
                     self.sessionManager = manager   // bind for the whole session
                     self.sessionFinalVersion = choice.finalVersion
@@ -246,6 +261,16 @@ final class Dictation: ObservableObject {
     }
 
     /// Stop capture, flush, and return the final transcript (nil if empty).
+    ///
+    /// The preview loop has been running the same batch model over the same audio
+    /// the whole time, so the final pass is usually redone work. Three ways out,
+    /// cheapest first:
+    /// 1. The newest finished preview heard every word (only silence after it):
+    ///    paste it now.
+    /// 2. The preview still running will hear every word: wait for it.
+    /// 3. Speech after both: run the full final pass, as before.
+    /// Under load a pass costs seconds and grows with the utterance (measured with
+    /// `--dictbench`), and the old path could wait for two of them back to back.
     @discardableResult
     func stopAndTranscribe() async -> String? {
         // The session's own instance, not the slot: an engine switch during the
@@ -253,34 +278,73 @@ final class Dictation: ObservableObject {
         // audio, which flushed an empty transcript over real speech.
         guard state == .listening, let manager = sessionManager else { return nil }
         defer { sessionManager = nil; sessionFinalVersion = nil }
-        audio.inputNode.removeTap(onBus: 0)
-        audio.stop()
+        let t0 = Date()
+        // Flip state first: a second press during the awaits below must not start
+        // another stop, and a preview pass finishing now must not publish.
+        state = .transcribing
+        if !simulated {
+            audio.inputNode.removeTap(onBus: 0)
+            audio.stop()
+        }
         // Await the pump's actual termination — cancel() alone doesn't wait, and
         // a still-running append/process would race finish() on the same actor.
         pump?.cancel()
         await pump?.value
         pump = nil
-        // Stop the accurate-preview loop and WAIT for it. A refine pass may have a
-        // transcribe in-flight on the shared `finalASR`, and the final pass below
-        // uses that same instance — awaiting serializes them so they never hit the
-        // ASR engine concurrently (AsrManager isn't documented thread-safe).
-        refineTask?.cancel()
-        await refineTask?.value
-        refineTask = nil
-        state = .transcribing
+
+        let overflowed = recorder.overflowed
+        let total = recorder.frameCount
+        let levels = recorder.levels
+        let rate = captureFormat?.sampleRate ?? 16_000
+        let batchOK = !overflowed && finalASR != nil && !Dictation.forceFinalPass
+            && Dictation.batchModelUsable(loaded: finalVersionLoaded, session: sessionFinalVersion)
+        func covers(_ frames: Int) -> Bool {
+            batchOK && SpeechGate.covers(levels, covered: frames, total: total, rate: rate)
+        }
+
+        var accurate: String?
+        var path = "final pass"
+        if let s = settled, !s.text.isEmpty, covers(s.frames) {
+            // Leave any running pass to finish on its own; the next session's
+            // preview loop and final pass wait for it before touching `finalASR`.
+            refineTask?.cancel()
+            accurate = s.text
+            path = "preview"
+        } else if let f = inflightFrames, covers(f) {
+            // Not cancelled: cancelling would throw away the pass we want.
+            await refineTask?.value
+            refineTask = nil
+            if let s = settled, s.frames >= f, !s.text.isEmpty { accurate = s.text; path = "running preview" }
+        }
+        let recorded = recorder.drain()
+        if accurate == nil {
+            // Stop the accurate-preview loop and WAIT for it. A refine pass may have
+            // a transcribe in-flight on the shared `finalASR`, and the final pass
+            // uses that same instance — awaiting serializes them so they never hit
+            // the ASR engine concurrently (AsrManager isn't documented thread-safe).
+            refineTask?.cancel()
+            await refineTask?.value
+            refineTask = nil
+            // Accurate final pass over the whole utterance; nil if the batch model
+            // isn't ready, fails, or the recording exceeded the memory budget.
+            accurate = overflowed ? nil : await runFinalPass(recorded)
+        }
         do {
-            // Feed anything still queued, then finish the live stream.
-            for b in pending.drain() { try? await manager.appendAudio(b) }
-            try? await manager.processBufferedAudio()
-            let liveText = try await manager.finish().trimmingCharacters(in: .whitespacesAndNewlines)
-            // Accurate final pass over the whole utterance; fall back to the live
-            // transcript if the batch model isn't ready, fails, or the recording
-            // exceeded the memory budget (very long hold).
-            let overflowed = recorder.overflowed
-            let recorded = recorder.drain()
-            let accurate = overflowed ? nil : await runFinalPass(recorded)
-            var text = (accurate?.isEmpty == false) ? accurate! : liveText
+            var text: String
+            if let accurate, !accurate.isEmpty {
+                _ = pending.drain()   // the live stream isn't needed; don't leak it into the next session
+                text = accurate
+            } else {
+                // Feed anything still queued, then finish the live stream.
+                for b in pending.drain() { try? await manager.appendAudio(b) }
+                try? await manager.processBufferedAudio()
+                text = try await manager.finish().trimmingCharacters(in: .whitespacesAndNewlines)
+                path = "live stream"
+            }
             if Prefs.shared.removeFillers { text = Fillers.clean(text) }
+            lastStop = String(format: "%@ in %.0f ms (%.1fs of audio)",
+                              path, Date().timeIntervalSince(t0) * 1000, Double(total) / rate)
+            Log.write("dictation stop: \(lastStop)")
             lastFinal = text
             partial = ""
             refined = ""
@@ -315,8 +379,14 @@ final class Dictation: ObservableObject {
 
     /// Start the loop that publishes `refined` while listening. Cancelled on stop.
     private func startRefineLoop() {
-        refineTask?.cancel()
-        refineTask = Task { [weak self] in await self?.refineLoop() }
+        // A stop that pasted a preview leaves its last pass running rather than
+        // wait for it. Chain on it: two passes must never share `finalASR`.
+        let prior = refineTask
+        prior?.cancel()
+        refineTask = Task { [weak self] in
+            await prior?.value
+            await self?.refineLoop()
+        }
     }
 
     /// Periodically re-transcribe everything captured so far with the high-accuracy
@@ -324,17 +394,26 @@ final class Dictation: ObservableObject {
     /// quality instead of the lossy streaming `partial`. Sequential — each pass
     /// awaits the previous, so it self-throttles: short utterances refresh ~1/sec,
     /// longer ones as fast as the decode allows (no overlap, no pile-up).
+    ///
+    /// Two rules make the last pass usable as the final text on stop:
+    /// - A pause (`SpeechGate.pause` of trailing silence) starts a pass right away
+    ///   instead of at the next 0.8s tick, so the pass that hears your last word is
+    ///   usually done by the time you press stop.
+    /// - Silence alone never starts a pass: the previous one already holds every
+    ///   word, and an idle model is one stop never has to wait for.
     private func refineLoop() async {
-        var lastFrames = 0
+        let mySession = session
+        var lastFrames = 0               // frames the previous pass heard
+        var nextDue = Date().addingTimeInterval(0.8)
         while !Task.isCancelled {
-            do { try await Task.sleep(nanoseconds: 800_000_000) } catch { break }
-            guard state == .listening else { break }
+            do { try await Task.sleep(nanoseconds: 100_000_000) } catch { break }
+            guard state == .listening, session == mySession else { break }
             // Past the 180s recorder cap (a very long hold) we can't re-transcribe
             // the whole utterance any more — drop `refined` so the HUD falls back to
             // the live streaming `partial` for the tail instead of freezing on stale
             // text. (The final pass on stop is skipped past the cap too.)
             // Overflow latches on for the rest of the session, so stop the loop
-            // (don't spin every 0.8s) — the HUD falls back to the live partial.
+            // (don't spin) — the HUD falls back to the live partial.
             if recorder.overflowed { if !refined.isEmpty { refined = "" }; break }
             // Need the accurate model, matching the engine THIS session started on.
             // Otherwise leave the streaming `partial` to drive the HUD.
@@ -345,28 +424,43 @@ final class Dictation: ObservableObject {
             // snapshot + concat (a memcpy of the whole utterance) runs off-main so a
             // long hold can't stutter the UI.
             let frames = recorder.frameCount
+            let rate = captureFormat?.sampleRate ?? 16_000
             // Skip until there's roughly a sentence's worth, and only when new audio
-            // has arrived since the last pass. No upper cap: passes run sequentially
-            // (await each before the next), so a long hold just refreshes more slowly
-            // — it never piles up or freezes.
-            let secs = Double(frames) / (captureFormat?.sampleRate ?? 16_000)
-            guard secs >= 0.8, frames > lastFrames else { continue }
-            lastFrames = frames
+            // has arrived since the last pass.
+            guard Double(frames) / rate >= 0.8, frames > lastFrames else { continue }
+            let levels = recorder.levels
+            let th = SpeechGate.threshold(levels)   // nil: can't tell, treat as speech
+            if let th, lastFrames > 0,
+               SpeechGate.silent(levels, from: lastFrames - Int(SpeechGate.edgeMargin * rate),
+                                 to: frames, threshold: th) { continue }
+            let paused = th.map {
+                SpeechGate.silent(levels, from: frames - Int(SpeechGate.pause * rate), to: frames, threshold: $0)
+            } ?? false
+            guard paused || Date() >= nextDue else { continue }
             let rec = recorder
             // The result is a freshly-allocated, unshared buffer; wrap it so the
             // unchecked-Sendable assertion stays contained to this handoff instead
             // of retroactively conforming the framework type.
-            let box = await Task.detached(priority: .userInitiated) {
-                BufferQueue.concat(rec.snapshot().buffers).map(SendableBufferBox.init)
+            let snap = await Task.detached(priority: .userInitiated) { () -> (SendableBufferBox?, Int) in
+                let s = rec.snapshot()
+                return (BufferQueue.concat(s.buffers).map(SendableBufferBox.init), s.frames)
             }.value
-            guard let combined = box?.buffer else { continue }
+            guard let combined = snap.0?.buffer, session == mySession else { continue }
+            inflightFrames = snap.1
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
-            guard let result = try? await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
-            else { continue }
-            // A stop / engine switch may have landed during the decode — don't stamp
-            // a stale preview over the cleared state.
-            guard !Task.isCancelled, state == .listening else { break }
+            let result = try? await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
+            // This pass may finish after stop, even after the next session began:
+            // only its own session may use it.
+            guard session == mySession else { break }
+            inflightFrames = nil
+            lastFrames = snap.1
+            nextDue = Date().addingTimeInterval(0.8)
+            guard let result else { continue }
             let txt = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Recorded even when stop landed during the decode: stop may be waiting
+            // on exactly this pass.
+            settled = (txt, snap.1)
+            guard !Task.isCancelled, state == .listening else { break }
             if !txt.isEmpty { refined = txt }
         }
     }
@@ -413,27 +507,70 @@ final class Dictation: ObservableObject {
 
     // MARK: - capture
 
-    private func beginCapture(into manager: any StreamingAsrManager) throws {
-        let input = audio.inputNode
-        // Clear any tap left behind by a previous failed start — installing a
-        // second tap on the same bus crashes.
-        input.removeTap(onBus: 0)
-        let format = input.inputFormat(forBus: 0)
-        captureFormat = format
+    /// Reset everything one capture session owns.
+    private func beginSession() {
+        session += 1
+        settled = nil
+        inflightFrames = nil
+        partial = ""
+        refined = ""
+        _ = recorder.drain()   // clear last session's audio
+        _ = pending.drain()
+    }
+
+    /// Where captured audio goes: the live stream and the recorder. Called from
+    /// the mic tap's thread, so it touches only the thread-safe queues.
+    private func makeFeed(format: AVAudioFormat) -> @Sendable (AVAudioPCMBuffer) -> Void {
         let queue = pending
         let rec = recorder
         // Cap the kept-for-final-pass audio at ~3 minutes so an accidental long
         // hold can't exhaust memory. Past the cap the live transcript still works;
         // only the optional accurate re-pass is skipped.
         let maxRecFrames = Int(format.sampleRate * 180)
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buf, _ in
+        return { buf in
             // Copy once: the tap's buffer is only valid for this callback. The
             // same copy feeds the live stream (drained continuously) and the
             // recorder (kept whole, bounded, for the final pass) — both read-only.
             if let copy = BufferQueue.copy(buf) { queue.push(copy); rec.pushCapped(copy, maxFrames: maxRecFrames) }
         }
+    }
+
+    /// Probe-only (`--dictstop`): a session fed by the caller instead of the mic,
+    /// through the same queues, pump, preview loop and stop path.
+    func startSimulated(format: AVAudioFormat) async throws -> @Sendable (AVAudioPCMBuffer) -> Void {
+        guard modelReady, state == .idle, let manager else { throw CancellationError() }
+        try await manager.reset()
+        beginSession()
+        simulated = true
+        captureFormat = format
+        startPump(into: manager)
+        sessionManager = manager
+        sessionFinalVersion = engineChoice.finalVersion
+        state = .listening
+        startRefineLoop()
+        return makeFeed(format: format)
+    }
+
+    /// Probe-only: wait for the batch model's background load.
+    func awaitFinalModel() async { await finalTask?.value }
+
+    private func beginCapture(into manager: any StreamingAsrManager) throws {
+        simulated = false
+        let input = audio.inputNode
+        // Clear any tap left behind by a previous failed start — installing a
+        // second tap on the same bus crashes.
+        input.removeTap(onBus: 0)
+        let format = input.inputFormat(forBus: 0)
+        captureFormat = format
+        let feed = makeFeed(format: format)
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buf, _ in feed(buf) }
         audio.prepare()
         try audio.start()
+        startPump(into: manager)
+    }
+
+    private func startPump(into manager: any StreamingAsrManager) {
+        let queue = pending
         pump?.cancel()   // never leave a prior pump running on a new capture
         // Pump loop: drain copied buffers into the actor and process chunks so
         // partials keep flowing. appendAudio accepts any format (resamples to
@@ -463,6 +600,7 @@ private final class BufferQueue: @unchecked Sendable {
     private var items: [AVAudioPCMBuffer] = []
     private var frames = 0
     private var overflowedFlag = false
+    private var levelLog: [SpeechGate.Level] = []
 
     func push(_ b: AVAudioPCMBuffer) { lock.lock(); items.append(b); lock.unlock() }
 
@@ -470,11 +608,18 @@ private final class BufferQueue: @unchecked Sendable {
     /// stop accumulating — bounds memory for the (optional) final pass on a very
     /// long hold; the live transcript is unaffected.
     func pushCapped(_ b: AVAudioPCMBuffer, maxFrames: Int) {
+        let db = SpeechGate.peakDB(b)   // outside the lock: it reads every sample
         lock.lock()
         if frames >= maxFrames { overflowedFlag = true }
-        else { items.append(b); frames += Int(b.frameLength) }
+        else {
+            items.append(b); frames += Int(b.frameLength)
+            levelLog.append(.init(endFrame: frames, db: db))
+        }
         lock.unlock()
     }
+
+    /// Per-buffer loudness of everything pushed with `pushCapped`, in order.
+    var levels: [SpeechGate.Level] { lock.lock(); defer { lock.unlock() }; return levelLog }
 
     var overflowed: Bool { lock.lock(); defer { lock.unlock() }; return overflowedFlag }
 
@@ -493,7 +638,7 @@ private final class BufferQueue: @unchecked Sendable {
     func drain() -> [AVAudioPCMBuffer] {
         lock.lock()
         let out = items; items.removeAll(keepingCapacity: true)
-        frames = 0; overflowedFlag = false
+        frames = 0; overflowedFlag = false; levelLog.removeAll(keepingCapacity: true)
         lock.unlock()
         return out
     }
@@ -545,5 +690,82 @@ private final class BufferQueue: @unchecked Sendable {
             return nil
         }
         return dst
+    }
+}
+
+/// Where the speech is in a recording, from per-buffer loudness. Lets stop reuse
+/// a preview pass instead of re-transcribing: a pass covers every word when
+/// nothing but silence was captured after the audio it saw.
+///
+/// The threshold is relative to THIS recording (its own noise floor), so it holds
+/// in a quiet room and next to a fan. Every doubt resolves toward "speech", which
+/// costs a full pass (the old latency), never a dropped word.
+///
+/// Pure and nonisolated so `--selftest` can cover it.
+enum SpeechGate {
+    /// One entry per captured buffer: the recorder frame it ends at, and its
+    /// loudest 10 ms window in dBFS (a short word can't hide in a quiet buffer).
+    struct Level: Equatable { let endFrame: Int; let db: Float }
+
+    /// A word cut by a preview's snapshot edge sits just before it, so coverage
+    /// is checked from this far back.
+    static let edgeMargin = 0.25
+    /// The tail of a recording ends with the stop hotkey's own key click; this
+    /// much is ignored so the click doesn't read as speech every time.
+    static let stopClick = 0.2
+    /// Trailing silence that counts as "you paused" for the preview loop.
+    static let pause = 0.3
+
+    /// Loudness above which a buffer is speech, or nil when this recording does
+    /// not separate speech from noise (too short, or under 12 dB of range).
+    /// Floor = 5th percentile; threshold sits 6–15 dB above it, a quarter of the
+    /// way to the loudest buffer. The 15 dB cap keeps one loud click from lifting
+    /// it over a quietly spoken word.
+    static func threshold(_ levels: [Level]) -> Float? {
+        guard levels.count >= 8 else { return nil }
+        let dbs = levels.map(\.db).sorted()
+        let floor = dbs[dbs.count / 20]
+        guard let top = dbs.last, top - floor >= 12 else { return nil }
+        return floor + min(max(0.25 * (top - floor), 6), 15)
+    }
+
+    /// True when every buffer overlapping frames `from...to` is below `threshold`.
+    static func silent(_ levels: [Level], from: Int, to: Int, threshold: Float) -> Bool {
+        var start = 0
+        for l in levels {
+            defer { start = l.endFrame }
+            if l.endFrame <= from { continue }
+            if start > max(to, from) { break }
+            if l.db >= threshold { return false }
+        }
+        return true
+    }
+
+    /// Did a transcription of frames `0..<covered` hear every word of a
+    /// recording `total` frames long? False whenever the levels can't tell.
+    static func covers(_ levels: [Level], covered: Int, total: Int, rate: Double) -> Bool {
+        guard let th = threshold(levels) else { return false }
+        let from = covered - Int(edgeMargin * rate)
+        let to = total - Int(stopClick * rate)
+        return silent(levels, from: from, to: to, threshold: th)
+    }
+
+    /// Loudest 10 ms RMS window of a buffer's first channel, in dBFS. A format we
+    /// can't read reports 0 dB (full-scale), i.e. speech: the safe answer.
+    static func peakDB(_ b: AVAudioPCMBuffer) -> Float {
+        guard let ch = b.floatChannelData, b.frameLength > 0 else { return 0 }
+        let n = Int(b.frameLength)
+        let stride = b.format.isInterleaved ? Int(b.format.channelCount) : 1
+        let win = max(Int(b.format.sampleRate / 100), 1)
+        var peak: Float = 0
+        var i = 0
+        while i < n {
+            let end = min(i + win, n)
+            var sum: Float = 0
+            for j in i..<end { let s = ch[0][j * stride]; sum += s * s }
+            peak = max(peak, sum / Float(end - i))
+            i = end
+        }
+        return 10 * log10(max(peak, 1e-12))
     }
 }

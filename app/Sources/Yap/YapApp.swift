@@ -37,6 +37,17 @@ enum YapMain {
             let port = CommandLine.arguments.count > i + 1 ? Int(CommandLine.arguments[i + 1]) : nil
             CLITest.runBackendRecovery(port: port ?? 18768)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--dictbench") {
+            let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
+            let v3 = CommandLine.arguments.count > i + 2 && CommandLine.arguments[i + 2] == "v3"
+            DictationProbe.runBench(path: path, version: v3 ? .v3 : .v2)
+        }
+        if let i = CommandLine.arguments.firstIndex(of: "--dictstop") {
+            let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
+            let secs = CommandLine.arguments.count > i + 2 ? Double(CommandLine.arguments[i + 2]) : nil
+            DictationProbe.runStop(path: path, seconds: secs ?? 20,
+                                   legacy: CommandLine.arguments.contains("--legacy"))
+        }
         YapApp.main()
     }
 }

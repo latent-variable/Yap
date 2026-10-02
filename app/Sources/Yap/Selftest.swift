@@ -190,6 +190,53 @@ enum Selftest {
                 TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
                 "one two . three")
 
+        print("SpeechGate — may stop paste a preview instead of re-transcribing?")
+        // 4096-frame buffers at 48 kHz (~85 ms each), as the mic tap delivers.
+        // -60 = room noise, -20 = speech.
+        let rate = 48_000.0
+        func lv(_ dbs: [Float]) -> [SpeechGate.Level] {
+            dbs.enumerated().map { SpeechGate.Level(endFrame: ($0.offset + 1) * 4096, db: $0.element) }
+        }
+        let speech3s = [Float](repeating: -20, count: 36)
+        let noise = { (n: Int) in [Float](repeating: -60, count: n) }
+        let spoken = lv(noise(6) + speech3s + noise(12))           // talk, then ~1s pause
+        let wordEnd = (6 + 36) * 4096
+        // The preview loop fires a pass after `pause` of silence; that pass can only
+        // ever count as covering if the pause outlasts the edge margin it is
+        // checked against. A preview taken right AT the last word never counts.
+        checkBool("pause trigger outlasts the edge margin", SpeechGate.pause > SpeechGate.edgeMargin, true)
+        let afterPause = wordEnd + 4 * 4096                              // ~0.34s into the pause
+        checkBool("too short to judge -> no threshold", SpeechGate.threshold(lv(noise(4) + [-20])) == nil, true)
+        checkBool("no speech/noise contrast -> no threshold", SpeechGate.threshold(lv(noise(40))) == nil, true)
+        checkBool("pause after the covered words -> covered",
+                  SpeechGate.covers(spoken, covered: afterPause, total: spoken.last!.endFrame, rate: rate), true)
+        checkBool("preview taken at the last word -> not covered (may have cut it)",
+                  SpeechGate.covers(spoken, covered: wordEnd, total: spoken.last!.endFrame, rate: rate), false)
+        let lateWord = lv(noise(6) + speech3s + noise(6) + [-20, -20, -20] + noise(6))
+        checkBool("a word after the covered point -> not covered",
+                  SpeechGate.covers(lateWord, covered: wordEnd + 2 * 4096, total: lateWord.last!.endFrame, rate: rate), false)
+        checkBool("snapshot cut mid-word -> not covered",
+                  SpeechGate.covers(spoken, covered: wordEnd - 4096, total: spoken.last!.endFrame, rate: rate), false)
+        let clicked = lv(noise(6) + speech3s + noise(11) + [-25])   // the stop hotkey's key click
+        checkBool("stop key click at the very end is ignored",
+                  SpeechGate.covers(clicked, covered: afterPause, total: clicked.last!.endFrame, rate: rate), true)
+        // A loud click lifts the speech/noise range to 60 dB; the 15 dB cap keeps a
+        // word spoken 16 dB over the floor counted as speech.
+        let quiet = lv(noise(6) + [0] + speech3s + noise(6) + [-44, -44, -44] + noise(6))
+        checkBool("one loud click can't hide a quiet late word",
+                  SpeechGate.covers(quiet, covered: (7 + 36 + 2) * 4096, total: quiet.last!.endFrame, rate: rate), false)
+        checkBool("unjudgeable recording -> never covered (full pass)",
+                  SpeechGate.covers(lv(noise(40)), covered: 40 * 4096, total: 40 * 4096, rate: rate), false)
+        if let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1),
+           let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 4800) {
+            b.frameLength = 4800
+            for i in 0..<4800 { b.floatChannelData![0][i] = sin(Float(i) * 0.1) }   // full-scale sine
+            let sine = SpeechGate.peakDB(b)
+            checkBool("full-scale sine reads ~-3 dBFS (got \(sine))", abs(sine + 3) < 0.5, true)
+            memset(b.floatChannelData![0], 0, 4800 * 4)
+            checkBool("digital silence reads far below any floor", SpeechGate.peakDB(b) < -100, true)
+        }
+
         print("Dictation — a model load must not reset an active session")
         // An engine switch is one click away in the menu bar AND in Settings, and
         // nothing disables it mid-dictation. A load that commits `state = .idle`
