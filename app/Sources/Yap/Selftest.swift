@@ -190,6 +190,61 @@ enum Selftest {
                 TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
                 "one two . three")
 
+        print("SpeechGate — may stop paste a preview instead of re-transcribing?")
+        // 10 ms windows at 48 kHz, as `pushCapped` logs them. -60 = room noise,
+        // -20 = speech. Built from (dB, seconds) segments.
+        let rate = 48_000.0
+        func lv(_ segs: [(Float, Double)]) -> [SpeechGate.Level] {
+            var out: [SpeechGate.Level] = []
+            for (db, secs) in segs {
+                for _ in 0..<Int((secs * 100).rounded()) { out.append(.init(endFrame: (out.count + 1) * 480, db: db)) }
+            }
+            return out
+        }
+        func at(_ secs: Double) -> Int { Int(secs * rate) }
+        let spoken = lv([(-60, 0.5), (-20, 3), (-60, 1)])               // talk 0.5–3.5s, then a 1s pause
+        let end = spoken.last!.endFrame
+        // The preview loop fires a pass after `pause` of silence; that pass can only
+        // ever count as covering if the pause outlasts the edge margin it is
+        // checked against. A preview taken right AT the last word never counts.
+        checkBool("pause trigger outlasts the edge margin", SpeechGate.pause > SpeechGate.edgeMargin, true)
+        checkBool("too short to judge -> no threshold", SpeechGate.threshold(lv([(-60, 0.4), (-20, 0.2)])) == nil, true)
+        checkBool("no speech/noise contrast -> no threshold", SpeechGate.threshold(lv([(-60, 3)])) == nil, true)
+        checkBool("pause after the covered words -> covered",
+                  SpeechGate.covers(spoken, covered: at(3.8), total: end, rate: rate), true)
+        checkBool("preview taken at the last word -> not covered (may have cut it)",
+                  SpeechGate.covers(spoken, covered: at(3.5), total: end, rate: rate), false)
+        checkBool("snapshot cut mid-word -> not covered",
+                  SpeechGate.covers(spoken, covered: at(3.3), total: end, rate: rate), false)
+        let lateWord = lv([(-60, 0.5), (-20, 3), (-60, 0.5), (-20, 0.3), (-60, 0.5)])
+        checkBool("a word after the covered point -> not covered",
+                  SpeechGate.covers(lateWord, covered: at(3.8), total: lateWord.last!.endFrame, rate: rate), false)
+        // The stop hotkey's key click: a burst of tens of ms at the very end.
+        let clicked = lv([(-60, 0.5), (-20, 3), (-60, 0.88), (-25, 0.03), (-60, 0.01)])
+        checkBool("stop key click at the very end is ignored",
+                  SpeechGate.covers(clicked, covered: at(3.8), total: clicked.last!.endFrame, rate: rate), true)
+        // A short word spoken entirely inside the click allowance is still a word.
+        let lastBreath = lv([(-60, 0.5), (-20, 3), (-60, 0.8), (-22, 0.15)])
+        checkBool("a short word in the final 200 ms -> not covered",
+                  SpeechGate.covers(lastBreath, covered: at(3.8), total: lastBreath.last!.endFrame, rate: rate), false)
+        // A loud click lifts the speech/noise range to 60 dB; the 15 dB cap keeps a
+        // word spoken 16 dB over the floor counted as speech.
+        let quiet = lv([(-60, 0.5), (0, 0.01), (-20, 3), (-60, 0.5), (-44, 0.3), (-60, 0.5)])
+        checkBool("one loud click can't hide a quiet late word",
+                  SpeechGate.covers(quiet, covered: at(4.0), total: quiet.last!.endFrame, rate: rate), false)
+        checkBool("unjudgeable recording -> never covered (full pass)",
+                  SpeechGate.covers(lv([(-60, 3)]), covered: at(3), total: at(3), rate: rate), false)
+        if let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1),
+           let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 4800) {
+            b.frameLength = 4800
+            for i in 0..<4800 { b.floatChannelData![0][i] = sin(Float(i) * 0.1) }   // full-scale sine
+            let sine = SpeechGate.windowDBs(b)
+            checkBool("full-scale sine reads ~-3 dBFS in each of 10 windows",
+                      sine.count == 10 && sine.allSatisfy { abs($0 + 3) < 0.5 }, true)
+            memset(b.floatChannelData![0], 0, 4800 * 4)
+            checkBool("digital silence reads far below any floor", SpeechGate.windowDBs(b).allSatisfy { $0 < -100 }, true)
+        }
+
         print("Dictation — a model load must not reset an active session")
         // An engine switch is one click away in the menu bar AND in Settings, and
         // nothing disables it mid-dictation. A load that commits `state = .idle`
