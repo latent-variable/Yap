@@ -165,13 +165,9 @@ Two-model design (mirrors FluidVoice), an agent must keep these straight:
   live streaming tail, anchored on refined's last two words so the two models'
   differing tokenization doesn't dup/drop at the seam. Pure + unit-tested in
   `--selftest`.
-- **Stop always decodes the ending.** Quiet final words can look like noise, so
-  `SpeechGate` only schedules previews. `DictationTail` uses the preview's token
-  times to re-decode at least six seconds of overlap plus all newer audio, then
-  joins at a unique three-word anchor. Missing/invalid timings or an uncertain
-  seam try the full accurate pass. Short recordings use the full pass when
-  available; batch failure or recorder overflow flushes the streaming model.
-  `--dictstop` checks final decoding and words against a full pass, including a quiet ending.
+- **Stop always decodes the ending.** Quiet final words can resemble noise;
+  never use loudness to declare the transcript complete. The overlapping final
+  segment and fallbacks are in `docs/ARCHITECTURE.md`; `--dictstop` checks them.
 - **Two passes never share `finalASR`** (`AsrManager`, not thread-safe). The
   final pass cancels and awaits `refineTask` before using the batch manager.
 
