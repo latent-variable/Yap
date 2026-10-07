@@ -42,8 +42,8 @@ final class DictationController: ObservableObject {
     /// the screen (FluidVoice does this). Uses built-in macOS sounds.
     private func playChime(start: Bool) {
         guard !Prefs.shared.muteAllSounds, Prefs.shared.dictationChime else { return }
-        // Start: a bright "Tink" to cue recording. Stop: a soft "Pop" on insert —
-        // unobtrusive, distinct from the start cue ("Bottle" was too heavy).
+        // Start: "Tink" cues recording. Stop: "Pop" confirms the mic has closed,
+        // before transcription finishes; it cannot enter the recorded tail.
         NSSound(named: start ? "Tink" : "Pop")?.play()
     }
 
@@ -62,9 +62,9 @@ final class DictationController: ObservableObject {
             }
         case .listening:
             Task {
-                let text = await dictation.stopAndTranscribe()
-                // The mic is now closed: do not record the stop cue in its tail.
-                playChime(start: false)
+                let text = await dictation.stopAndTranscribe {
+                    self.playChime(start: false)
+                }
                 guard let text else { hideHUD(); return }
                 // Log before we try to paste — a dictation that fails to insert
                 // (no Accessibility, dropped ⌘V) is exactly what History rescues.

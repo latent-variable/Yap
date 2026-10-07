@@ -181,8 +181,13 @@ enum DictationProbe {
                 }
                 try await feedThrough(stopFrame)
                 let stopped = Date()
+                var captureClosedState: Dictation.State?
+                var captureClosedAt: Date?
                 let stopTask = Task { @MainActor in
-                    let text = await d.stopAndTranscribe()
+                    let text = await d.stopAndTranscribe {
+                        captureClosedState = d.state
+                        captureClosedAt = Date()
+                    }
                     return (text, Date().timeIntervalSince(stopped) * 1000)
                 }
                 while d.state == .listening { await Task.yield() }
@@ -194,7 +199,10 @@ enum DictationProbe {
                 let expected = Prefs.shared.removeFillers ? Fillers.clean(full.text) : full.text
                 let extraFrames = d.lastStopCapturedFrames - stopFrame
                 let same = words(text) == words(expected)
-                let passed = same && extraFrames > 0 && secondStop == nil
+                let cueBeforeDecode = captureClosedState == .transcribing
+                    && captureClosedAt.map { $0.timeIntervalSince(stopped) * 1000 < stoppedResult.1 } == true
+                let passed = same && extraFrames > 0 && secondStop == nil && cueBeforeDecode
+                print(cueBeforeDecode ? "capture-close cue precedes final decode" : "CAPTURE CUE FAILED")
                 print(String(format: "stop at %.2fs; captured %.2fs after press; %.0f ms total",
                              Double(stopFrame) / audio.format.sampleRate,
                              Double(extraFrames) / audio.format.sampleRate,

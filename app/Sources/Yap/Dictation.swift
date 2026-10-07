@@ -269,7 +269,7 @@ final class Dictation: ObservableObject {
     /// loudness: a quiet word or a short syllable can look like noise/a key click.
     /// With no safe boundary (or no preview), decode the full recording.
     @discardableResult
-    func stopAndTranscribe() async -> String? {
+    func stopAndTranscribe(onCaptureClosed: @MainActor () -> Void = {}) async -> String? {
         // The session's own instance, not the slot: an engine switch during the
         // read may already have replaced `manager` with one that never saw this
         // audio, which flushed an empty transcript over real speech.
@@ -294,6 +294,9 @@ final class Dictation: ObservableObject {
             audio.inputNode.removeTap(onBus: 0)
             audio.stop()
         }
+        // Confirm the mic cutoff now, without waiting for pump/ASR work. The
+        // cue cannot enter the recording because admission and the tap are closed.
+        onCaptureClosed()
         // Await the pump's actual termination — cancel() alone doesn't wait, and
         // a still-running append/process would race finish() on the same actor.
         pump?.cancel()
