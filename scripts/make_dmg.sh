@@ -12,6 +12,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 VERSION="${VERSION:-$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$ROOT/app/Resources/Info.plist")}"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid release version: $VERSION" >&2; exit 1; }
 OUT="$ROOT/dist"
 APP="$OUT/Yap.app"
 DMG="$OUT/Yap-$VERSION.dmg"
@@ -31,7 +32,10 @@ else
 fi
 
 echo "[dmg] staging"
-rm -rf "$STAGE" "$DMG"
+[[ "$STAGE" == "$ROOT/dist/dmg-stage" && "$DMG" == "$ROOT/dist/Yap-$VERSION.dmg" ]] || exit 1
+for artifact in "$STAGE" "$DMG"; do
+  if [ -e "$artifact" ]; then trash "$artifact"; fi
+done
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
@@ -40,7 +44,7 @@ xattr -cr "$STAGE/Yap.app" 2>/dev/null || true
 
 echo "[dmg] creating compressed image"
 hdiutil create -volname "$VOL" -srcfolder "$STAGE" -ov -format UDZO -fs HFS+ "$DMG" >/dev/null
-rm -rf "$STAGE"
+trash "$STAGE"
 
 SIZE="$(du -h "$DMG" | cut -f1)"
 echo "[dmg] done -> $DMG ($SIZE)"
