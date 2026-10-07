@@ -10,3 +10,7 @@ uvicorn[standard]>=0.29
 uritemplate>=4.1
 colorama>=0.4
 jsonschema>=4.0
+
+# Security minimums for transitive runtime dependencies.
+anyio>=4.14.2
+urllib3>=2.8.0

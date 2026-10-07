@@ -113,16 +113,11 @@ final class Dictation: ObservableObject {
     private var finalVersionLoaded: AsrModelVersion?
     private var finalTask: Task<Void, Never>?   // tracked final-pass (v2/v3) warm-up
     private var refineTask: Task<Void, Never>?  // rolling accurate-preview loop
-    /// Bumped per capture session, so a preview pass that outlives its session
-    /// (stop doesn't always wait for one) can't write into the next.
+    /// Bumped per capture session to reject stale preview writes.
     private var session = 0
-    /// The newest finished preview pass this session: its text and how many
-    /// recorder frames it heard. Stop pastes it as-is when nothing but silence
-    /// came after — the same model over the same words, so a second pass would
-    /// return the same text, slower.
-    private var settled: (text: String, frames: Int)?
-    /// Frames the preview pass running right now will cover, if one is running.
-    private var inflightFrames: Int?
+    /// A finished preview plus token times. Token times locate an overlapping
+    /// final segment; loudness never decides whether the ending is complete.
+    private var settled: (text: String, frames: Int, timings: [TokenTiming])?
     /// How the last stop got its text, and how long it took. For the log and
     /// `--dictstop`.
     private(set) var lastStop = ""
@@ -262,15 +257,10 @@ final class Dictation: ObservableObject {
 
     /// Stop capture, flush, and return the final transcript (nil if empty).
     ///
-    /// The preview loop has been running the same batch model over the same audio
-    /// the whole time, so the final pass is usually redone work. Three ways out,
-    /// cheapest first:
-    /// 1. The newest finished preview heard every word (only silence after it):
-    ///    paste it now.
-    /// 2. The preview still running will hear every word: wait for it.
-    /// 3. Speech after both: run the full final pass, as before.
-    /// Under load a pass costs seconds and grows with the utterance (measured with
-    /// `--dictbench`), and the old path could wait for two of them back to back.
+    /// Keep the accurate head and decode an overlapping final segment, including
+    /// every captured frame through stop. Never infer final coverage from
+    /// loudness: a quiet word or a short syllable can look like noise/a key click.
+    /// With no safe boundary (or no preview), decode the full recording.
     @discardableResult
     func stopAndTranscribe() async -> String? {
         // The session's own instance, not the slot: an engine switch during the
@@ -294,40 +284,25 @@ final class Dictation: ObservableObject {
 
         let overflowed = recorder.overflowed
         let total = recorder.frameCount
-        let levels = recorder.levels
         let rate = captureFormat?.sampleRate ?? 16_000
-        let batchOK = !overflowed && finalASR != nil && !Dictation.forceFinalPass
-            && Dictation.batchModelUsable(loaded: finalVersionLoaded, session: sessionFinalVersion)
-        func covers(_ frames: Int) -> Bool {
-            batchOK && SpeechGate.covers(levels, covered: frames, total: total, rate: rate)
-        }
-
+        // Cancel the loop, but let its active decode finish before using finalASR.
+        // Its result may give us a newer, shorter final segment.
+        refineTask?.cancel()
+        await refineTask?.value
+        refineTask = nil
+        let recorded = recorder.drain()
         var accurate: String?
         var path = "final pass"
-        if let s = settled, !s.text.isEmpty, covers(s.frames) {
-            // Leave any running pass to finish on its own; the next session's
-            // preview loop and final pass wait for it before touching `finalASR`.
-            refineTask?.cancel()
-            accurate = s.text
-            path = "preview"
-        } else if let f = inflightFrames, covers(f) {
-            // Not cancelled: cancelling would throw away the pass we want.
-            await refineTask?.value
-            refineTask = nil
-            if let s = settled, s.frames >= f, !s.text.isEmpty { accurate = s.text; path = "running preview" }
-        }
-        let recorded = recorder.drain()
-        if accurate == nil {
-            // Stop the accurate-preview loop and WAIT for it. A refine pass may have
-            // a transcribe in-flight on the shared `finalASR`, and the final pass
-            // uses that same instance — awaiting serializes them so they never hit
-            // the ASR engine concurrently (AsrManager isn't documented thread-safe).
-            refineTask?.cancel()
-            await refineTask?.value
-            refineTask = nil
-            // Accurate final pass over the whole utterance; nil if the batch model
-            // isn't ready, fails, or the recording exceeded the memory budget.
-            accurate = overflowed ? nil : await runFinalPass(recorded)
+        if !overflowed {
+            if !Dictation.forceFinalPass, let s = settled,
+               let plan = DictationTail.plan(text: s.text, timings: s.timings,
+                                               covered: Double(s.frames) / rate),
+               let tail = await runFinalPass(recorded, from: Int(plan.start * rate)),
+               let joined = plan.finish(tail) {
+                accurate = joined
+                path = "final segment"
+            }
+            if accurate == nil { accurate = await runFinalPass(recorded) }
         }
         do {
             var text: String
@@ -356,16 +331,20 @@ final class Dictation: ObservableObject {
         }
     }
 
-    /// Re-transcribe the full utterance with the high-accuracy batch model.
+    /// Decode a recording or its final slice with the high-accuracy batch model.
     /// Returns nil (→ caller keeps the live text) if the model isn't loaded, the
     /// audio is empty, or anything throws.
-    private func runFinalPass(_ buffers: [AVAudioPCMBuffer]) async -> String? {
+    private func runFinalPass(_ buffers: [AVAudioPCMBuffer], from frame: Int = 0) async -> String? {
         // Only trust the batch model if it is the one THIS session was captured
         // under — not merely the currently-selected engine, which the picker can
         // move mid-session.
         guard let finalASR,
               Dictation.batchModelUsable(loaded: finalVersionLoaded, session: sessionFinalVersion),
-              let combined = BufferQueue.concat(buffers) else { return nil }
+              !buffers.isEmpty else { return nil }
+        let combined = await Task.detached(priority: .userInitiated) {
+            BufferQueue.concat(buffers, from: frame).map(SendableBufferBox.init)
+        }.value
+        guard let combined = combined?.buffer else { return nil }
         do {
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
             let result = try await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
@@ -379,8 +358,7 @@ final class Dictation: ObservableObject {
 
     /// Start the loop that publishes `refined` while listening. Cancelled on stop.
     private func startRefineLoop() {
-        // A stop that pasted a preview leaves its last pass running rather than
-        // wait for it. Chain on it: two passes must never share `finalASR`.
+        // Chain on any previous task: two passes must never share `finalASR`.
         let prior = refineTask
         prior?.cancel()
         refineTask = Task { [weak self] in
@@ -446,20 +424,18 @@ final class Dictation: ObservableObject {
                 return (BufferQueue.concat(s.buffers).map(SendableBufferBox.init), s.frames)
             }.value
             guard let combined = snap.0?.buffer, session == mySession else { continue }
-            inflightFrames = snap.1
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
             let result = try? await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
             // This pass may finish after stop, even after the next session began:
             // only its own session may use it.
             guard session == mySession else { break }
-            inflightFrames = nil
             lastFrames = snap.1
             nextDue = Date().addingTimeInterval(0.8)
             guard let result else { continue }
             let txt = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             // Recorded even when stop landed during the decode: stop may be waiting
             // on exactly this pass.
-            settled = (txt, snap.1)
+            settled = (txt, snap.1, result.tokenTimings ?? [])
             guard !Task.isCancelled, state == .listening else { break }
             if !txt.isEmpty { refined = txt }
         }
@@ -511,7 +487,6 @@ final class Dictation: ObservableObject {
     private func beginSession() {
         session += 1
         settled = nil
-        inflightFrames = nil
         partial = ""
         refined = ""
         _ = recorder.drain()   // clear last session's audio
@@ -595,7 +570,7 @@ private struct SendableBufferBox: @unchecked Sendable { let buffer: AVAudioPCMBu
 
 /// Thread-safe FIFO handoff of mic buffers from the render thread to the ASR
 /// pump task.
-private final class BufferQueue: @unchecked Sendable {
+final class BufferQueue: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [AVAudioPCMBuffer] = []
     private var frames = 0
@@ -647,10 +622,13 @@ private final class BufferQueue: @unchecked Sendable {
     }
 
     /// Concatenate same-format buffers into one (for the batch final pass).
-    static func concat(_ bufs: [AVAudioPCMBuffer]) -> AVAudioPCMBuffer? {
+    static func concat(_ bufs: [AVAudioPCMBuffer], from frame: Int = 0) -> AVAudioPCMBuffer? {
         guard let first = bufs.first else { return nil }
         let format = first.format
-        let total = bufs.reduce(AVAudioFrameCount(0)) { $0 + $1.frameLength }
+        let available = bufs.reduce(0) { $0 + Int($1.frameLength) }
+        guard frame >= 0, frame < available else { return nil }
+        let total = AVAudioFrameCount(available - frame)
+        var skip = frame
         guard total > 0, let dst = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: total) else { return nil }
         let channels = Int(format.channelCount)
         // Interleaved formats expose a single plane holding frames*channels
@@ -661,11 +639,16 @@ private final class BufferQueue: @unchecked Sendable {
         var offset = 0   // per-plane sample offset
         for b in bufs {
             guard b.format == format else { return nil }   // mismatched layout → bail, don't OOB
-            let perPlane = interleaved ? Int(b.frameLength) * channels : Int(b.frameLength)
+            let drop = min(skip, Int(b.frameLength))
+            skip -= drop
+            let count = Int(b.frameLength) - drop
+            if count == 0 { continue }
+            let sourceOffset = interleaved ? drop * channels : drop
+            let perPlane = interleaved ? count * channels : count
             if let s = b.floatChannelData, let d = dst.floatChannelData {
-                for p in 0..<planes { memcpy(d[p] + offset, s[p], perPlane * MemoryLayout<Float>.size) }
+                for p in 0..<planes { memcpy(d[p] + offset, s[p] + sourceOffset, perPlane * MemoryLayout<Float>.size) }
             } else if let s = b.int16ChannelData, let d = dst.int16ChannelData {
-                for p in 0..<planes { memcpy(d[p] + offset, s[p], perPlane * MemoryLayout<Int16>.size) }
+                for p in 0..<planes { memcpy(d[p] + offset, s[p] + sourceOffset, perPlane * MemoryLayout<Int16>.size) }
             } else {
                 return nil
             }
@@ -696,15 +679,8 @@ private final class BufferQueue: @unchecked Sendable {
     }
 }
 
-/// Where the speech is in a recording, from 10 ms loudness. Lets stop reuse
-/// a preview pass instead of re-transcribing: a pass covers every word when
-/// nothing but silence was captured after the audio it saw.
-///
-/// The threshold is relative to THIS recording (its own noise floor), so it holds
-/// in a quiet room and next to a fan. Every doubt resolves toward "speech", which
-/// costs a full pass (the old latency), never a dropped word.
-///
-/// Pure and nonisolated so `--selftest` can cover it.
+/// Loudness only schedules preview work while listening. It never decides
+/// whether the final transcript is complete: quiet speech can resemble noise.
 enum SpeechGate {
     /// One entry per 10 ms of captured audio: the recorder frame it ends at, and
     /// its RMS in dBFS. 10 ms is fine enough to tell a key click (tens of ms)
@@ -714,11 +690,6 @@ enum SpeechGate {
     /// A word cut by a preview's snapshot edge sits just before it, so coverage
     /// is checked from this far back.
     static let edgeMargin = 0.25
-    /// The tail of a recording can end with the stop hotkey's own key click. In
-    /// this last stretch a burst of up to `clickWindows` loud 10 ms windows is
-    /// taken for that click; anything longer is a word, and blocks reuse.
-    static let stopClick = 0.2
-    static let clickWindows = 5
     /// Trailing silence that counts as "you paused" for the preview loop.
     static let pause = 0.3
 
@@ -750,16 +721,6 @@ enum SpeechGate {
     /// True when every window overlapping frames `from...to` is below `threshold`.
     static func silent(_ levels: [Level], from: Int, to: Int, threshold: Float) -> Bool {
         loudWindows(levels, from: from, to: to, threshold: threshold) == 0
-    }
-
-    /// Did a transcription of frames `0..<covered` hear every word of a
-    /// recording `total` frames long? False whenever the levels can't tell.
-    static func covers(_ levels: [Level], covered: Int, total: Int, rate: Double) -> Bool {
-        guard let th = threshold(levels) else { return false }
-        let from = covered - Int(edgeMargin * rate)
-        let clickFrom = max(total - Int(stopClick * rate), from)
-        return silent(levels, from: from, to: clickFrom - 1, threshold: th)
-            && loudWindows(levels, from: clickFrom, to: total, threshold: th) <= clickWindows
     }
 
     /// RMS of each 10 ms window of a buffer's first channel, in dBFS. A format we

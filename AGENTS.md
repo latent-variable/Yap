@@ -165,17 +165,15 @@ Two-model design (mirrors FluidVoice), an agent must keep these straight:
   live streaming tail, anchored on refined's last two words so the two models'
   differing tokenization doesn't dup/drop at the seam. Pure + unit-tested in
   `--selftest`.
-- **Stop pastes the preview when it already heard every word.** A pass costs
-  seconds under load and grows with the utterance (`--dictbench`), and the old
-  stop ran a full final pass after waiting out the running preview. Now, if only
-  silence came after the newest preview (`SpeechGate`, levels relative to the
-  recording's own noise floor, doubt = speech), that text is pasted as-is; the
-  full pass runs only when speech is uncovered. Words match the full pass;
-  punctuation can differ, as it does between two full passes with different
-  trailing silence. Proof: `--dictstop`.
+- **Stop always decodes the ending.** Quiet final words can look like noise, so
+  `SpeechGate` only schedules previews. `DictationTail` uses the preview's token
+  times to re-decode at least six seconds of overlap plus all newer audio, then
+  joins at a unique three-word anchor. Missing/invalid timings or an uncertain
+  seam try the full accurate pass. Short recordings use the full pass when
+  available; batch failure or recorder overflow flushes the streaming model.
+  `--dictstop` checks final decoding and words against a full pass, including a quiet ending.
 - **Two passes never share `finalASR`** (`AsrManager`, not thread-safe). The
-  final pass awaits `refineTask`; a stop that pasted a preview leaves its pass
-  running, and the next session's `startRefineLoop` chains on it.
+  final pass cancels and awaits `refineTask` before using the batch manager.
 
 Gotchas: `@Published` writes from the streaming callback / refine loop must hop
 to the main actor. Models download on first dictation into the FluidAudio cache

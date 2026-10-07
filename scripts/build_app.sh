@@ -14,7 +14,8 @@ echo "[build] swift build -c $CONFIG"
 BIN="$(cd "$APPDIR" && swift build -c "$CONFIG" --show-bin-path)/Yap"
 
 echo "[build] assembling $APP"
-rm -rf "$APP"
+[[ "$APP" == "$ROOT/dist/Yap.app" ]] || exit 1
+if [ -e "$APP" ]; then trash "$APP"; fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/repo"
 
 cp "$BIN" "$APP/Contents/MacOS/Yap"
@@ -84,9 +85,9 @@ if [ -f "$SIGN_KC" ] && security find-certificate -c "$SIGN_ID" "$SIGN_KC" >/dev
     echo "[build] ERROR: codesign with '$SIGN_ID' failed — grant will NOT persist:" >&2
     sed 's/^/[build]   /' "$CODESIGN_ERR" >&2
     echo "[build]        Re-run: bash scripts/setup_signing.sh   then rebuild." >&2
-    rm -f "$CODESIGN_ERR"; exit 1
+    trash "$CODESIGN_ERR"; exit 1
   fi
-  rm -f "$CODESIGN_ERR"
+  trash "$CODESIGN_ERR"
 else
   echo "[build] ad-hoc signing (no stable identity; run scripts/setup_signing.sh)"
   codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "[build] codesign skipped"

@@ -69,10 +69,18 @@ dictation hotkey
   → streaming ASR supplies the live partial; the batch model refines captured audio when loaded
   → TranscriptStitch merges the accurate preview + live tail → floating HUD
 stop hotkey
-  → finish streaming ASR; use full-capture batch transcription when available, otherwise use the live result
+  → finish any active preview; batch-decode an overlapping final segment, or the full recording if the seam is uncertain
+  → flush streaming ASR if the batch model is unavailable or the recorder overflowed
   → optional Fillers.clean
   → with Accessibility, TextInsert pastes at the cursor; otherwise the transcript stays on the clipboard for ⌘V
 ```
+
+Stop always decodes through the last captured frame. `DictationTail` retains the
+accurate head and decodes at least six seconds of overlap plus newer audio. Token
+times locate the audio slice; a unique three-word match joins it to the head.
+Short recordings, missing timings and uncertain joins try the full batch pass.
+If batch decoding is unavailable or fails, stop flushes the streaming model.
+Loudness only schedules previews, because quiet final words can resemble noise.
 
 Streaming ASR provides the low-latency transcript. The batch model loads in the background and supplies the rolling accurate preview and final transcript when ready; the HUD combines the preview with any newer streaming words.
 
