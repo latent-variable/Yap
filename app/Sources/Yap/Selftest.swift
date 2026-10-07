@@ -1,4 +1,5 @@
 import Foundation
+import FluidAudio
 import AVFoundation
 import AppKit
 import Carbon.HIToolbox
@@ -190,7 +191,74 @@ enum Selftest {
                 TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
                 "one two . three")
 
-        print("SpeechGate — may stop paste a preview instead of re-transcribing?")
+        print("Dictation final segment — finish the ending, retain the accurate head")
+        let previewWords = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen".split(separator: " ")
+        let timings = previewWords.enumerated().map { i, word in
+            TokenTiming(token: " " + word, tokenId: i, startTime: Double(i) * 0.5,
+                        endTime: Double(i) * 0.5 + 0.3, confidence: 1)
+        }
+        let previewText = previewWords.joined(separator: " ")
+        let tailPlan = DictationTail.plan(text: previewText, timings: timings, covered: 10)
+        checkBool("long preview has a timed final segment", tailPlan != nil, true)
+        if let plan = tailPlan {
+            checkBool("tail overlaps at least six seconds", plan.start <= 4, true)
+            checkEq("decode corrects the ending and keeps the head",
+                    plan.finish("five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen.") ?? "",
+                    previewText + " seventeen.")
+            checkBool("uncertain seam requires full pass", plan.finish("unrelated words at the ending") == nil, true)
+            checkBool("repeated seam requires full pass", plan.finish("six seven eight nine six seven eight ten") == nil, true)
+            checkBool("empty tail requires full pass", plan.finish("") == nil, true)
+        }
+        checkBool("short capture uses full final pass",
+                  DictationTail.plan(text: previewText, timings: timings, covered: 5) == nil, true)
+        checkBool("timing text mismatch uses full final pass",
+                  DictationTail.plan(text: "wrong text", timings: timings, covered: 10) == nil, true)
+        var invalidTimings = timings
+        invalidTimings[4] = TokenTiming(token: " five", tokenId: 4, startTime: .nan, endTime: 3, confidence: 1)
+        checkBool("invalid timing uses full final pass",
+                  DictationTail.plan(text: previewText, timings: invalidTimings, covered: 10) == nil, true)
+
+        // Audio slicing must keep the last frame across tap-buffer boundaries,
+        // with both planar and interleaved stereo layouts.
+        for interleaved in [false, true] {
+            for common in [AVAudioCommonFormat.pcmFormatFloat32, .pcmFormatInt16] {
+                let fmt = AVAudioFormat(commonFormat: common, sampleRate: 48_000,
+                                        channels: 2, interleaved: interleaved)!
+                var buffers: [AVAudioPCMBuffer] = []
+                for base in [0, 10] {
+                    let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 10)!
+                    b.frameLength = 10
+                    for f in 0..<10 {
+                        for ch in 0..<2 {
+                            let plane = interleaved ? 0 : ch
+                            let index = interleaved ? f * 2 + ch : f
+                            let value = (base + f) * 2 + ch
+                            if let p = b.floatChannelData { p[plane][index] = Float(value) }
+                            if let p = b.int16ChannelData { p[plane][index] = Int16(value) }
+                        }
+                    }
+                    buffers.append(b)
+                }
+                let slice = BufferQueue.concat(buffers, from: 13)
+                var matches = slice?.frameLength == 7
+                if let slice {
+                    for f in 0..<7 {
+                        for ch in 0..<2 {
+                            let plane = interleaved ? 0 : ch
+                            let index = interleaved ? f * 2 + ch : f
+                            let expected = (13 + f) * 2 + ch
+                            if let p = slice.floatChannelData { matches = matches && p[plane][index] == Float(expected) }
+                            if let p = slice.int16ChannelData { matches = matches && p[plane][index] == Int16(expected) }
+                        }
+                    }
+                }
+                checkBool("final audio slice keeps every sample (\(common), interleaved=\(interleaved))", matches, true)
+                checkBool("slice past the recording is refused", BufferQueue.concat(buffers, from: 20) == nil, true)
+                checkBool("negative slice is refused", BufferQueue.concat(buffers, from: -1) == nil, true)
+            }
+        }
+
+        print("SpeechGate — scheduling accurate previews")
         // 10 ms windows at 48 kHz, as `pushCapped` logs them. -60 = room noise,
         // -20 = speech. Built from (dB, seconds) segments.
         let rate = 48_000.0
@@ -202,38 +270,14 @@ enum Selftest {
             return out
         }
         func at(_ secs: Double) -> Int { Int(secs * rate) }
-        let spoken = lv([(-60, 0.5), (-20, 3), (-60, 1)])               // talk 0.5–3.5s, then a 1s pause
-        let end = spoken.last!.endFrame
-        // The preview loop fires a pass after `pause` of silence; that pass can only
-        // ever count as covering if the pause outlasts the edge margin it is
-        // checked against. A preview taken right AT the last word never counts.
         checkBool("pause trigger outlasts the edge margin", SpeechGate.pause > SpeechGate.edgeMargin, true)
         checkBool("too short to judge -> no threshold", SpeechGate.threshold(lv([(-60, 0.4), (-20, 0.2)])) == nil, true)
         checkBool("no speech/noise contrast -> no threshold", SpeechGate.threshold(lv([(-60, 3)])) == nil, true)
-        checkBool("pause after the covered words -> covered",
-                  SpeechGate.covers(spoken, covered: at(3.8), total: end, rate: rate), true)
-        checkBool("preview taken at the last word -> not covered (may have cut it)",
-                  SpeechGate.covers(spoken, covered: at(3.5), total: end, rate: rate), false)
-        checkBool("snapshot cut mid-word -> not covered",
-                  SpeechGate.covers(spoken, covered: at(3.3), total: end, rate: rate), false)
-        let lateWord = lv([(-60, 0.5), (-20, 3), (-60, 0.5), (-20, 0.3), (-60, 0.5)])
-        checkBool("a word after the covered point -> not covered",
-                  SpeechGate.covers(lateWord, covered: at(3.8), total: lateWord.last!.endFrame, rate: rate), false)
-        // The stop hotkey's key click: a burst of tens of ms at the very end.
-        let clicked = lv([(-60, 0.5), (-20, 3), (-60, 0.88), (-25, 0.03), (-60, 0.01)])
-        checkBool("stop key click at the very end is ignored",
-                  SpeechGate.covers(clicked, covered: at(3.8), total: clicked.last!.endFrame, rate: rate), true)
-        // A short word spoken entirely inside the click allowance is still a word.
-        let lastBreath = lv([(-60, 0.5), (-20, 3), (-60, 0.8), (-22, 0.15)])
-        checkBool("a short word in the final 200 ms -> not covered",
-                  SpeechGate.covers(lastBreath, covered: at(3.8), total: lastBreath.last!.endFrame, rate: rate), false)
-        // A loud click lifts the speech/noise range to 60 dB; the 15 dB cap keeps a
-        // word spoken 16 dB over the floor counted as speech.
-        let quiet = lv([(-60, 0.5), (0, 0.01), (-20, 3), (-60, 0.5), (-44, 0.3), (-60, 0.5)])
-        checkBool("one loud click can't hide a quiet late word",
-                  SpeechGate.covers(quiet, covered: at(4.0), total: quiet.last!.endFrame, rate: rate), false)
-        checkBool("unjudgeable recording -> never covered (full pass)",
-                  SpeechGate.covers(lv([(-60, 3)]), covered: at(3), total: at(3), rate: rate), false)
+        let spoken = lv([(-60, 0.5), (-20, 3), (-60, 1)])
+        if let threshold = SpeechGate.threshold(spoken) {
+            checkBool("trailing silence can trigger preview", SpeechGate.silent(spoken, from: at(3.8), to: at(4.5), threshold: threshold), true)
+            checkBool("speech prevents silence skip", SpeechGate.silent(spoken, from: at(3), to: at(3.5), threshold: threshold), false)
+        } else { checkBool("speech and room noise have a threshold", false, true) }
         if let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1),
            let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 4800) {
             b.frameLength = 4800

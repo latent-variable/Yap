@@ -46,7 +46,8 @@ enum YapMain {
             let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
             let secs = CommandLine.arguments.count > i + 2 ? Double(CommandLine.arguments[i + 2]) : nil
             DictationProbe.runStop(path: path, seconds: secs ?? 20,
-                                   legacy: CommandLine.arguments.contains("--legacy"))
+                                   legacy: CommandLine.arguments.contains("--legacy"),
+                                   quick: CommandLine.arguments.contains("--quick"))
         }
         YapApp.main()
     }

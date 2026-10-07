@@ -13,7 +13,7 @@ import FluidAudio
 /// time instead of the mic, then a pause of room noise, then stop. Reports how
 /// long stop took, which path it took, and whether the text matches a fresh
 /// full pass over the same audio. `--legacy` forces the full final pass, the
-/// pre-reuse behaviour, as the control.
+/// pre-reuse behaviour, as the control. `--quick` tests immediate/paused stop only.
 enum DictationProbe {
     /// Decode a speech file to the shape the mic tap hands us: 48 kHz mono Float32.
     static func loadMicLike(_ path: String) throws -> AVAudioPCMBuffer {
@@ -77,7 +77,7 @@ enum DictationProbe {
         s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" })
     }
 
-    static func runStop(path: String, seconds: Double, legacy: Bool) -> Never {
+    static func runStop(path: String, seconds: Double, legacy: Bool, quick: Bool) -> Never {
         Task { @MainActor in
             do {
                 Dictation.forceFinalPass = legacy
@@ -88,9 +88,14 @@ enum DictationProbe {
                 let ref = AsrManager(config: .default)
                 try await ref.loadModels(try await AsrModels.downloadAndLoad(version: .v2))
                 print(String(format: "%@ — %.0fs of speech, then a pause, then stop", legacy ? "LEGACY (always final pass)" : "NEW", seconds))
-                var mismatches = 0
-                for gap in [0.0, 0.3, 0.6, 1.0, 2.0] {
+                var failures = 0
+                for gap in (quick ? [0.0, 2.0] : [0.0, 0.3, 0.6, 1.0, 2.0]) {
                     let audio = join(prefix(speech, seconds: seconds), silence(seconds: gap, format: speech.format))
+                    if gap == 0 {
+                        // A quiet last word can fall below the old loudness threshold.
+                        let first = max(0, Int(audio.frameLength) - Int(audio.format.sampleRate * 0.5))
+                        for i in first..<Int(audio.frameLength) { audio.floatChannelData![0][i] *= 0.12 }
+                    }
                     addNoise(audio)
                     let feed = try await d.startSimulated(format: audio.format)
                     var off: AVAudioFrameCount = 0
@@ -119,15 +124,17 @@ enum DictationProbe {
                     // gains/drops a final period between a 1s and a 2s pause), so a
                     // punctuation-only difference is reported, not failed.
                     let sameWords = words(text) == words(full)
-                    if !sameWords { mismatches += 1 }
+                    let finalDecoded = d.lastStop.hasPrefix("final pass") || d.lastStop.hasPrefix("final segment")
+                    if !finalDecoded { failures += 1; print("FAILED: ending was not decoded") }
+                    if !sameWords { failures += 1 }
                     let verdict = text == full ? "identical" : sameWords ? "same words (punctuation differs)" : "WORDS DIFFER"
                     print(String(format: "  pause %.1fs: stop %5.0f ms  %-16@ %@", gap, stopMs,
                                  d.lastStop.components(separatedBy: " in ").first ?? "", verdict))
                     if !sameWords { print("     pasted: …\(text.suffix(90))\n     full:   …\(full.suffix(90))") }
                     try await Task.sleep(nanoseconds: 300_000_000)
                 }
-                print(mismatches == 0 ? "ALL WORDS MATCH" : "\(mismatches) WORD MISMATCH(ES)")
-                exit(mismatches == 0 ? 0 : 1)
+                print(failures == 0 ? "ALL WORDS MATCH" : "\(failures) REGRESSION(S)")
+                exit(failures == 0 ? 0 : 1)
             } catch {
                 print("dictstop FAILED: \(error)"); exit(1)
             }
