@@ -61,9 +61,10 @@ final class DictationController: ObservableObject {
                 dictation.startListening()
             }
         case .listening:
-            playChime(start: false)
             Task {
                 let text = await dictation.stopAndTranscribe()
+                // The mic is now closed: do not record the stop cue in its tail.
+                playChime(start: false)
                 guard let text else { hideHUD(); return }
                 // Log before we try to paste — a dictation that fails to insert
                 // (no Accessibility, dropped ⌘V) is exactly what History rescues.
@@ -91,7 +92,7 @@ final class DictationController: ObservableObject {
                 hideHUD()
                 TextInsert.insertAtCursor(text)
             }
-        case .loadingModel, .transcribing:
+        case .loadingModel, .finishing, .transcribing:
             break   // mid-flight — ignore re-trigger
         case .error:
             // Pressing the shortcut again clears a stuck error + dismisses the
@@ -337,7 +338,7 @@ struct DictationHUD: View {
 
     @ViewBuilder private var statusDot: some View {
         switch dictation.state {
-        case .listening:   Circle().fill(.red).frame(width: 9, height: 9)
+        case .listening, .finishing:   Circle().fill(.red).frame(width: 9, height: 9)
         case .loadingModel, .transcribing:
             ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 9, height: 9)
         case .error:       Circle().fill(.orange).frame(width: 9, height: 9)
@@ -350,6 +351,7 @@ struct DictationHUD: View {
         case .idle:         return "Ready"
         case .loadingModel: return "Loading \(dictation.engineChoice.label) model…"
         case .listening:    return "Listening"
+        case .finishing:    return "Finishing…"
         case .transcribing: return "Transcribing…"
         case .error(let m): return m
         }

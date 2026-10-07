@@ -32,7 +32,7 @@ final class Dictation: ObservableObject {
     }
 
     enum State: Equatable {
-        case idle, loadingModel, listening, transcribing
+        case idle, loadingModel, listening, finishing, transcribing
         case error(String)
     }
 
@@ -68,7 +68,7 @@ final class Dictation: ObservableObject {
     nonisolated static func loadMayWriteState(starting: Bool, state: State) -> Bool {
         if starting { return false }
         switch state {
-        case .listening, .transcribing: return false
+        case .listening, .finishing, .transcribing: return false
         case .idle, .loadingModel, .error: return true
         }
     }
@@ -125,6 +125,13 @@ final class Dictation: ObservableObject {
     static var forceFinalPass = false
     /// A probe session feeds audio itself; there is no mic tap to tear down.
     private var simulated = false
+    /// A short post-press window catches a word still reaching the mic tap.
+    /// Bounded independently of ASR latency; the mic is closed before decoding.
+    static let captureFinishSeconds = 0.6
+    /// Probe control: reproduce the immediate mic cutoff.
+    static var immediateStop = false
+    private var captureGate: DictationCaptureGate?
+    private(set) var lastStopCapturedFrames = 0
 
     var isListening: Bool { state == .listening }
 
@@ -271,6 +278,17 @@ final class Dictation: ObservableObject {
         let t0 = Date()
         // Flip state first: a second press during the awaits below must not start
         // another stop, and a preview pass finishing now must not publish.
+        state = .finishing
+        captureGate?.finish(until: .now.advanced(by: .seconds(Self.immediateStop ? 0 : Self.captureFinishSeconds)))
+        // Stop scheduling preview passes while keeping capture + streaming alive
+        // briefly. An already-running preview can finish during this window.
+        refineTask?.cancel()
+        if !Self.immediateStop {
+            try? await Task.sleep(nanoseconds: UInt64(Self.captureFinishSeconds * 1e9))
+        }
+        // Close admission atomically with queue writes. No late tap callback may
+        // change the recording after we snapshot it or enter the next session.
+        captureGate?.close()
         state = .transcribing
         if !simulated {
             audio.inputNode.removeTap(onBus: 0)
@@ -284,6 +302,7 @@ final class Dictation: ObservableObject {
 
         let overflowed = recorder.overflowed
         let total = recorder.frameCount
+        lastStopCapturedFrames = total
         let rate = captureFormat?.sampleRate ?? 16_000
         // Cancel the loop, but let its active decode finish before using finalASR.
         // Its result may give us a newer, shorter final segment.
@@ -487,6 +506,8 @@ final class Dictation: ObservableObject {
     private func beginSession() {
         session += 1
         settled = nil
+        captureGate?.close()
+        captureGate = nil
         partial = ""
         refined = ""
         _ = recorder.drain()   // clear last session's audio
@@ -502,11 +523,15 @@ final class Dictation: ObservableObject {
         // hold can't exhaust memory. Past the cap the live transcript still works;
         // only the optional accurate re-pass is skipped.
         let maxRecFrames = Int(format.sampleRate * 180)
+        let gate = DictationCaptureGate()
+        captureGate = gate
         return { buf in
             // Copy once: the tap's buffer is only valid for this callback. The
             // same copy feeds the live stream (drained continuously) and the
             // recorder (kept whole, bounded, for the final pass) — both read-only.
-            if let copy = BufferQueue.copy(buf) { queue.push(copy); rec.pushCapped(copy, maxFrames: maxRecFrames) }
+            if let copy = BufferQueue.copy(buf) {
+                gate.whileOpen { queue.push(copy); rec.pushCapped(copy, maxFrames: maxRecFrames) }
+            }
         }
     }
 
@@ -741,5 +766,34 @@ enum SpeechGate {
             i = end
         }
         return out
+    }
+}
+
+/// Each feed closure owns its own gate, so a late callback from an old session
+/// cannot enter a new session. Closing waits for any admitted write to finish.
+final class DictationCaptureGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var open = true
+    private var deadline: ContinuousClock.Instant?
+
+    /// The callback enforces the deadline even if the main actor is busy when
+    /// the stop task's sleep ends. ASR load must not extend capture indefinitely.
+    func finish(until deadline: ContinuousClock.Instant) {
+        lock.lock(); defer { lock.unlock() }
+        self.deadline = deadline
+    }
+
+    @discardableResult
+    func whileOpen(_ write: () -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard open else { return false }
+        if let deadline, ContinuousClock.now >= deadline { open = false; return false }
+        write()
+        return true
+    }
+
+    func close() {
+        lock.lock(); defer { lock.unlock() }
+        open = false
     }
 }

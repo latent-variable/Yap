@@ -921,7 +921,7 @@ private struct ModelsTab: View {
                 )) {
                     ForEach(Dictation.EngineChoice.allCases) { Text($0.label).tag($0) }
                 }
-                .disabled(dictation.state == .listening || dictation.state == .loadingModel)
+                .disabled(dictation.state == .listening || dictation.state == .finishing || dictation.state == .loadingModel)
 
                 LabeledContent("Status", value: parakeetStatus)
                 if let s = parakeetSize { LabeledContent("Size on disk", value: s) }
@@ -939,7 +939,7 @@ private struct ModelsTab: View {
                         Button("Delete models", role: .destructive) { confirmDeleteParakeet = true }
                             // Tearing out the model mid-session would orphan the
                             // mic engine + pump; only allow it when idle.
-                            .disabled(dictation.isListening || dictation.state == .transcribing)
+                            .disabled(dictation.isListening || dictation.state == .finishing || dictation.state == .transcribing)
                     } else {
                         Button("Download model") {
                             dictation.requestLoad(dictation.engineChoice)
