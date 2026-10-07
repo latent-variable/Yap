@@ -57,9 +57,12 @@ actually does with it is narrow and visible in
 
 ### Microphone (dictation)
 
-Dictation is a toggle: the mic opens when you press ⌘⇧D and closes when you
-press it again. The audio goes straight to a local Parakeet model on the Apple
-Neural Engine; it is
+Press ⌘⇧D to start dictation. Capture begins once the model is ready and
+microphone permission is granted. Press again to stop; Yap allows a 0.6-second
+finishing window to catch the last word and mic buffers.
+The HUD stays red and says “Finishing…” during that window. The mic then closes
+before the final transcript is inserted. Audio goes straight to a local Parakeet
+model on the Apple Neural Engine; it is
 **never written to disk and never leaves the machine**. There is no sidecar and
 no network call anywhere in the dictation path
 ([`Dictation.swift`](../app/Sources/Yap/Dictation.swift)). Don't dictate? Don't
@@ -69,8 +72,8 @@ grant it. The read-aloud half works without it.
 
 - No keylogging. It reads a selection only when you press the shortcut — it does
   not observe what you type.
-- No always-on listening. The mic opens when you press the dictation shortcut and
-  closes when you press it again. Nothing is recorded between those two presses.
+- No always-on listening. The mic records only during a dictation session,
+  including the 0.6-second finishing window after you press stop.
 - No screen reading or screenshots.
 - No background scraping. Nothing is captured unless you trigger it.
 - No clipboard hijacking. The fallback restores whatever was on your clipboard.

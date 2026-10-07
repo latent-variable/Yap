@@ -323,7 +323,7 @@ struct EarsSection: View {
                 }
                 .labelsHidden()
                 .frame(width: 150)
-                .disabled(dictation.state == .listening || dictation.state == .loadingModel)
+                .disabled(dictation.state == .listening || dictation.state == .finishing || dictation.state == .loadingModel)
             }
 
             if !dictation.lastFinal.isEmpty {
@@ -344,6 +344,7 @@ struct EarsSection: View {
         switch dictation.state {
         case .listening:    return "Stop & Insert"
         case .loadingModel: return "Loading model…"
+        case .finishing:    return "Finishing…"
         case .transcribing: return "Transcribing…"
         default:            return "Dictate"
         }

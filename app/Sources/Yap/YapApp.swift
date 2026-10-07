@@ -42,6 +42,10 @@ enum YapMain {
             let v3 = CommandLine.arguments.count > i + 2 && CommandLine.arguments[i + 2] == "v3"
             DictationProbe.runBench(path: path, version: v3 ? .v3 : .v2)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--dictending") {
+            let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
+            DictationProbe.runEnding(path: path, immediate: CommandLine.arguments.contains("--immediate-stop"))
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--dictstop") {
             let path = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : ""
             let secs = CommandLine.arguments.count > i + 2 ? Double(CommandLine.arguments[i + 2]) : nil

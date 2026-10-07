@@ -69,11 +69,21 @@ dictation hotkey
   → streaming ASR supplies the live partial; the batch model refines captured audio when loaded
   → TranscriptStitch merges the accurate preview + live tail → floating HUD
 stop hotkey
+  → show Finishing and keep capturing briefly, then close audio admission and the mic tap
   → finish any active preview; batch-decode an overlapping final segment, or the full recording if the seam is uncertain
   → flush streaming ASR if the batch model is unavailable or the recorder overflowed
   → optional Fillers.clean
   → with Accessibility, TextInsert pastes at the cursor; otherwise the transcript stays on the clipboard for ⌘V
 ```
+
+The stop press allows 0.6 seconds for the final word and the last mic buffers to
+arrive. The HUD stays red and says “Finishing…” during that window, then switches
+to “Transcribing…”. A per-session, thread-safe gate enforces the capture deadline
+inside the audio callback, even if the main actor is busy. Closing the gate waits
+for admitted writes; callbacks from an old session cannot enter the next one.
+The stop chime plays after capture is closed so it does not contaminate the tail.
+`--dictending <audio>` presses stop at the final word's onset while buffers keep
+arriving; `--immediate-stop` reproduces the old cutoff as the failing control.
 
 Stop always decodes through the last captured frame. `DictationTail` retains the
 accurate head and decodes at least six seconds of overlap plus newer audio. Token

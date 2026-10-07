@@ -296,6 +296,21 @@ enum Selftest {
         // fail, and the speech was dropped with no error shown.
         checkBool("listening is protected",
                   Dictation.loadMayWriteState(starting: false, state: .listening), false)
+        checkBool("finishing capture is protected", Dictation.loadMayWriteState(starting: false, state: .finishing), false)
+        let closedGate = DictationCaptureGate()
+        var admitted = 0
+        checkBool("capture accepts frames before close", closedGate.whileOpen { admitted += 1 }, true)
+        closedGate.close()
+        checkBool("capture rejects late frames after close", closedGate.whileOpen { admitted += 1 }, false)
+        checkBool("late audio cannot enter the final recording", admitted == 1, true)
+        let nextGate = DictationCaptureGate()
+        checkBool("next session has independent admission", nextGate.whileOpen { admitted += 1 }, true)
+        checkBool("old closure stays closed in the next session", closedGate.whileOpen { admitted += 1 }, false)
+        let timedGate = DictationCaptureGate()
+        timedGate.finish(until: .now.advanced(by: .seconds(60)))
+        checkBool("finishing window still accepts audio", timedGate.whileOpen {}, true)
+        timedGate.finish(until: .now.advanced(by: .seconds(-1)))
+        checkBool("expired window rejects audio without actor wakeup", timedGate.whileOpen {}, false)
         checkBool("transcribing is protected",
                   Dictation.loadMayWriteState(starting: false, state: .transcribing), false)
         // The mic-permission window: state is still .idle but a session is coming

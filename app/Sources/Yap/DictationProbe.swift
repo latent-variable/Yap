@@ -87,7 +87,8 @@ enum DictationProbe {
                 await d.awaitFinalModel()
                 let ref = AsrManager(config: .default)
                 try await ref.loadModels(try await AsrModels.downloadAndLoad(version: .v2))
-                print(String(format: "%@ — %.0fs of speech, then a pause, then stop", legacy ? "LEGACY (always final pass)" : "NEW", seconds))
+                print(String(format: "%@ — %.0fs of speech, then a pause, then stop", legacy ? "LEGACY (always final pass)" : "NEW",
+                             min(seconds, Double(speech.frameLength) / speech.format.sampleRate)))
                 var failures = 0
                 for gap in (quick ? [0.0, 2.0] : [0.0, 0.3, 0.6, 1.0, 2.0]) {
                     let audio = join(prefix(speech, seconds: seconds), silence(seconds: gap, format: speech.format))
@@ -137,6 +138,80 @@ enum DictationProbe {
                 exit(failures == 0 ? 0 : 1)
             } catch {
                 print("dictstop FAILED: \(error)"); exit(1)
+            }
+        }
+        dispatchMain()
+    }
+
+    /// Press stop at the final word's onset, while real-time tap buffers keep
+    /// arriving. The immediate-stop control must lose the post-press audio.
+    static func runEnding(path: String, immediate: Bool) -> Never {
+        Task { @MainActor in
+            do {
+                Dictation.immediateStop = immediate
+                let audio = try loadMicLike(path)
+                addNoise(audio)
+                let d = Dictation()
+                await d.loadModelAwaiting(.english)
+                await d.awaitFinalModel()
+                let ref = AsrManager(config: .default)
+                try await ref.loadModels(try await AsrModels.downloadAndLoad(version: .v2))
+                var st = TdtDecoderState.make(decoderLayers: await ref.decoderLayerCount)
+                let full = try await ref.transcribe(audio, decoderState: &st, language: nil)
+                guard let lastWord = full.tokenTimings?.last(where: {
+                    $0.token.first?.isWhitespace == true && $0.token.contains(where: { $0.isLetter })
+                }) else { throw NSError(domain: "dictending", code: 1) }
+                let stopFrame = max(1, min(Int(audio.frameLength) - 1,
+                                          Int(lastWord.startTime * audio.format.sampleRate)))
+                let feed = try await d.startSimulated(format: audio.format)
+                var off = 0
+                let began = Date()
+                func feedThrough(_ limit: Int) async throws {
+                    while off < limit {
+                        let n = min(4096, limit - off)
+                        let chunk = AVAudioPCMBuffer(pcmFormat: audio.format, frameCapacity: AVAudioFrameCount(n))!
+                        chunk.frameLength = AVAudioFrameCount(n)
+                        memcpy(chunk.floatChannelData![0], audio.floatChannelData![0] + off, n * 4)
+                        off += n
+                        // Deliver the buffer when its audio has actually elapsed.
+                        let wait = began.addingTimeInterval(Double(off) / audio.format.sampleRate).timeIntervalSinceNow
+                        if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1e9)) }
+                        feed(chunk)
+                    }
+                }
+                try await feedThrough(stopFrame)
+                let stopped = Date()
+                var captureClosedState: Dictation.State?
+                var captureClosedAt: Date?
+                let stopTask = Task { @MainActor in
+                    let text = await d.stopAndTranscribe {
+                        captureClosedState = d.state
+                        captureClosedAt = Date()
+                    }
+                    return (text, Date().timeIntervalSince(stopped) * 1000)
+                }
+                while d.state == .listening { await Task.yield() }
+                // A second stop while finishing must be ignored, not cut capture.
+                let secondStop = await d.stopAndTranscribe()
+                try await feedThrough(Int(audio.frameLength))
+                let stoppedResult = await stopTask.value
+                let text = stoppedResult.0 ?? ""
+                let expected = Prefs.shared.removeFillers ? Fillers.clean(full.text) : full.text
+                let extraFrames = d.lastStopCapturedFrames - stopFrame
+                let same = words(text) == words(expected)
+                let cueBeforeDecode = captureClosedState == .transcribing
+                    && captureClosedAt.map { $0.timeIntervalSince(stopped) * 1000 < stoppedResult.1 } == true
+                let passed = same && extraFrames > 0 && secondStop == nil && cueBeforeDecode
+                print(cueBeforeDecode ? "capture-close cue precedes final decode" : "CAPTURE CUE FAILED")
+                print(String(format: "stop at %.2fs; captured %.2fs after press; %.0f ms total",
+                             Double(stopFrame) / audio.format.sampleRate,
+                             Double(extraFrames) / audio.format.sampleRate,
+                             stoppedResult.1))
+                print("pasted: \(text)\nfull:   \(expected)\npath:   \(d.lastStop)")
+                print(passed ? "ENDING CAPTURE PASS" : "ENDING CAPTURE FAILED")
+                exit(passed ? 0 : 1)
+            } catch {
+                print("dictending FAILED: \(error)"); exit(1)
             }
         }
         dispatchMain()
