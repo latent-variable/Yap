@@ -11,8 +11,6 @@ let iconset = repoRoot.appending(path: "dist/AppIcon.iconset")
 try? FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 try? FileManager.default.createDirectory(at: resDir, withIntermediateDirectories: true)
 
-func lerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat { a + (b - a) * t }
-
 func render(_ px: Int) -> Data {
     let s = CGFloat(px)
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,

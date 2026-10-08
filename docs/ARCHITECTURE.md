@@ -35,6 +35,8 @@ behind one int16-PCM contract.
 | **Dictation (ears)** | |
 | Microphone capture, streaming ASR, accurate batch transcription + rolling preview | `Dictation.swift` |
 | Dictation hotkey, floating HUD, transcript stitching + orchestration | `DictationController.swift` |
+| Accurate stop-tail planning and overlap stitching (token timings, unique three-word seam) | `DictationTail.swift` |
+| Headless dictation probes (`--dictbench`, `--dictstop`, `--dictending`) | `DictationProbe.swift` |
 | Paste transcript at cursor | `TextInsert.swift` |
 | Optional speech-filler cleanup | `Fillers.swift` |
 | **App support** | |
