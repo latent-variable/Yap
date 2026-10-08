@@ -31,7 +31,6 @@ behind one int16-PCM contract.
 | Launch at login | `LoginItem.swift` |
 | Views | `Views/MenuContent.swift`, `Views/SettingsView.swift`, `Views/VoiceSelector.swift`, `Views/StableToggleStyle.swift` |
 | Logic self-test / pipe probe | `Selftest.swift`, `CLITest.swift` |
-| Dictation probes (`--dictbench`, `--dictstop`, `--dictending`) | `DictationProbe.swift` |
 | **Dictation (ears)** | |
 | Microphone capture, streaming ASR, accurate batch transcription + rolling preview | `Dictation.swift` |
 | Dictation hotkey, floating HUD, transcript stitching + orchestration | `DictationController.swift` |
