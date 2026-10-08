@@ -99,7 +99,7 @@ private struct GeneralTab: View {
                     .onChange(of: prefs.voiceEnabled) { _, _ in state.reapplyHotKey() }
                 Toggle("Dictation (ears)", isOn: $prefs.dictationEnabled)
                     .onChange(of: prefs.dictationEnabled) { _, _ in DictationController.shared.reapplyHotKey() }
-                Text("Turn a feature off to disable its global shortcut. With Dictation on, models load at launch and missing files download automatically. You can still use the menu's Dictate button or request models in Settings ▸ Models while it is off. The other feature keeps working.")
+                Text("Turn a feature off to disable its global shortcut. The other keeps working. With Dictation on, its models load at launch and download if missing. While it is off, the menu's Dictate button and Settings ▸ Models can still download them.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Picker("Read source", selection: $prefs.readSource) {
@@ -121,7 +121,7 @@ private struct GeneralTab: View {
 
             Section("Updates") {
                 Toggle("Automatically check for updates", isOn: $prefs.autoUpdateCheck)
-                Text("Once a day, Yap asks GitHub for the latest release version. This check sends no personal data. Missing dictation models may also download automatically at launch when Dictation is enabled. Turning this off stops update checks, not model downloads.")
+                Text("Once a day, Yap asks GitHub for the latest release version. This check sends no personal data. Turning it off stops update checks only. Dictation and Pocket models can still download at launch.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button(state.checkingForUpdate ? "Checking…" : "Check now") {
@@ -244,7 +244,7 @@ private struct EngineTab: View {
             if state.hdInstalled {
                 Section {
                     Toggle("Pre-load Pocket model at launch", isOn: $prefs.autoLoadHD)
-                    Text("Loads the Pocket voice in the background when the app starts, so your first read plays right away instead of a cold start. Missing catalog weights download then.")
+                    Text("Loads Pocket in the background at launch, so your first read plays right away. Pocket also loads at launch whenever it is the selected engine. Missing model files download when it loads.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -281,7 +281,7 @@ private struct EngineTab: View {
     // MARK: enable / download
     private var enableSection: some View {
         Section("Set up Pocket TTS") {
-            Text("Pocket downloads its engine once (~1 GB) into Application Support. It is not bundled, so the app stays small. Catalog weights download the first time Pocket loads, including at launch if pre-loading is enabled. Cloning your own voice adds one more file (209 MB), fetched during this install. No account either way.")
+            Text("Pocket downloads its engine once (~1 GB) into Application Support. It is not bundled, so the app stays small. Its model files download the first time Pocket loads, at launch if it is selected or pre-loaded. Cloning your own voice adds one more file (209 MB), fetched during this install. No account either way.")
                 .font(.caption).foregroundStyle(.secondary)
             if installing {
                 HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
@@ -897,7 +897,7 @@ private struct ModelsTab: View {
                     ScrollView { Text(hdInstallLog).font(.caption.monospaced())
                         .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 90).border(.quaternary)
                 } else if !state.hdInstalled {
-                    Text("Optional ~1 GB engine for natural built-in voices and cloning. Catalog weights download when Pocket first loads.")
+                    Text("Optional ~1 GB engine for natural built-in voices and cloning. Its model files download when Pocket first loads.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button("Download & install Pocket") {
                         hdInstalling = true; hdInstallLog = ""
@@ -946,7 +946,7 @@ private struct ModelsTab: View {
                         }.buttonStyle(.borderedProminent)
                     }
                 }
-                Text("English uses Parakeet Flash (streaming) and Parakeet TDT v2 (final); Multilingual uses Nemotron (streaming) and Parakeet TDT v3 (final). The selected pair downloads at launch when Dictation is enabled, or when you request it here.")
+                Text("English uses Parakeet Flash (streaming) and Parakeet TDT v2 (final); Multilingual uses Nemotron (streaming) and Parakeet TDT v3 (final). The selected pair downloads at launch when Dictation is on, or when you request it here.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -984,7 +984,7 @@ private struct ModelsTab: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Removes the downloaded dictation models. They download again at launch when Dictation is enabled, or when you start dictation or request a model here.")
+            Text("Removes the downloaded dictation models. They download again at launch when Dictation is on, or the next time you dictate or pick a model.")
         }
     }
 

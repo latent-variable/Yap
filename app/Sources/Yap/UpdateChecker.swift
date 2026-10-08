@@ -2,14 +2,18 @@ import Foundation
 
 /// Checks GitHub for a newer Yap release.
 ///
-/// This is the only *automatic* network call Yap makes — everything else it
-/// fetches (the Kokoro model, optional Pocket packages, cloned-voice weights) is
-/// a one-time, user-initiated download. It's a single unauthenticated GET to the
-/// public GitHub releases API: no payload, no identifiers, just "what's the
-/// latest release?", returning nothing personal. Auto-check is a user preference
-/// (default on, toggle in Settings ▸ General) throttled to once per day; a manual
-/// "Check now" bypasses the throttle and the URL cache. Disclosed in
-/// docs/PRIVACY.md. Turn the pref off for zero automatic connections.
+/// It's a single unauthenticated GET to the public GitHub releases API: no
+/// payload, no identifiers, just "what's the latest release?", returning nothing
+/// personal. Auto-check is a user preference (default on, toggle in Settings ▸
+/// General) throttled to once per day; a manual "Check now" bypasses the
+/// throttle and the URL cache.
+///
+/// Not the only automatic network call. Two launch paths download missing model
+/// files without a click: the dictation model pair when Dictation is enabled
+/// (DictationController.bootstrap), and Pocket's catalog model files when Pocket
+/// is installed and either selected or pre-loaded (AppState.refreshHD). Turning
+/// this pref off stops update checks only. The full inventory is in
+/// docs/PRIVACY.md; keep the two in sync.
 enum UpdateChecker {
     struct Release: Equatable {
         let version: String   // normalized, e.g. "0.8.2"

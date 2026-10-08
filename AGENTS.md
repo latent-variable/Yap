@@ -56,8 +56,9 @@ the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
   Replaced Chatterbox. One model family, two modes:
   - **Catalog voices** (built-in, no account): 26 predefined speakers from the
     *ungated* `kyutai/pocket-tts-without-voice-cloning` weights. They download
-    when Pocket first loads, including at launch if the default pre-load setting
-    is on. A catalog name (e.g. `michael`) is passed straight to
+    from Hugging Face when Pocket first loads, which `refreshHD` does at launch
+    whenever Pocket is installed and either the selected engine or pre-loaded
+    (`autoLoadHD`, default on). A catalog name (e.g. `michael`) is passed straight to
     `get_state_for_audio_prompt`.
   - **Cloning** (opt-in, no account): clone any ~20s reference WAV in `hd-voices/`.
     Kyutai's cloning weights are CC-BY-4.0, so Yap fetches a byte-identical mirror
@@ -449,8 +450,11 @@ Rules for `MenuContent` and anything it shows:
 ## Standing constraints
 
 - **Fully local. No cloud TTS, no accounts, no analytics, ever.** That's the
-  product. Network calls are limited to model and engine downloads and the
-  optional update check; no user audio or text is sent.
+  product. **Any network call not on this list is a regression:** model and
+  engine downloads (Kokoro, the dictation pair at launch, Pocket packages and
+  its catalog files at load, cloning weights, starter voices) and the optional
+  daily update check. No user audio or text is ever sent. Adding a call means
+  adding it to this list and to `docs/PRIVACY.md` in the same change.
 - Default model IDs for any AI work: Opus `claude-opus-5`, Sonnet
   `claude-sonnet-5`, Haiku `claude-haiku-4-5-20251001`.
 - macOS 14+, Apple Silicon. Prefer native APIs (AVFoundation, Carbon hotkey,

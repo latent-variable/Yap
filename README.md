@@ -83,19 +83,24 @@ Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 
 ## Permissions & privacy
 
-100% on your Mac. No account, no telemetry, nothing about you ever sent. Missing dictation models download automatically at launch when Dictation is enabled (on by default): Parakeet Flash and Parakeet TDT v2 for English, or Nemotron and Parakeet TDT v3 for multilingual.
+100% on your Mac. No account, no telemetry, nothing about you ever sent. **Accessibility** lets Yap read your selection and paste; **Microphone** feeds dictation. Audio never leaves the machine. Don't want to grant Accessibility? Switch **Read source → Clipboard** and copy text yourself first.
 
-Turn off **Dictation (ears)** in Settings ▸ General to prevent automatic Dictation model downloads at launch. Missing models can still be requested from the menu's **Dictate** button or in Settings ▸ Models with the engine picker, **Download model**, or **Retry**, even when Dictation is off. Delete downloaded models from Settings ▸ Models; with Dictation on, missing files download again at the next launch.
+Yap goes online only for these:
 
-Other downloads (the Kokoro model, Pocket packages, starter voices and cloning weights) are user-initiated. Pocket's catalog model weights download when Pocket first loads; this can happen at launch if Pre-load Pocket model at launch is enabled (on by default). The once-a-day update check is optional (toggle off in Settings ▸ General). **Accessibility** lets Yap read your selection and paste; **Microphone** feeds dictation. Audio never leaves the machine. Don't want to grant Accessibility? Switch **Read source → Clipboard** and copy text yourself first. Details: [docs/PRIVACY.md](docs/PRIVACY.md).
+- **Dictation models, at launch.** With Dictation on (the default), the selected pair downloads if missing: Parakeet Flash and Parakeet TDT v2 for English, Nemotron and Parakeet TDT v3 for multilingual. Turn off **Dictation (ears)** in Settings ▸ General to stop it. The menu's **Dictate** button and Settings ▸ Models can still download them on request.
+- **Pocket model files, at launch.** Once Pocket is installed, its model files download the first time it loads. That happens at launch when Pocket is the selected engine or **Pre-load Pocket model at launch** is on (the default).
+- **Downloads you start in Settings:** the Kokoro model, the Pocket engine, starter voices and cloning weights.
+- **The update check**, once a day. Turn it off in Settings ▸ General.
 
-**Don't take my word for it.** It's 2026. Point your coding agent (Claude Code or similar) at this repo and have it read the source and confirm nothing about you ever leaves the machine. The source shows automatic and user-requested dictation model downloads, Pocket catalog weights that can download at launch, other Settings-initiated downloads, and the optional update check. Or build your own from source and use these binaries as a reference. If it holds up, a ⭐ is appreciated.
+Details: [docs/PRIVACY.md](docs/PRIVACY.md).
+
+**Don't take my word for it.** It's 2026. Point your coding agent (Claude Code or similar) at this repo and have it read the source and confirm nothing about you ever leaves the machine, and that every network call is on the list above. Or build your own from source and use these binaries as a reference. If it holds up, a ⭐ is appreciated.
 
 > Ad-hoc signed, so each reinstall is a new identity to macOS and the Accessibility grant can go stale — remove Yap from the list and re-add, or run `scripts/setup_signing.sh` once for a stable identity.
 
 ## Architecture
 
-Native SwiftUI menu-bar app. **Voice** (TTS) talks to a local Python sidecar over `127.0.0.1`; **ears** (STT) run fully in-app on the ANE with local transcription. Missing dictation models download at launch when Dictation is enabled or when you request them.
+Native SwiftUI menu-bar app. **Voice** (TTS) talks to a local Python sidecar over `127.0.0.1`; **ears** (STT) transcribe in-app on the ANE, with no sidecar.
 
 ```
 SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CPU)      ← voice: default, instant

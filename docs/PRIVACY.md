@@ -12,40 +12,51 @@ it touches, and why — so you don't have to take "private" on faith.
   now covers voice cloning too: it used to need your own Hugging Face token, and
   it no longer needs one, so Yap stores no credential of yours anywhere and reads
   nothing from your Keychain.
-- No telemetry, no account, nothing about you is ever sent. Yap's network
-  activity is model and engine downloads, plus an optional update check. The
-  Kokoro model (~340 MB) downloads from Settings ▸ Models. Pocket setup from
-  Settings ▸ Engine or Settings ▸ Models downloads its packages and 209 MB of
-  voice-cloning weights if no usable local copy exists, even if you only use
-  catalog voices. Cloning weights can also be installed separately with
-  **Download & enable cloning** in Settings ▸ Engine. Pocket's catalog model
-  weights download the first time Pocket loads; with **Pre-load Pocket model at
-  launch** on (the default in Settings ▸ Engine), that can happen at launch. The
-  free CMU ARCTIC starter voices download when requested with **Get free starter
-  voices** in Settings ▸ Engine.
-
-  Dictation's model pair also downloads at launch when Dictation is enabled and
-  the selected models are missing. English uses Parakeet Flash streaming and
-  Parakeet TDT v2 batch; multilingual uses Nemotron streaming and Parakeet TDT v3
-  batch. Models can also download when you press the menu's Dictate button or
-  select an engine in Settings ▸ Models, including its Download model and Retry
-  buttons, even when Dictation is disabled. Dictation models are cached in
-  `~/Library/Application Support/FluidAudio/Models`. Dictation is on by default.
-  Turn it off in Settings ▸ General to prevent automatic Dictation model downloads at launch.
-  Settings ▸ Models can remove downloaded files; if Dictation remains enabled,
-  missing models download again automatically at the next launch. Yap also
-  checks once a day for a newer release (default on, toggle off in Settings ▸
-  General). With the update check off, missing dictation models still download
-  automatically at launch when Dictation is enabled. Pocket catalog weights can
-  also download at launch after Pocket is installed if Pre-load Pocket model at
-  launch is on (the default). Kokoro, Pocket setup, cloning, and starter voice
-  downloads start from Settings. Verify network activity with Little Snitch / `nettop`.
+- Nothing about you is ever sent. Yap goes online only to download models and
+  to check for updates. The full list is in
+  [What goes over the network](#what-goes-over-the-network).
 - Open source. Every capability described here is in this repo.
 - Don't trust the prose? It's 2026. Point your coding agent (Claude Code or
   similar) at this repo and let it confirm these claims, or read the source
   yourself. Start with [`TextCapture.swift`](../app/Sources/Yap/TextCapture.swift)
   (capture) and [`server.py`](../backend/server.py) (the only thing that touches
   the TTS model). Or build your own and use these binaries as a reference.
+
+## What goes over the network
+
+Every network call Yap makes is a download or the update check. None of them
+sends your audio, your text, or anything that identifies you.
+
+**At launch, without a click:**
+
+- **Dictation models.** With Dictation on (the default), Yap loads the selected
+  model pair at launch and downloads any missing files. English uses Parakeet
+  Flash for streaming and Parakeet TDT v2 for the final pass; multilingual uses
+  Nemotron and Parakeet TDT v3. They are cached in
+  `~/Library/Application Support/FluidAudio/Models`. If you delete them in
+  Settings ▸ Models, they download again at the next launch. Turn off
+  **Dictation (ears)** in Settings ▸ General to stop this.
+- **Pocket model files.** Once the Pocket engine is installed, its model files
+  (weights, tokenizer and built-in voices) download from Hugging Face the first
+  time Pocket loads. Pocket loads at launch when it is the selected engine, or
+  when **Pre-load Pocket model at launch** is on (the default, in Settings ▸
+  Engine). Turning pre-load off does not stop this while Pocket is selected.
+- **The update check**, once a day. See [below](#the-update-check-optional).
+
+**When you ask for it:**
+
+- The Kokoro model (~340 MB), from **Download model** in Settings ▸ Models.
+- The Pocket engine's packages, from Settings ▸ Engine or Settings ▸ Models.
+  Setup also fetches the 209 MB voice-cloning weights if no usable local copy
+  exists, even if you only use catalog voices. **Download & enable cloning** in
+  Settings ▸ Engine fetches them on their own.
+- The free CMU ARCTIC starter voices, from **Get free starter voices** in
+  Settings ▸ Engine.
+- Dictation models while Dictation is off, from the menu's **Dictate** button or
+  engine picker, or from Settings ▸ Models.
+
+Once those downloads finish, and with the update check off, idle Yap makes no
+outbound connections. Check with Little Snitch or `nettop`.
 
 ## The two permissions Yap asks for
 
@@ -83,9 +94,8 @@ finishing window to catch the last word and mic buffers.
 The HUD stays red and says “Finishing…” during that window. The mic then closes
 before the final transcript is inserted. Audio is processed by a local Parakeet
 or Nemotron model on the Apple Neural Engine; it is
-**never written to disk and never leaves the machine**. There is no sidecar.
-Missing model files download at launch when Dictation is enabled or when you
-request them, as described above
+**never written to disk and never leaves the machine**. There is no sidecar,
+and the only network use is downloading its models
 ([`Dictation.swift`](../app/Sources/Yap/Dictation.swift)). Don't dictate? Don't
 grant it. The read-aloud half works without it.
 
@@ -99,9 +109,8 @@ grant it. The read-aloud half works without it.
 - No background scraping. Nothing is captured unless you trigger it.
 - No clipboard hijacking. The fallback restores whatever was on your clipboard.
 - Nothing about you leaves the machine. There is no server, no API key, no upload
-  path in the code. Outbound requests are for the model and engine downloads
-  listed above, including the automatic dictation download when enabled, and the
-  optional update check below. None sends personal data.
+  path in the code. Outbound requests are the downloads and the update check
+  listed in [What goes over the network](#what-goes-over-the-network).
 
 ## The update check (optional)
 
@@ -114,10 +123,8 @@ never downloads or installs anything on its own: the banner links to the release
 page, and you update via Homebrew or the DMG yourself.
 
 On by default, throttled to once per day. Turn it off in **Settings ▸ General ▸
-Updates**. With it off, missing dictation models still download automatically at
-launch when Dictation is enabled. Pocket catalog weights can also download at
-launch after installation if Pre-load Pocket model at launch is on. The other
-asset downloads start from Settings. The whole thing is one file:
+Updates**. That stops update checks only; the launch downloads above are
+separate. The whole thing is one file:
 [`UpdateChecker.swift`](../app/Sources/Yap/UpdateChecker.swift).
 
 ## Read source modes and your clipboard
