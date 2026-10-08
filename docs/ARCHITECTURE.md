@@ -34,6 +34,8 @@ behind one int16-PCM contract.
 | **Dictation (ears)** | |
 | Microphone capture, streaming ASR, accurate batch transcription + rolling preview | `Dictation.swift` |
 | Dictation hotkey, floating HUD, transcript stitching + orchestration | `DictationController.swift` |
+| Accurate stop-tail planning and overlap stitching (token timings, unique three-word seam) | `DictationTail.swift` |
+| Headless dictation probes (`--dictbench`, `--dictstop`, `--dictending`) | `DictationProbe.swift` |
 | Paste transcript at cursor | `TextInsert.swift` |
 | Optional speech-filler cleanup | `Fillers.swift` |
 | **App support** | |
@@ -70,8 +72,10 @@ dictation hotkey
   → TranscriptStitch merges the accurate preview + live tail → floating HUD
 stop hotkey
   → show Finishing and keep capturing briefly, then close audio admission and the mic tap
-  → finish any active preview; batch-decode an overlapping final segment, or the full recording if the seam is uncertain
-  → flush streaming ASR if the batch model is unavailable or the recorder overflowed
+  → stop the pump and wait for any active accurate preview to finish
+  → use a settled preview as the accurate head when its token timings support a safe seam; batch-decode and join the overlapping ending
+  → otherwise batch-decode the full recording when the batch model is usable and the recorder did not overflow
+  → if accurate batch text is unavailable or empty, drain queued audio and finish streaming ASR as the fallback
   → optional Fillers.clean
   → with Accessibility, TextInsert pastes at the cursor; otherwise the transcript stays on the clipboard for ⌘V
 ```
@@ -85,12 +89,20 @@ The stop chime plays after capture is closed so it does not contaminate the tail
 `--dictending <audio>` presses stop at the final word's onset while buffers keep
 arriving; `--immediate-stop` reproduces the old cutoff as the failing control.
 
-Stop always decodes through the last captured frame. `DictationTail` retains the
-accurate head and decodes at least six seconds of overlap plus newer audio. Token
-times locate the audio slice; a unique three-word match joins it to the head.
-Short recordings, missing timings and uncertain joins try the full batch pass.
-If batch decoding is unavailable or fails, stop flushes the streaming model.
-Loudness only schedules previews, because quiet final words can resemble noise.
+When the recording has not overflowed and the batch model is usable, stop decodes
+through the last captured frame. `DictationTail` retains a settled accurate head
+and decodes at least six seconds of overlap plus newer audio. Token times locate
+the audio slice; a unique three-word match joins it to the head. Short recordings,
+missing timings and uncertain joins use the full batch pass. If batch decoding
+is unavailable, fails, or the recorder overflowed, stop drains the queued audio
+and finishes the streaming model; this is the only stop path that calls
+`finish()`. When accurate batch text is available, the queued live partial is
+discarded. Loudness only schedules previews, because quiet final words can
+resemble noise.
+
+Each stop logs `dictation stop: <path> in <ms> ms (<duration> of audio)`; paths
+include `final segment`, `final pass` and `live stream`. `--dictstop` reports the
+selected path and compares its words with a full-pass reference.
 
 Streaming ASR provides the low-latency transcript. The batch model loads in the background and supplies the rolling accurate preview and final transcript when ready; the HUD combines the preview with any newer streaming words.
 

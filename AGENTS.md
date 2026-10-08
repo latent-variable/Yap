@@ -14,7 +14,8 @@ Two processes. Neither works without the other.
   project). Owns hotkey, text capture, cleanup, audio (voice), **dictation
   (ears)**, settings, UI. Entry point `Sources/Yap/YapApp.swift`; central
   state + read pipeline in `AppState.swift`; dictation in `Dictation.swift` +
-  `DictationController.swift`. Module map: `docs/ARCHITECTURE.md`.
+  `DictationController.swift`. Module map: `docs/ARCHITECTURE.md`; add a row
+  there when adding a module.
 - **`backend/server.py`** — local FastAPI sidecar wrapping `kokoro-onnx`.
   Endpoints `/health`, `/voices`, `/synthesize`. Loads Kokoro once, keeps it
   warm. **Voice only** — the ears (STT) run fully in-app on the Apple Neural
@@ -349,7 +350,8 @@ version.
 ## Acceleration (measured, not assumed)
 
 Provider is selectable: `auto` | `cpu` | `coreml` (Settings ▸ Diagnostics ▸
-Acceleration, or `MURMUR_PROVIDER` env → `server.py --provider`). `/health`
+Acceleration, or `YAP_PROVIDER` (`PARLEY_PROVIDER` is the legacy alias) →
+`server.py --provider`). `/health`
 reports `active_providers` / `available_providers`.
 
 `auto` resolves to **CPU on purpose.** Kokoro is 82M params; benchmarked on
