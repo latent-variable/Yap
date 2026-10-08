@@ -7,25 +7,56 @@ it touches, and why — so you don't have to take "private" on faith.
 
 - Runs entirely on your Mac. Speech is synthesized locally (Kokoro, or Pocket
   TTS if you enable it); dictation is transcribed locally on the Apple Neural
-  Engine (Parakeet).
+  Engine using Parakeet and Nemotron models.
 - No account, no sign-in, no analytics, no telemetry, no crash reporting. That
   now covers voice cloning too: it used to need your own Hugging Face token, and
   it no longer needs one, so Yap stores no credential of yours anywhere and reads
   nothing from your Keychain.
-- No telemetry, no account, nothing about you is ever sent. Yap's only network
-  activity is fetching assets you opt into, plus an optional update check: the
-  one-time Kokoro model download (~340 MB); the Pocket engine's packages, plus
-  209 MB of voice-cloning weights downloaded during setup if no usable local copy
-  exists, even if you only use catalog voices; and a once-a-day check for a newer
-  release (default on, toggle off in Settings ▸ General). With the update check
-  off and nothing downloading, idle Yap makes no outbound connections — verify
-  with Little Snitch / `nettop`.
+- Nothing about you is ever sent. Yap goes online only to download models and
+  to check for updates. The full list is in
+  [What goes over the network](#what-goes-over-the-network).
 - Open source. Every capability described here is in this repo.
 - Don't trust the prose? It's 2026. Point your coding agent (Claude Code or
   similar) at this repo and let it confirm these claims, or read the source
   yourself. Start with [`TextCapture.swift`](../app/Sources/Yap/TextCapture.swift)
   (capture) and [`server.py`](../backend/server.py) (the only thing that touches
   the TTS model). Or build your own and use these binaries as a reference.
+
+## What goes over the network
+
+Every network call Yap makes is a download or the update check. None of them
+sends your audio, your text, or anything that identifies you.
+
+**At launch, without a click:**
+
+- **Dictation models.** With Dictation on (the default), Yap loads the selected
+  model pair at launch and downloads any missing files. English uses Parakeet
+  Flash for streaming and Parakeet TDT v2 for the final pass; multilingual uses
+  Nemotron and Parakeet TDT v3. They are cached in
+  `~/Library/Application Support/FluidAudio/Models`. If you delete them in
+  Settings ▸ Models, they download again at the next launch. Turn off
+  **Dictation (ears)** in Settings ▸ General to stop this.
+- **Pocket model files.** Once the Pocket engine is installed, its model files
+  (weights, tokenizer and built-in voices) download from Hugging Face the first
+  time Pocket loads. Pocket loads at launch when it is the selected engine, or
+  when **Pre-load Pocket model at launch** is on (the default, in Settings ▸
+  Engine). Turning pre-load off does not stop this while Pocket is selected.
+- **The update check**, once a day. See [below](#the-update-check-optional).
+
+**When you ask for it:**
+
+- The Kokoro model (~340 MB), from **Download model** in Settings ▸ Models.
+- The Pocket engine's packages, from Settings ▸ Engine or Settings ▸ Models.
+  Setup also fetches the 209 MB voice-cloning weights if no usable local copy
+  exists, even if you only use catalog voices. **Download & enable cloning** in
+  Settings ▸ Engine fetches them on their own.
+- The free CMU ARCTIC starter voices, from **Get free starter voices** in
+  Settings ▸ Engine.
+- Dictation models while Dictation is off, from the menu's **Dictate** button or
+  engine picker, or from Settings ▸ Models.
+
+Once those downloads finish, and with the update check off, idle Yap makes no
+outbound connections. Check with Little Snitch or `nettop`.
 
 ## The two permissions Yap asks for
 
@@ -61,10 +92,10 @@ Press ⌘⇧D to start dictation. Capture begins once the model is ready and
 microphone permission is granted. Press again to stop; Yap allows a 0.6-second
 finishing window to catch the last word and mic buffers.
 The HUD stays red and says “Finishing…” during that window. The mic then closes
-before the final transcript is inserted. Audio goes straight to a local Parakeet
-model on the Apple Neural Engine; it is
-**never written to disk and never leaves the machine**. There is no sidecar and
-no network call anywhere in the dictation path
+before the final transcript is inserted. Audio is processed by a local Parakeet
+or Nemotron model on the Apple Neural Engine; it is
+**never written to disk and never leaves the machine**. There is no sidecar,
+and the only network use is downloading its models
 ([`Dictation.swift`](../app/Sources/Yap/Dictation.swift)). Don't dictate? Don't
 grant it. The read-aloud half works without it.
 
@@ -78,11 +109,10 @@ grant it. The read-aloud half works without it.
 - No background scraping. Nothing is captured unless you trigger it.
 - No clipboard hijacking. The fallback restores whatever was on your clipboard.
 - Nothing about you leaves the machine. There is no server, no API key, no upload
-  path in the code. The only outbound requests are the downloads you opt into
-  (models, Pocket packages, cloning weights) and the optional update check below,
-  and neither one sends anything about you.
+  path in the code. Outbound requests are the downloads and the update check
+  listed in [What goes over the network](#what-goes-over-the-network).
 
-## The update check (the one optional network call)
+## The update check (optional)
 
 So you know when a new version ships, Yap checks GitHub once a day for the latest
 release. It's a single unauthenticated GET to the public releases API
@@ -93,9 +123,8 @@ never downloads or installs anything on its own: the banner links to the release
 page, and you update via Homebrew or the DMG yourself.
 
 On by default, throttled to once per day. Turn it off in **Settings ▸ General ▸
-Updates**; with it off, Yap makes no *automatic* network calls — every other
-download (the model, optional Pocket packages, cloned-voice weights) is one-time
-and something you initiate. The whole thing is one file:
+Updates**. That stops update checks only; the launch downloads above are
+separate. The whole thing is one file:
 [`UpdateChecker.swift`](../app/Sources/Yap/UpdateChecker.swift).
 
 ## Read source modes and your clipboard

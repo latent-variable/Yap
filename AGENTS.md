@@ -19,8 +19,9 @@ Two processes. Neither works without the other.
 - **`backend/server.py`** — local FastAPI sidecar wrapping `kokoro-onnx`.
   Endpoints `/health`, `/voices`, `/synthesize`. Loads Kokoro once, keeps it
   warm. **Voice only** — the ears (STT) run fully in-app on the Apple Neural
-  Engine via FluidAudio/Parakeet, no sidecar, no network. This sidecar is the
-  only thing that touches the TTS model.
+  Engine via FluidAudio, with no STT sidecar. Transcription is local; missing
+  models download at launch when Dictation is enabled or when requested, as
+  described below. This sidecar is the only thing that touches the TTS model.
 
 **The contract between them is not a schema — it lives in the code.** Two
 pieces an agent must keep in sync if touching either side:
@@ -54,8 +55,11 @@ the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
 - **Pocket TTS** (Kyutai) — `pocket_engine.py`, PyTorch/**CPU**, ~10x realtime.
   Replaced Chatterbox. One model family, two modes:
   - **Catalog voices** (built-in, no account): 26 predefined speakers from the
-    *ungated* `kyutai/pocket-tts-without-voice-cloning` weights. A catalog name
-    (e.g. `michael`) is passed straight to `get_state_for_audio_prompt`.
+    *ungated* `kyutai/pocket-tts-without-voice-cloning` weights. They download
+    from Hugging Face when Pocket first loads, which `refreshHD` does at launch
+    whenever Pocket is installed and either the selected engine or pre-loaded
+    (`autoLoadHD`, default on). A catalog name (e.g. `michael`) is passed straight to
+    `get_state_for_audio_prompt`.
   - **Cloning** (opt-in, no account): clone any ~20s reference WAV in `hd-voices/`.
     Kyutai's cloning weights are CC-BY-4.0, so Yap fetches a byte-identical mirror
     (`CLONING_WEIGHTS_URL`) and checks the pinned SHA256 before use. **No HF
@@ -81,8 +85,8 @@ Key facts an agent must keep straight:
   its config once at load.
 - Cloning. **Never source or ship celebrity / non-consented voices.** The UI says
   clone only what you have rights to (Pocket has no built-in watermark, unlike the
-  old Chatterbox). Starter voices are CMU ARCTIC (free); `/voices/hd/starters`
-  fetches them. (Internal Swift identifiers still use the `hd*` prefix — `hdVoice`,
+  old Chatterbox). Starter voices are CMU ARCTIC (free); **Get free starter voices** in Settings ▸
+  Engine calls `/voices/hd/starters` to fetch them. (Internal Swift identifiers still use the `hd*` prefix — `hdVoice`,
   `hdInstalled`, `installHD` — they now denote the Pocket engine.)
 - **A selected cloned voice must survive restart.** `refreshHD` demotes a cloned
   `hdVoice` to a catalog default ONLY when cloning is *genuinely* unavailable —
@@ -173,9 +177,12 @@ Two-model design (mirrors FluidVoice), an agent must keep these straight:
   final pass cancels and awaits `refineTask` before using the batch manager.
 
 Gotchas: `@Published` writes from the streaming callback / refine loop must hop
-to the main actor. Models download on first dictation into the FluidAudio cache
-(`~/Library/Application Support/FluidAudio/Models`), managed from Settings ▸
-Models like the TTS engines. Dictation needs Microphone permission.
+to the main actor. When Dictation is enabled, the selected model pair downloads
+at launch if missing. The menu's Dictate button and the engine picker, Download
+model, or Retry in Settings ▸ Models can also request downloads while Dictation
+is off. Deleted models download again at the next launch if Dictation is on.
+Models are cached in `~/Library/Application Support/FluidAudio/Models`.
+Dictation needs Microphone permission.
 
 ## Packaging / deployment
 
@@ -197,11 +204,12 @@ requires `scripts/notarize.sh` + a paid Apple Developer ID. Don't claim
 ## Where state lives (not in the repo)
 
 - venv: `~/Library/Application Support/Yap/venv`
-- models: `~/Library/Application Support/Yap/models` (~340 MB, downloaded at
-  runtime)
+- Kokoro models: `~/Library/Application Support/Yap/models` (~340 MB, downloaded
+  at runtime)
+- Dictation models: `~/Library/Application Support/FluidAudio/Models`
 
-Both are gitignored and machine-local. `scripts/run_backend.sh` builds the venv
-on first run (uses `uv` if present, else `python3 -m venv`). Never commit
+These paths are gitignored and machine-local. `scripts/run_backend.sh` builds the
+venv on first run (uses `uv` if present, else `python3 -m venv`). Never commit
 models, the venv, `.build/`, or `dist/`.
 
 ## Build, run, validate
@@ -442,7 +450,11 @@ Rules for `MenuContent` and anything it shows:
 ## Standing constraints
 
 - **Fully local. No cloud TTS, no accounts, no analytics, ever.** That's the
-  product. Any network call besides the one-time model download is a regression.
+  product. **Any network call not on this list is a regression:** model and
+  engine downloads (Kokoro, the dictation pair at launch, Pocket packages and
+  its catalog files at load, cloning weights, starter voices) and the optional
+  daily update check. No user audio or text is ever sent. Adding a call means
+  adding it to this list and to `docs/PRIVACY.md` in the same change.
 - Default model IDs for any AI work: Opus `claude-opus-5`, Sonnet
   `claude-sonnet-5`, Haiku `claude-haiku-4-5-20251001`.
 - macOS 14+, Apple Silicon. Prefer native APIs (AVFoundation, Carbon hotkey,

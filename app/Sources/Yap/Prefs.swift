@@ -114,9 +114,9 @@ final class Prefs: ObservableObject {
     @Published var dictationEngine: String { didSet { d.set(dictationEngine, forKey: "dictationEngine") } }  // "english" | "multilingual"
     @Published var dictationChime: Bool { didSet { d.set(dictationChime, forKey: "dictationChime") } }       // play a start/stop sound
     @Published var removeFillers: Bool { didSet { d.set(removeFillers, forKey: "removeFillers") } }           // strip "um"/"uh" from dictation
-    // The one opt-outable network call: once/day Yap asks GitHub for the latest
-    // release version (no payload, no identifiers — see UpdateChecker / PRIVACY).
-    // Default on; off means zero outbound connections after the model download.
+    // Once/day Yap asks GitHub for the latest release version (no payload, no
+    // identifiers — see UpdateChecker / PRIVACY). Default on. Off stops update
+    // checks only: launch-time model downloads (dictation, Pocket) are separate.
     @Published var autoUpdateCheck: Bool { didSet { d.set(autoUpdateCheck, forKey: "autoUpdateCheck") } }
 
     /// Last time an update check actually ran (throttles the once/day auto-check).
