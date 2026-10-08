@@ -14,7 +14,8 @@ Two processes. Neither works without the other.
   project). Owns hotkey, text capture, cleanup, audio (voice), **dictation
   (ears)**, settings, UI. Entry point `Sources/Yap/YapApp.swift`; central
   state + read pipeline in `AppState.swift`; dictation in `Dictation.swift` +
-  `DictationController.swift`. Module map: `docs/ARCHITECTURE.md`.
+  `DictationController.swift`. Module map: `docs/ARCHITECTURE.md`; add a row
+  there when adding a module.
 - **`backend/server.py`** — local FastAPI sidecar wrapping `kokoro-onnx`.
   Endpoints `/health`, `/voices`, `/synthesize`. Loads Kokoro once, keeps it
   warm. **Voice only** — the ears (STT) run fully in-app on the Apple Neural
