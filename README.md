@@ -83,24 +83,28 @@ Now highlight that section, hit ⌘⇧R, and your agent literally briefs you:
 
 ## Permissions & privacy
 
-100% on your Mac. No account, no telemetry, nothing about you ever sent. Network activity is limited to assets you opt into (the model, plus Pocket packages/voices or cloning weights if you use them) and an optional once-a-day update check (toggle off in Settings ▸ General). **Accessibility** lets Yap read your selection and paste; **Microphone** feeds dictation. Audio never leaves the machine. Don't want to grant Accessibility? Switch **Read source → Clipboard** and copy text yourself first. Details: [docs/PRIVACY.md](docs/PRIVACY.md).
+100% on your Mac. No account, no telemetry, nothing about you ever sent. Missing dictation models download automatically at launch when Dictation is enabled (on by default): Parakeet Flash and Parakeet TDT v2 for English, or Nemotron and Parakeet TDT v3 for multilingual.
 
-**Don't take my word for it.** It's 2026. Point your coding agent (Claude Code or similar) at this repo and have it read the source and confirm nothing about you ever leaves the machine — every network path is an opt-in download or the optional update check. Or build your own from source and use these binaries as a reference. If it holds up, a ⭐ is appreciated.
+Turn off **Dictation (ears)** in Settings ▸ General to prevent automatic Dictation model downloads at launch. Missing models can still be requested from the menu's **Dictate** button or in Settings ▸ Models with the engine picker, **Download model**, or **Retry**, even when Dictation is off. Delete downloaded models from Settings ▸ Models; with Dictation on, missing files download again at the next launch.
+
+Other downloads (the Kokoro model, Pocket packages, starter voices and cloning weights) are user-initiated. Pocket's catalog model weights download when Pocket first loads; this can happen at launch if Pre-load Pocket model at launch is enabled (on by default). The once-a-day update check is optional (toggle off in Settings ▸ General). **Accessibility** lets Yap read your selection and paste; **Microphone** feeds dictation. Audio never leaves the machine. Don't want to grant Accessibility? Switch **Read source → Clipboard** and copy text yourself first. Details: [docs/PRIVACY.md](docs/PRIVACY.md).
+
+**Don't take my word for it.** It's 2026. Point your coding agent (Claude Code or similar) at this repo and have it read the source and confirm nothing about you ever leaves the machine. The source shows automatic and user-requested dictation model downloads, Pocket catalog weights that can download at launch, other Settings-initiated downloads, and the optional update check. Or build your own from source and use these binaries as a reference. If it holds up, a ⭐ is appreciated.
 
 > Ad-hoc signed, so each reinstall is a new identity to macOS and the Accessibility grant can go stale — remove Yap from the list and re-add, or run `scripts/setup_signing.sh` once for a stable identity.
 
 ## Architecture
 
-Native SwiftUI menu-bar app. **Voice** (TTS) talks to a local Python sidecar over `127.0.0.1`; **ears** (STT) run fully in-app on the ANE — no sidecar, no network.
+Native SwiftUI menu-bar app. **Voice** (TTS) talks to a local Python sidecar over `127.0.0.1`; **ears** (STT) run fully in-app on the ANE with local transcription. Missing dictation models download at launch when Dictation is enabled or when you request them.
 
 ```
 SwiftUI app ──HTTP──> FastAPI sidecar ──┬─ kokoro-onnx (ONNX, CPU)      ← voice: default, instant
   hotkey · capture · cleanup            └─ Pocket TTS (PyTorch, CPU)   ← voice: opt-in, natural + cloning
   AVAudioEngine player                     streaming int16 PCM @ 24 kHz
-  AVAudioEngine mic ──► FluidAudio / Parakeet (CoreML, ANE) ← ears: streaming dictation, in-app
+  AVAudioEngine mic ──► FluidAudio / Parakeet + Nemotron (CoreML, ANE) ← ears: streaming dictation, in-app
 ```
 
-~100 MB to download, ~270 MB installed (mostly the self-contained Python runtime). The Kokoro model (~340 MB) downloads on first launch; the Pocket engine (torch, ~1 GB) only if you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+~100 MB to download, ~270 MB installed (mostly the self-contained Python runtime). Download the Kokoro model (~340 MB) from Settings ▸ Models; the Pocket engine (torch, ~1 GB) is installed only if you enable it. Module map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Develop
 
@@ -111,7 +115,7 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest   # Swi
 cd backend && python -m pytest tests/ -v          # backend suite
 ```
 
-State lives in `~/Library/Application Support/Yap` (models, venv, cloned voices) — gitignored, machine-local.
+State lives in `~/Library/Application Support/Yap` (Kokoro models, venv, cloned voices) and `~/Library/Application Support/FluidAudio/Models` (dictation models). Both are gitignored and machine-local.
 
 ## License
 
