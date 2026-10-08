@@ -342,7 +342,8 @@ version.
 ## Acceleration (measured, not assumed)
 
 Provider is selectable: `auto` | `cpu` | `coreml` (Settings ▸ Diagnostics ▸
-Acceleration, or `MURMUR_PROVIDER` env → `server.py --provider`). `/health`
+Acceleration, or `YAP_PROVIDER` (`PARLEY_PROVIDER` is the legacy alias) →
+`server.py --provider`). `/health`
 reports `active_providers` / `available_providers`.
 
 `auto` resolves to **CPU on purpose.** Kokoro is 82M params; benchmarked on
