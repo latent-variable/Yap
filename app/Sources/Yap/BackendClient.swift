@@ -8,7 +8,7 @@ struct VoiceInfo: Identifiable, Decodable, Hashable {
     /// Server-supplied grouping label (Pocket: "Pocket Voices" / "✨ Cloned").
     /// Absent for Kokoro voices (grouped by language instead).
     var section: String? = nil
-    /// Pocket cloned refs need the gated cloning model loaded to be usable.
+    /// Pocket cloned refs need the cloning weights loaded to be usable.
     var needs_cloning: Bool? = nil
 }
 
@@ -92,7 +92,7 @@ struct BackendClient {
         return r.voices
     }
 
-    /// Pocket engine status. `cloning` = the gated cloning model is loaded;
+    /// Pocket engine status. `cloning` = the cloning weights are loaded;
     /// `cloning_installed` = the cloning weights are on disk (which is a
     /// different question from `cloning`, i.e. whether they are LOADED yet).
     struct EngineInfo: Decodable {
