@@ -209,10 +209,10 @@ final class AppState: ObservableObject {
             // own auto-warm would re-fire warmHD() → a tight failing loop that
             // spams the backend. On failure we stop; the next user action retries.
             guard loaded else { return }
-            // Warming loaded the model, which may have pulled the gated cloning
-            // weights. refreshHD re-reads engine status (flips cloningReady) AND
-            // re-runs the demote guard — so an invalid token demotes the clone now
-            // instead of 403-ing on the next read.
+            // Warming loaded the model, which may have loaded the cloning weights.
+            // refreshHD re-reads engine status (flips cloningReady) AND re-runs the
+            // demote guard — so a successful load without cloning support demotes
+            // the clone now instead of 403-ing on the next read.
             refreshHD()
             // Only the active engine need stay resident; reclaim the other's RAM.
             offloadInactiveEngine()
@@ -743,7 +743,7 @@ final class AppState: ObservableObject {
         hdVoicesDir.deletingLastPathComponent().appending(path: "hd-packages")
     }
 
-    /// Whether the gated cloning model is loaded (token present + terms accepted).
+    /// Whether cloning weights from Yap's pinned CC-BY-4.0 mirror are loaded.
     @Published var cloningReady = false      // weights LOADED (engine is lazy)
     @Published var cloningInstalled = false  // weights ON DISK
     @Published var installingCloning = false // fetch in flight

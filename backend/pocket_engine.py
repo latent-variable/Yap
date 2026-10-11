@@ -399,7 +399,7 @@ class PocketEngine:
     def __init__(self):
         self.model = None
         self.error: Optional[str] = None
-        self.has_cloning = False          # set True only if the gated model loaded
+        self.has_cloning = False          # set True only if the cloning weights loaded
         # voice key -> cached conditioning. Catalog voices key by name (str);
         # cloned refs key by (path, mtime) so re-recording a voice under the same
         # name busts the stale conditioning instead of reusing the old clip's.
@@ -488,7 +488,7 @@ class PocketEngine:
                 if self.model is None:      # unloaded between load() and here
                     return False
                 if voice:
-                    # A cloned ref needs the gated model; if cloning isn't loaded,
+                    # A cloned ref needs the cloning weights; if they aren't loaded,
                     # warm a catalog voice instead so the engine is still primed
                     # (and we don't log a spurious failure).
                     if voice not in CATALOG_NAMES and not self.has_cloning:
@@ -517,7 +517,7 @@ class PocketEngine:
 
     def voices(self) -> list[tuple[str, str]]:
         """Catalog voices (name, lang). Cloned reference clips are listed by the
-        server from hd-voices/, gated on has_cloning."""
+        server from hd-voices/; synthesis requires has_cloning."""
         return list(CATALOG_VOICES)
 
     def synth(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray:

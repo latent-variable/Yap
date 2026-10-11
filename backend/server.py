@@ -672,9 +672,9 @@ def voices(engine_name: str = Query("kokoro", alias="engine")):
             items.append({"id": name, "lang": lang,
                           "lang_label": pocket_lang.get(lang, lang),
                           "gender": "catalog", "section": "Pocket Voices"})
-        # Cloned reference clips — only usable when the gated cloning model is
-        # loaded (user supplied a token + accepted terms). Listed either way so
-        # the user sees their clones; the UI can disable them when cloning is off.
+        # Cloned reference clips — usable only when the cloning weights are loaded.
+        # Listed either way so the user sees their clones; the UI can disable them
+        # when cloning is off.
         #
         # List only what synthesis can actually resolve. This glob and
         # hd_voice_path used to disagree about the id grammar, so a clip named
