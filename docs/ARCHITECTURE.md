@@ -36,6 +36,7 @@ behind one int16-PCM contract.
 | Dictation hotkey, floating HUD, transcript stitching + orchestration | `DictationController.swift` |
 | Accurate stop-tail planning and overlap stitching (token timings, unique three-word seam) | `DictationTail.swift` |
 | Headless dictation probes (`--dictbench`, `--dictstop`, `--dictending`) | `DictationProbe.swift` |
+| HUD drag probe (`--hudtest`, real mouse events against the real panel) | `HUDProbe.swift` |
 | Paste transcript at cursor | `TextInsert.swift` |
 | Optional speech-filler cleanup | `Fillers.swift` |
 | **App support** | |

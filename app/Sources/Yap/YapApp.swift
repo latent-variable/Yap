@@ -53,6 +53,9 @@ enum YapMain {
                                    legacy: CommandLine.arguments.contains("--legacy"),
                                    quick: CommandLine.arguments.contains("--quick"))
         }
+        if CommandLine.arguments.contains("--hudtest") {
+            HUDProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
+        }
         YapApp.main()
     }
 }

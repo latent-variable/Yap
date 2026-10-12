@@ -14,7 +14,7 @@ final class DictationController: ObservableObject {
     @Published private(set) var targetIcon: NSImage?
 
     private let hotkey = HotKeyManager(slot: 2)
-    private var panel: NSPanel?
+    private var panel: HUDPanel?
     private var targetObserver: Any?
 
     func bootstrap() {
@@ -133,13 +133,12 @@ final class DictationController: ObservableObject {
 
     private func showHUD() {
         if panel == nil {
-            let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 84),
+            let p = HUDPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 84),
                             styleMask: [.nonactivatingPanel, .borderless],
                             backing: .buffered, defer: false)
             p.level = .floating
             p.isFloatingPanel = true
             p.hidesOnDeactivate = false
-            p.isMovableByWindowBackground = true
             p.backgroundColor = .clear
             p.isOpaque = false
             p.hasShadow = true
@@ -153,6 +152,9 @@ final class DictationController: ObservableObject {
     }
 
     private func hideHUD() { stopTargetTracking(); panel?.orderOut(nil) }
+
+    /// Probe-only (`--hudtest`): put the real panel on screen without a session.
+    func showHUDForProbe() -> HUDPanel? { showHUD(); return panel }
 
     private func positionHUD() {
         guard let panel, let screen = NSScreen.main else { return }
@@ -174,8 +176,50 @@ final class DictationController: ObservableObject {
         let h = max(74, min(height.rounded(.up) + 2, 322))
         let f = panel.frame
         guard abs(f.height - h) > 0.5 else { return }
-        panel.setFrame(NSRect(x: f.minX, y: f.minY, width: f.width, height: h),
+        // Not `f.origin`: mid-drag that is where the panel was a moment ago, and
+        // resizing there pulls it back out from under the pointer.
+        let o = panel.liveOrigin
+        panel.setFrame(NSRect(x: o.x, y: o.y, width: f.width, height: h),
                        display: true, animate: false)
+    }
+}
+
+/// The HUD's window. A press anywhere on it drags it: the HUD has no controls,
+/// so a mouse-down can only mean "move this out of my way".
+///
+/// It used to rely on `isMovableByWindowBackground`. On macOS 27 that no longer
+/// moves this window: the press goes to the SwiftUI content and the panel stays
+/// where it is (`--hudtest --legacy` measures it). Starting the drag here does
+/// not depend on how the content hit-tests.
+final class HUDPanel: NSPanel {
+    /// Probe-only (`--hudtest --legacy`): off restores the pre-fix behaviour.
+    var dragsOnPress = true
+
+    /// Pointer minus frame origin, set for the length of a drag.
+    private var grabOffset: CGSize?
+
+    override func sendEvent(_ event: NSEvent) {
+        if dragsOnPress, event.type == .leftMouseDown {
+            let m = NSEvent.mouseLocation
+            grabOffset = CGSize(width: m.x - frame.minX, height: m.y - frame.minY)
+            performDrag(with: event)
+            return
+        }
+        if event.type == .leftMouseUp { grabOffset = nil }
+        super.sendEvent(event)
+    }
+
+    /// Where the panel is right now. The window server moves a dragged window
+    /// and AppKit hears about it late, so `frame` trails the pointer mid-drag
+    /// (30pt in `--hudtest`); the pointer does not. The button check covers a
+    /// mouse-up that never reached us.
+    var liveOrigin: NSPoint {
+        guard let grabOffset, NSEvent.pressedMouseButtons & 1 != 0 else {
+            self.grabOffset = nil
+            return frame.origin
+        }
+        let m = NSEvent.mouseLocation
+        return NSPoint(x: m.x - grabOffset.width, y: m.y - grabOffset.height)
     }
 }
 
