@@ -15,6 +15,14 @@ final class DictationController: ObservableObject {
 
     private let hotkey = HotKeyManager(slot: 2)
     private var panel: HUDPanel?
+    /// Where the HUD's bottom-left corner belongs: the remembered spot, or home.
+    /// The panel sits here whenever it fits, so growing near a screen edge and
+    /// shrinking again brings it back instead of drifting.
+    private var hudAnchor: NSPoint?
+    /// Where the remembered spot is kept. Injectable so `--hudtest` can drag the
+    /// HUD around without moving the user's.
+    var hudDefaults: UserDefaults = .standard
+    static let hudOriginKey = "dictationHUDOrigin"
     private var targetObserver: Any?
 
     func bootstrap() {
@@ -143,7 +151,13 @@ final class DictationController: ObservableObject {
             p.isOpaque = false
             p.hasShadow = true
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            p.contentView = NSHostingView(rootView: DictationHUD(controller: self))
+            let host = NSHostingView(rootView: DictationHUD(controller: self))
+            // `resizeHUD` owns the panel's size and place. Left on, the hosting
+            // view also resizes the window to its content, from the top edge,
+            // which nudged the panel up 3pt behind our back every time.
+            host.sizingOptions = []
+            p.contentView = host
+            p.onDragEnd = { [weak self] in self?.settleHUD() }
             panel = p
         }
         positionHUD()
@@ -151,19 +165,55 @@ final class DictationController: ObservableObject {
         panel?.orderFrontRegardless()
     }
 
-    private func hideHUD() { stopTargetTracking(); panel?.orderOut(nil) }
+    private func hideHUD() {
+        stopTargetTracking()
+        // Covers a drag whose mouse-up never reached us.
+        if panel?.dragOrigin == nil { settleHUD() }
+        panel?.orderOut(nil)
+    }
 
-    /// Probe-only (`--hudtest`): put the real panel on screen without a session.
+    /// Probe-only (`--hudtest`): the real show and hide, without a session.
     func showHUDForProbe() -> HUDPanel? { showHUD(); return panel }
+    func hideHUDForProbe() { hideHUD() }
 
+    private var screens: [NSRect] { NSScreen.screens.map(\.visibleFrame) }
+
+    private var savedHUDOrigin: NSPoint? {
+        get { hudDefaults.string(forKey: Self.hudOriginKey).map(NSPointFromString) }
+        set { hudDefaults.set(newValue.map(NSStringFromPoint), forKey: Self.hudOriginKey) }
+    }
+
+    /// The remembered spot, or bottom-center of the focused screen the first time.
     private func positionHUD() {
-        guard let panel, let screen = NSScreen.main else { return }
-        let v = screen.visibleFrame
+        guard let panel else { return }
         let size = panel.frame.size
-        // Bottom-center, a little above the dock.
-        let x = v.midX - size.width / 2
-        let y = v.minY + 120
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        if let saved = savedHUDOrigin {
+            hudAnchor = saved
+        } else if let screen = NSScreen.main {
+            hudAnchor = HUDPlacement.home(size: size, in: screen.visibleFrame)
+        }
+        panel.setFrameOrigin(onScreenOrigin(for: size))
+    }
+
+    /// The anchor, moved only as far as it takes to keep a panel of `size`
+    /// wholly on a screen.
+    private func onScreenOrigin(for size: NSSize) -> NSPoint {
+        guard let panel else { return .zero }
+        return HUDPlacement.onScreen(NSRect(origin: hudAnchor ?? panel.frame.origin, size: size),
+                                     screens: screens)
+    }
+
+    /// The user let go of the HUD: bring it wholly back on screen if it was
+    /// dropped past an edge, then remember that spot. Only a drag that moved it
+    /// counts, so a plain click remembers nothing.
+    private func settleHUD() {
+        guard let panel, let from = panel.dragStart else { return }
+        panel.dragStart = nil
+        guard panel.frame.origin != from else { return }
+        let origin = HUDPlacement.onScreen(panel.frame, screens: screens)
+        if origin != panel.frame.origin { panel.setFrameOrigin(origin) }
+        hudAnchor = origin
+        savedHUDOrigin = origin
     }
 
     /// Resize the panel to fit the HUD's natural height — keeping the bottom edge
@@ -176,11 +226,12 @@ final class DictationController: ObservableObject {
         let h = max(74, min(height.rounded(.up) + 2, 322))
         let f = panel.frame
         guard abs(f.height - h) > 0.5 else { return }
-        // Not `f.origin`: mid-drag that is where the panel was a moment ago, and
-        // resizing there pulls it back out from under the pointer.
-        let o = panel.liveOrigin
-        panel.setFrame(NSRect(x: o.x, y: o.y, width: f.width, height: h),
-                       display: true, animate: false)
+        // Mid-drag the panel follows the pointer: `f.origin` is where it was a
+        // moment ago, and resizing there pulls it back out from under the hand.
+        // At rest it goes back to its anchor, kept on screen at the new height.
+        let size = NSSize(width: f.width, height: h)
+        let o = panel.dragOrigin ?? onScreenOrigin(for: size)
+        panel.setFrame(NSRect(origin: o, size: size), display: true, animate: false)
     }
 }
 
@@ -195,6 +246,13 @@ final class HUDPanel: NSPanel {
     /// Probe-only (`--hudtest --legacy`): off restores the pre-fix behaviour.
     var dragsOnPress = true
 
+    /// Runs once the user lets go, a turn later so `frame` has caught up.
+    var onDragEnd: (() -> Void)?
+
+    /// Where the panel was when the user pressed on it, until that drag is
+    /// settled.
+    var dragStart: NSPoint?
+
     /// Pointer minus frame origin, set for the length of a drag.
     private var grabOffset: CGSize?
 
@@ -202,24 +260,58 @@ final class HUDPanel: NSPanel {
         if dragsOnPress, event.type == .leftMouseDown {
             let m = NSEvent.mouseLocation
             grabOffset = CGSize(width: m.x - frame.minX, height: m.y - frame.minY)
+            if dragStart == nil { dragStart = frame.origin }
             performDrag(with: event)
             return
         }
-        if event.type == .leftMouseUp { grabOffset = nil }
+        if event.type == .leftMouseUp, grabOffset != nil {
+            grabOffset = nil
+            DispatchQueue.main.async { [weak self] in self?.onDragEnd?() }
+        }
         super.sendEvent(event)
     }
 
-    /// Where the panel is right now. The window server moves a dragged window
-    /// and AppKit hears about it late, so `frame` trails the pointer mid-drag
-    /// (30pt in `--hudtest`); the pointer does not. The button check covers a
-    /// mouse-up that never reached us.
-    var liveOrigin: NSPoint {
+    /// Where the panel is while it is being dragged, nil when it is not. The
+    /// window server moves a dragged window and AppKit hears about it late, so
+    /// `frame` trails the pointer mid-drag (30pt in `--hudtest`); the pointer
+    /// does not. The button check covers a mouse-up that never reached us.
+    var dragOrigin: NSPoint? {
         guard let grabOffset, NSEvent.pressedMouseButtons & 1 != 0 else {
             self.grabOffset = nil
-            return frame.origin
+            return nil
         }
         let m = NSEvent.mouseLocation
         return NSPoint(x: m.x - grabOffset.width, y: m.y - grabOffset.height)
+    }
+}
+
+/// Where the HUD may sit. Pure, so `--selftest` covers it.
+enum HUDPlacement {
+    /// Bottom-center of `visible`, a little above the dock.
+    static func home(size: CGSize, in visible: CGRect) -> CGPoint {
+        CGPoint(x: visible.midX - size.width / 2, y: visible.minY + 120)
+    }
+
+    /// The origin nearest `frame`'s that puts all of it on one screen: the
+    /// screen it overlaps most, or the closest one when it overlaps none (a
+    /// remembered spot on a display that is gone). A remembered spot is the
+    /// user's only way to lose the HUD, so it is never trusted as it stands.
+    static func onScreen(_ frame: CGRect, screens: [CGRect]) -> CGPoint {
+        func overlap(_ s: CGRect) -> CGFloat {
+            let i = s.intersection(frame)
+            return i.isNull ? 0 : i.width * i.height
+        }
+        func distance(_ s: CGRect) -> CGFloat {
+            let dx = max(s.minX - frame.midX, 0, frame.midX - s.maxX)
+            let dy = max(s.minY - frame.midY, 0, frame.midY - s.maxY)
+            return dx * dx + dy * dy
+        }
+        guard let best = screens.max(by: { overlap($0) < overlap($1) }) else { return frame.origin }
+        let s = overlap(best) > 0 ? best : screens.min(by: { distance($0) < distance($1) }) ?? best
+        // max() last: a panel wider or taller than the screen keeps its origin
+        // corner on it.
+        return CGPoint(x: max(s.minX, min(frame.minX, s.maxX - frame.width)),
+                       y: max(s.minY, min(frame.minY, s.maxY - frame.height)))
     }
 }
 
