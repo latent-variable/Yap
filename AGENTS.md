@@ -175,18 +175,11 @@ Two-model design (mirrors FluidVoice), an agent must keep these straight:
   segment and fallbacks are in `docs/ARCHITECTURE.md`; `--dictstop` checks them.
 - **Two passes never share `finalASR`** (`AsrManager`, not thread-safe). The
   final pass cancels and awaits `refineTask` before using the batch manager.
-- **The HUD drags itself; don't go back to `isMovableByWindowBackground`.**
-  macOS 27 stopped moving the panel that way (the press goes to the SwiftUI
-  content), so `HUDPanel.sendEvent` starts the drag on any press, and
-  `resizeHUD` places the panel from the pointer mid-drag because `frame` trails
-  it. `--hudtest` drags the real panel; `--legacy` is the old path and fails.
-- **The HUD remembers where it was dragged, and never rests off screen.** Only
-  a drag that moved it saves a spot (`dictationHUDOrigin`). Every placement goes
-  through `HUDPlacement.onScreen`: on show, on drop, and on resize, so a saved
-  spot on an unplugged display or a drop past an edge cannot lose it. Keep
-  `sizingOptions = []` on the hosting view: left on, it resizes the window from
-  the top edge behind `resizeHUD`, 3pt per session, and a remembered spot drifts.
-  `--hudtest` checks all of it against a separate defaults suite.
+- **The HUD owns its own drag, size and place.** Don't go back to
+  `isMovableByWindowBackground`, don't re-enable the hosting view's
+  `sizingOptions`, and send every placement through `HUDPlacement.onScreen`: a
+  remembered spot must never rest off screen. Why, with the measurements:
+  `docs/ARCHITECTURE.md`, *The HUD window*. `--hudtest` checks it.
 
 Gotchas: `@Published` writes from the streaming callback / refine loop must hop
 to the main actor. When Dictation is enabled, the selected model pair downloads

@@ -107,6 +107,40 @@ selected path and compares its words with a full-pass reference.
 
 Streaming ASR provides the low-latency transcript. The batch model loads in the background and supplies the rolling accurate preview and final transcript when ready; the HUD combines the preview with any newer streaming words.
 
+### The HUD window
+
+The HUD is a borderless, non-activating `HUDPanel` holding a SwiftUI view. Three
+things about it are deliberate.
+
+**It starts its own drag.** `isMovableByWindowBackground` stopped moving this
+panel on macOS 27.0.1: the press goes to the SwiftUI content and the window
+stays put. `HUDPanel.sendEvent` calls `performDrag` on any press instead. The
+HUD has no controls, so every press is a drag. While a drag is in flight the
+window server moves the window and AppKit hears late, so `frame` trails the
+pointer (30pt measured). A resize in that window used the stale origin and
+pulled the panel back, so `resizeHUD` takes the origin from the pointer
+(`dragOrigin`) until the button comes up.
+
+**It remembers where it was dropped, and never rests off screen.** A drag that
+moved the panel saves its bottom-left corner as `dictationHUDOrigin`; a plain
+click saves nothing, and until the first drag it opens at bottom center of the
+focused screen. That corner is the anchor. Every placement goes through
+`HUDPlacement.onScreen`, on show, on drop and on resize, which moves the frame
+the least distance that puts all of it on one screen: the one it overlaps most,
+or the nearest when it overlaps none. So a drop past an edge slides back, a spot
+on an unplugged display lands on the nearest edge of what is left (the saved
+value is kept, so it returns when the display does), and a panel that grows near
+the top shifts down and goes back to its anchor when it shrinks.
+
+**Only `resizeHUD` sizes the window.** `NSHostingView` would also resize it to
+its content, from the top edge. The two fought, and the panel ended each session
+3pt above where it was put, which a remembered spot turns into drift. The
+hosting view's `sizingOptions` are off.
+
+`--hudtest` drags the real panel with mouse events and checks all of this. It
+writes to its own defaults suite (`yap.hudtest`), so it never moves the user's
+HUD. `--legacy` is the old drag path, the control that fails.
+
 ## Audio
 
 Raw int16 mono PCM at 24 kHz streams from the backend as `application/octet-stream`. The Swift side converts to `Float32` `AVAudioPCMBuffer`s and schedules them on an `AVAudioPlayerNode` as they arrive — playback begins after the configured prebuffer cushion is queued, or on flush when a shorter stream ends. Pitch/volume/speed all run through `AVAudioUnitTimePitch` at playback (live-adjustable), so speed is real-time and identical across both engines.
