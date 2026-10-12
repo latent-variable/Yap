@@ -191,6 +191,26 @@ enum Selftest {
                 TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
                 "one two . three")
 
+        print("HUD placement — a remembered spot never leaves the screen")
+        let mainScreen = CGRect(x: 0, y: 0, width: 2560, height: 1400)
+        let sideScreen = CGRect(x: -1080, y: 0, width: 1080, height: 1900)
+        let bothScreens = [mainScreen, sideScreen]
+        func placed(_ x: CGFloat, _ y: CGFloat, h: CGFloat = 74, on screens: [CGRect]) -> String {
+            let o = HUDPlacement.onScreen(CGRect(x: x, y: y, width: 460, height: h), screens: screens)
+            return "\(Int(o.x)),\(Int(o.y))"
+        }
+        checkEq("on screen stays put", placed(900, 300, on: bothScreens), "900,300")
+        checkEq("past the right edge comes back", placed(2400, 300, on: bothScreens), "2100,300")
+        checkEq("below the bottom comes back", placed(900, -50, on: bothScreens), "900,0")
+        checkEq("tall panel near the top shifts down", placed(900, 1300, h: 322, on: bothScreens), "900,1078")
+        checkEq("on the side screen stays there", placed(-800, 1700, on: bothScreens), "-800,1700")
+        checkEq("straddling two screens goes to the one it is mostly on", placed(-100, 300, on: bothScreens), "0,300")
+        checkEq("side screen gone: nearest edge of what is left", placed(-800, 1700, on: [mainScreen]), "0,1326")
+        checkEq("far off every screen comes back", placed(90_000, -90_000, on: bothScreens), "2100,0")
+        checkEq("no screens leaves it alone", placed(900, 300, on: []), "900,300")
+        let homeSpot = HUDPlacement.home(size: CGSize(width: 460, height: 74), in: mainScreen)
+        checkEq("home is bottom center", "\(Int(homeSpot.x)),\(Int(homeSpot.y))", "1050,120")
+
         print("Dictation final segment — finish the ending, retain the accurate head")
         let previewWords = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen".split(separator: " ")
         let timings = previewWords.enumerated().map { i, word in

@@ -180,6 +180,13 @@ Two-model design (mirrors FluidVoice), an agent must keep these straight:
   content), so `HUDPanel.sendEvent` starts the drag on any press, and
   `resizeHUD` places the panel from the pointer mid-drag because `frame` trails
   it. `--hudtest` drags the real panel; `--legacy` is the old path and fails.
+- **The HUD remembers where it was dragged, and never rests off screen.** Only
+  a drag that moved it saves a spot (`dictationHUDOrigin`). Every placement goes
+  through `HUDPlacement.onScreen`: on show, on drop, and on resize, so a saved
+  spot on an unplugged display or a drop past an edge cannot lose it. Keep
+  `sizingOptions = []` on the hosting view: left on, it resizes the window from
+  the top edge behind `resizeHUD`, 3pt per session, and a remembered spot drifts.
+  `--hudtest` checks all of it against a separate defaults suite.
 
 Gotchas: `@Published` writes from the streaming callback / refine loop must hop
 to the main actor. When Dictation is enabled, the selected model pair downloads
@@ -243,10 +250,11 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 # vs a full pass, real time. --legacy forces the full final pass (the control).
 "$(swift build --show-bin-path)/Yap" --dictbench speech.aiff
 "$(swift build --show-bin-path)/Yap" --dictstop speech.aiff [seconds] [--legacy]
-# Can the dictation HUD be dragged, including while the transcript grows? Posts
+# Can the dictation HUD be dragged, including while the transcript grows, and
+# does it come back where it was left without ever resting off screen? Posts
 # real mouse events, so it runs from the SIGNED bundle through `open` (that is
-# where the Accessibility grant lives) and takes the pointer for ~4s. --legacy
-# is the pre-fix behaviour, the control that must fail.
+# where the Accessibility grant lives) and takes the pointer for ~8s. --legacy
+# is the pre-fix drag behaviour, the control that must fail.
 bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/hudtest.txt --args --hudtest [--legacy]; cat /tmp/hudtest.txt
 
 # backend robustness suite — fast set (every code path, one cheap case each)
