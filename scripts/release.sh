@@ -1,146 +1,208 @@
 #!/usr/bin/env bash
-# One-shot release: bump version, build the self-contained app + DMG, publish a
-# GitHub release, and bump the Homebrew cask — so brew users never lag and the
-# cask sha can't drift.
+# Two-step release that never writes to `main` of either repo.
 #
-#   scripts/release.sh 0.2.1                      # auto-generated notes
-#   scripts/release.sh 0.2.1 --notes-file NOTES.md
-#   scripts/release.sh 0.2.1 --notes "Short text"
-#   scripts/release.sh 0.2.1 --dry-run           # do everything except publish
+#   scripts/release.sh prepare 0.9.5 [--dry-run]
+#       Branch `release/v0.9.5` in Yap AND in the Homebrew tap (both created with
+#       ~/.agents/bin/worktree.sh), bump the version, build the DMG from the
+#       committed tree, bump the cask (version + sha256), push both branches and
+#       open one reviewable PR in each. Publishes nothing. Review and merge both
+#       PRs through the normal review cycle.
 #
-# The tap repo is expected at ../homebrew-tap (override with PARLEY_TAP_DIR).
+#   scripts/release.sh publish 0.9.5 [--notes-file F | --notes TEXT] [--yes] [--dry-run]
+#       The explicit, separate step. Runs only after the Yap version PR is merged.
+#       Refuses unless main's head carries the version AND has the exact tree the
+#       DMG was built from, and the tap PR's cask carries the DMG's checksum. Then
+#       tags that verified main commit, uploads the DMG, and merges the tap PR.
+#       Without --yes it prints the plan and stops.
+#
+# --dry-run on either subcommand validates and prints the plan, touching nothing.
+# Both repos may be plain clones or managed worktrees (a worktree's .git is a FILE).
+# The tap is expected at ../homebrew-tap (override with YAP_TAP_DIR).
+# This script deletes nothing (no rm, no trash), so there is no path to validate.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:?usage: release.sh <version> [--notes-file FILE | --notes TEXT] [--dry-run]}"
-shift
-NOTES_FILE=""; NOTES=""; DRY=0
+TAP_DIR="${YAP_TAP_DIR:-$ROOT/../homebrew-tap}"
+WORKTREE_SH="${WORKTREE_SH:-$HOME/.agents/bin/worktree.sh}"
+PLIST_REL="app/Resources/Info.plist"
+CASK_REL="Casks/yap.rb"
+
+say() { printf '\n\033[1m[release] %s\033[0m\n' "$1"; }
+die() { echo "release: $*" >&2; exit 1; }
+usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1; }
+
+[ $# -ge 2 ] || usage
+CMD="$1"; VERSION="$2"; shift 2
+case "$CMD" in prepare|publish) ;; *) usage;; esac
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid version: $VERSION"
+
+NOTES_FILE=""; NOTES=""; DRY=0; YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --notes-file) NOTES_FILE="${2:?}"; shift 2;;
     --notes)      NOTES="${2:?}"; shift 2;;
     --dry-run)    DRY=1; shift;;
-    *) echo "unknown arg: $1"; exit 1;;
+    --yes)        YES=1; shift;;
+    *) die "unknown arg: $1";;
   esac
 done
+if [ "$CMD" = prepare ] && { [ -n "$NOTES_FILE" ] || [ -n "$NOTES" ] || [ "$YES" = 1 ]; }; then
+  die "--notes/--notes-file/--yes belong to 'publish'"
+fi
+if [ -n "$NOTES_FILE" ] && [ ! -f "$NOTES_FILE" ]; then die "no notes file: $NOTES_FILE"; fi
 
-PLIST="$ROOT/app/Resources/Info.plist"
-TAP_DIR="${YAP_TAP_DIR:-${PARLEY_TAP_DIR:-$ROOT/../homebrew-tap}}"
-CASK="$TAP_DIR/Casks/yap.rb"
 TAG="v$VERSION"
-DMG="$ROOT/dist/Yap-$VERSION.dmg"
-say() { printf '\n\033[1m[release] %s\033[0m\n' "$1"; }
+BRANCH="release/$TAG"
 
-# ---- preflight ----
-command -v gh >/dev/null || { echo "gh CLI required"; exit 1; }
-[ -f "$CASK" ] || { echo "cask not found at $CASK (set PARLEY_TAP_DIR)"; exit 1; }
-[ -d "$TAP_DIR/.git" ] || { echo "tap repo has no git at $TAP_DIR"; exit 1; }
-if gh release view "$TAG" >/dev/null 2>&1; then
-  echo "release $TAG already exists — bump the version"; exit 1
-fi
-if [ -n "$NOTES_FILE" ] && [ ! -f "$NOTES_FILE" ]; then echo "no notes file: $NOTES_FILE"; exit 1; fi
-
-# A real run commits both targets, so any edit already sitting in them would ride
-# into a tagged, published release commit (and the cask push). Refuse instead.
-# --dry-run is exempt: it restores the exact bytes it found (see the trap below).
-# diff-index against HEAD, not `git diff`: `git diff` compares the worktree with
-# the INDEX, so an edit that is already staged reads clean and then rides into the
-# release commit anyway. Refresh first, or stale stat info reports a false dirty.
-if [ "$DRY" = 0 ]; then
-  git -C "$ROOT" update-index -q --refresh || true
-  git -C "$TAP_DIR" update-index -q --refresh || true
-  if ! git -C "$ROOT" diff-index --quiet HEAD -- "$PLIST"; then
-    echo "uncommitted or staged changes in $PLIST — commit or stash them first"; exit 1
-  fi
-  if ! git -C "$TAP_DIR" diff-index --quiet HEAD -- "$CASK"; then
-    echo "uncommitted or staged changes in $CASK — commit or stash them first"; exit 1
-  fi
-fi
-
-# Snapshot both targets before editing them. --dry-run used to undo itself with
-# `git checkout -- <file>`, which restores HEAD rather than what was there, so it
-# silently destroyed any uncommitted edit the operator already had. Restore the
-# bytes instead, from a trap so a mid-run failure or a Ctrl-C can't leave the
-# files bumped either.
-#
-# Held base64-encoded in variables, not in temp files: command substitution eats
-# trailing newlines (so a plain "$(cat …)" is not byte-exact), and a temp file is
-# a thing that has to be cleaned up on every exit path, including the ones that
-# skip the trap. Both files are a few KB.
-PLIST_ORIG="$(base64 < "$PLIST")"
-CASK_ORIG="$(base64 < "$CASK")"
-# Restore anything this run edited but did not manage to COMMIT — on a dry run
-# that is both files by definition, and on a real run it is whatever the failure
-# got to before it died. Committed work is left alone: git owns it from then on.
-PLIST_COMMITTED=0; CASK_COMMITTED=0
-# Write beside the target, then rename over it. `> "$target"` truncates FIRST, so
-# a signal landing between the truncate and the write leaves an empty file — this
-# restore ran during a SIGPIPE and zeroed Info.plist, which is the very data loss
-# the script is here to stop. rename(2) is atomic: either the old file is intact
-# or the new one is complete, never a half of either. A kill inside that window
-# leaves a <target>.release-restore holding the original bytes; that is left
-# visible on purpose, since an untracked file next to a crashed release is a
-# useful signal and a recovery copy, not litter to hide in .gitignore.
-restore_one() {
-  local encoded="$1" target="$2" tmp="$2.release-restore"
-  printf '%s' "$encoded" | base64 -d > "$tmp" && mv -f "$tmp" "$target"
+# ---- helpers ----
+# A worktree's .git is a file, so ask git rather than testing for a directory.
+require_worktree() {
+  local dir="$1" label="$2"
+  [ -d "$dir" ] || die "$label not found at $dir"
+  [ "$(git -C "$dir" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] \
+    || die "$label at $dir is not a git work tree"
+  git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || die "$label at $dir has no git dir"
 }
-restore_targets() {
-  if [ "$DRY" = 1 ] || [ "$PLIST_COMMITTED" = 0 ]; then restore_one "$PLIST_ORIG" "$PLIST"; fi
-  if [ "$DRY" = 1 ] || [ "$CASK_COMMITTED" = 0 ]; then restore_one "$CASK_ORIG" "$CASK"; fi
+slug() { (cd "$1" && gh repo view --json nameWithOwner -q .nameWithOwner); }
+# Path of the worktree that has $BRANCH checked out in repo $1 (empty if none).
+worktree_for_branch() {
+  git -C "$1" worktree list --porcelain | awk -v ref="refs/heads/$BRANCH" '
+    $1=="worktree" {p=substr($0,10)} $1=="branch" && $2==ref {print p; exit}'
 }
-# Separate handlers on purpose. A trapped INT/TERM does NOT end a bash script:
-# the handler runs and execution RESUMES, so one restore-only trap for all three
-# would restore the files and then carry on bumping, committing, pushing and
-# publishing a release the operator just cancelled. Verified: a probe with a
-# restore-only handler printed its post-signal lines. `exit` re-enters the EXIT
-# trap, which is harmless — restoring the same bytes twice is idempotent.
-trap restore_targets EXIT
-trap 'restore_targets; exit 130' INT
-trap 'restore_targets; exit 143' TERM
+# Create (or reuse) the release worktree via the managed script; echo its path.
+ensure_worktree() {
+  local repo="$1" path
+  path="$(worktree_for_branch "$repo")"
+  if [ -z "$path" ]; then
+    (cd "$repo" && "$WORKTREE_SH" "$BRANCH") >&2 || die "worktree.sh failed in $repo"
+    path="$(worktree_for_branch "$repo")"
+  fi
+  [ -n "$path" ] && [ -d "$path" ] || die "no worktree for $BRANCH in $repo"
+  echo "$path"
+}
+plist_version_of() { # reads a plist on stdin, prints CFBundleShortVersionString
+  awk '/<key>CFBundleShortVersionString<\/key>/ {f=1; next} f && /<string>/ {gsub(/.*<string>|<\/string>.*/,""); print; exit}'
+}
+stamp_get() { grep -E "^$2=" "$1" | head -1 | cut -d= -f2-; }
 
-# ---- bump version ----
-say "bumping version -> $VERSION"
-BUILDNO="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$PLIST")"
-/usr/libexec/PlistBuddy -c "Set CFBundleShortVersionString $VERSION" "$PLIST"
-/usr/libexec/PlistBuddy -c "Set CFBundleVersion $((BUILDNO + 1))" "$PLIST"
+# ---- shared preflight ----
+command -v gh >/dev/null || die "gh CLI required"
+[ -x "$WORKTREE_SH" ] || die "worktree.sh not found at $WORKTREE_SH"
+require_worktree "$ROOT" "Yap repo"
+require_worktree "$TAP_DIR" "tap repo (set YAP_TAP_DIR)"
+git -C "$TAP_DIR" ls-files --error-unmatch "$CASK_REL" >/dev/null 2>&1 || die "$CASK_REL not tracked in $TAP_DIR"
+YAP_SLUG="$(slug "$ROOT")"; TAP_SLUG="$(slug "$TAP_DIR")"
 
-# ---- build DMG (builds app + embeds Python) ----
-say "building DMG"
-bash "$ROOT/scripts/make_dmg.sh" "$VERSION" >/dev/null
-[ -f "$DMG" ] || { echo "DMG not produced: $DMG"; exit 1; }
-SHA="$(shasum -a 256 "$DMG" | awk '{print $1}')"
-say "DMG $(du -h "$DMG" | cut -f1)  sha256=$SHA"
+# =====================================================================
+if [ "$CMD" = prepare ]; then
+  git -C "$ROOT" fetch -q origin; git -C "$TAP_DIR" fetch -q origin
+  CUR="$(git -C "$ROOT" show "origin/HEAD:$PLIST_REL" | plist_version_of)"
+  [ "$CUR" != "$VERSION" ] || die "origin/HEAD is already at $VERSION"
+  if gh release view "$TAG" -R "$YAP_SLUG" >/dev/null 2>&1; then die "release $TAG already exists"; fi
+  say "plan: $YAP_SLUG $CUR -> $VERSION"
+  echo "  Yap : branch $BRANCH (worktree.sh in $ROOT): bump Info.plist, build dist/Yap-$VERSION.dmg, open PR"
+  echo "  tap : branch $BRANCH (worktree.sh in $TAP_DIR): cask version $VERSION + DMG sha256, open PR"
+  echo "  nothing is tagged, released or merged by 'prepare'"
+  if [ "$DRY" = 1 ]; then say "DRY RUN: nothing created."; exit 0; fi
 
-# ---- notes args ----
+  YAP_WT="$(ensure_worktree "$ROOT")"
+  TAP_WT="$(ensure_worktree "$TAP_DIR")"
+  PLIST="$YAP_WT/$PLIST_REL"; CASK="$TAP_WT/$CASK_REL"
+  [ -f "$PLIST" ] && [ -f "$CASK" ] || die "plist or cask missing in the release worktrees"
+  [ -z "$(git -C "$YAP_WT" status --porcelain)" ] || die "$YAP_WT is not clean"
+  [ -z "$(git -C "$TAP_WT" status --porcelain)" ] || die "$TAP_WT is not clean"
+
+  say "bumping version -> $VERSION"
+  BUILDNO="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$PLIST")"
+  /usr/libexec/PlistBuddy -c "Set CFBundleShortVersionString $VERSION" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set CFBundleVersion $((BUILDNO + 1))" "$PLIST"
+  git -C "$YAP_WT" commit -qm "chore: prepare Yap $VERSION" -- "$PLIST_REL"
+  COMMIT="$(git -C "$YAP_WT" rev-parse HEAD)"; TREE="$(git -C "$YAP_WT" rev-parse 'HEAD^{tree}')"
+
+  say "building DMG from $COMMIT"
+  bash "$YAP_WT/scripts/make_dmg.sh" "$VERSION" >/dev/null
+  DMG="$YAP_WT/dist/Yap-$VERSION.dmg"
+  [ -f "$DMG" ] || die "DMG not produced: $DMG"
+  [ "$(git -C "$YAP_WT" rev-parse HEAD)" = "$COMMIT" ] || die "HEAD moved during the build"
+  [ -z "$(git -C "$YAP_WT" status --porcelain)" ] || die "build dirtied the tracked tree"
+  SHA="$(shasum -a 256 "$DMG" | awk '{print $1}')"
+  say "DMG $(du -h "$DMG" | cut -f1)  sha256=$SHA"
+
+  /usr/bin/sed -i '' -E "s/version \"[^\"]*\"/version \"$VERSION\"/" "$CASK"
+  /usr/bin/sed -i '' -E "s/sha256 \"[^\"]*\"/sha256 \"$SHA\"/" "$CASK"
+  grep -q "version \"$VERSION\"" "$CASK" && grep -q "sha256 \"$SHA\"" "$CASK" || die "cask edit did not apply"
+  git -C "$TAP_WT" commit -qm "chore: Yap $VERSION" -- "$CASK_REL"
+
+  git -C "$YAP_WT" push -q -u origin "$BRANCH"
+  YAP_PR="$(cd "$YAP_WT" && gh pr create --base main --head "$BRANCH" --title "chore: prepare Yap $VERSION" \
+    --body "## Summary
+Version bump to $VERSION (CFBundleShortVersionString, CFBundleVersion).
+
+DMG built from this commit's tree: \`$TREE\`, sha256 \`$SHA\`. Publish (tag, release, cask merge) is a separate step, \`scripts/release.sh publish $VERSION\`, run only after this merges.
+
+## Test plan
+- [ ] Info.plist diff is only the two version keys
+- [ ] \`release.sh publish $VERSION --dry-run\` passes after merge")"
+  git -C "$TAP_WT" push -q -u origin "$BRANCH"
+  TAP_PR="$(cd "$TAP_WT" && gh pr create --base main --head "$BRANCH" --title "chore: Yap $VERSION" \
+    --body "## Summary
+Cask \`yap\` to $VERSION, sha256 \`$SHA\` (DMG from $YAP_SLUG $BRANCH, tree \`$TREE\`). Merge only after the Yap release $TAG is published, or brew installs 404.
+
+## Test plan
+- [ ] sha256 matches the DMG attached to the $TAG release")"
+
+  STAMP="$YAP_WT/dist/release-$VERSION.stamp"
+  { echo "version=$VERSION"; echo "commit=$COMMIT"; echo "tree=$TREE"; echo "dmg=$DMG"; echo "sha256=$SHA"
+    echo "yap_slug=$YAP_SLUG"; echo "yap_pr=$YAP_PR"; echo "tap_slug=$TAP_SLUG"; echo "tap_pr=$TAP_PR"
+    echo "tap_wt=$TAP_WT"; } > "$STAMP"
+  say "prepared. Yap PR: $YAP_PR   tap PR: $TAP_PR"
+  echo "stamp: $STAMP"
+  echo "next: review-cycle both PRs, merge the Yap one, then: scripts/release.sh publish $VERSION"
+  exit 0
+fi
+
+# =====================================================================
+# publish
+YAP_WT="$(worktree_for_branch "$ROOT")"
+[ -n "$YAP_WT" ] || die "no worktree for $BRANCH: run 'prepare $VERSION' first (and keep its worktree)"
+STAMP="$YAP_WT/dist/release-$VERSION.stamp"
+[ -f "$STAMP" ] || die "no stamp at $STAMP: run 'prepare $VERSION' first"
+DMG="$(stamp_get "$STAMP" dmg)"; SHA="$(stamp_get "$STAMP" sha256)"; TREE="$(stamp_get "$STAMP" tree)"
+YAP_PR="$(stamp_get "$STAMP" yap_pr)"; TAP_PR="$(stamp_get "$STAMP" tap_pr)"
+[ "$(stamp_get "$STAMP" version)" = "$VERSION" ] || die "stamp is for another version"
+[ -f "$DMG" ] || die "DMG missing: $DMG"
+[ "$(shasum -a 256 "$DMG" | awk '{print $1}')" = "$SHA" ] || die "DMG no longer matches its recorded sha256; rebuild with prepare"
+
+git -C "$ROOT" fetch -q origin; git -C "$TAP_DIR" fetch -q origin
+MAIN_SHA="$(git -C "$ROOT" rev-parse origin/main)"
+MAIN_VER="$(git -C "$ROOT" show "origin/main:$PLIST_REL" | plist_version_of)"
+[ "$MAIN_VER" = "$VERSION" ] || die "origin/main is at $MAIN_VER, not $VERSION: merge the reviewed version PR first"
+MAIN_TREE="$(git -C "$ROOT" rev-parse 'origin/main^{tree}')"
+[ "$MAIN_TREE" = "$TREE" ] || die "origin/main ($MAIN_SHA) is not the tree the DMG was built from (main moved since prepare, or the PR was altered); rerun prepare"
+[ "$(gh pr view "$YAP_PR" -R "$(stamp_get "$STAMP" yap_slug)" --json state -q .state)" = MERGED ] || die "Yap PR $YAP_PR is not merged"
+if gh release view "$TAG" -R "$(stamp_get "$STAMP" yap_slug)" >/dev/null 2>&1; then die "release $TAG already exists"; fi
+TAP_SLUG="$(stamp_get "$STAMP" tap_slug)"
+[ "$(gh pr view "$TAP_PR" -R "$TAP_SLUG" --json state -q .state)" = OPEN ] || die "tap PR $TAP_PR is not open"
+TAP_HEAD="$(gh pr view "$TAP_PR" -R "$TAP_SLUG" --json headRefOid -q .headRefOid)"
+CASK_TEXT="$(git -C "$TAP_DIR" show "$TAP_HEAD:$CASK_REL")" || die "cannot read cask at tap PR head $TAP_HEAD"
+grep -q "version \"$VERSION\"" <<<"$CASK_TEXT" && grep -q "sha256 \"$SHA\"" <<<"$CASK_TEXT" \
+  || die "tap PR $TAP_PR cask does not carry $VERSION / the DMG sha256"
+
 if [ -n "$NOTES_FILE" ]; then NOTES_ARGS=(--notes-file "$NOTES_FILE")
 elif [ -n "$NOTES" ]; then NOTES_ARGS=(--notes "$NOTES")
 else NOTES_ARGS=(--generate-notes); fi
 
-# ---- stage cask bump (don't push yet) ----
-/usr/bin/sed -i '' -E "s/version \"[^\"]*\"/version \"$VERSION\"/" "$CASK"
-/usr/bin/sed -i '' -E "s/sha256 \"[^\"]*\"/sha256 \"$SHA\"/" "$CASK"
-say "cask updated: $(grep -E 'version|sha256' "$CASK" | tr -s ' ' | tr '\n' ' ')"
-
-if [ "$DRY" = 1 ]; then
-  say "DRY RUN — not committing or publishing. Reverting version bump + cask."
-  echo "would publish $TAG with $DMG and bump the cask. Looks good? re-run without --dry-run."
-  exit 0   # restore_targets runs on EXIT
-fi
-
-# ---- publish ----
-say "committing version bump"
-git -C "$ROOT" commit --only "$PLIST" -qm "Release $TAG"
-PLIST_COMMITTED=1
-git -C "$ROOT" push -q origin HEAD
+say "publish plan (verified)"
+echo "  tag     $TAG at $MAIN_SHA (origin/main, tree $MAIN_TREE)"
+echo "  asset   $DMG  sha256=$SHA"
+echo "  tap     merge PR $TAP_PR in $TAP_SLUG (cask $VERSION, same sha256)"
+if [ "$DRY" = 1 ]; then say "DRY RUN: nothing published."; exit 0; fi
+[ "$YES" = 1 ] || { echo "re-run with --yes to publish (release is owner-gated)"; exit 0; }
 
 say "creating GitHub release $TAG"
-gh release create "$TAG" "$DMG" --title "Yap $VERSION" "${NOTES_ARGS[@]}"
-
-say "bumping Homebrew cask"
-git -C "$TAP_DIR" commit --only "$CASK" -qm "Yap $VERSION"
-CASK_COMMITTED=1
-git -C "$TAP_DIR" push -q origin HEAD
-
-say "done — $TAG published, cask points at it."
-gh release view "$TAG" --json url -q .url
+gh release create "$TAG" "$DMG" -R "$(stamp_get "$STAMP" yap_slug)" --target "$MAIN_SHA" \
+  --title "Yap $VERSION" "${NOTES_ARGS[@]}"
+say "merging tap PR $TAP_PR"
+gh pr merge "$TAP_PR" -R "$TAP_SLUG" --squash
+say "done: $TAG published at $MAIN_SHA, cask points at it."
+gh release view "$TAG" -R "$(stamp_get "$STAMP" yap_slug)" --json url -q .url
