@@ -46,7 +46,7 @@ struct VoicesPane: View {
                     HStack {
                         Text(shown == "pocket" ? "Pocket voices" : "Kokoro voices").font(.headline)
                         Spacer()
-                        Button { state.testVoice() } label: { Label("Test", systemImage: "play.fill") }
+                        Button { state.testVoice() } label: { Label("Preview voice", systemImage: "play.fill") }
                             .buttonStyle(.borderless)
                             .disabled(shown != prefs.engine)
                         if shown == "pocket" {
@@ -137,7 +137,7 @@ struct VoicesPane: View {
 }
 
 /// One selectable engine: a tile with its icon, name, one-word character and
-/// what it offers. The ring marks the engine you are looking at; the "Active"
+/// what it offers. The ring marks the engine you are looking at; the "In use"
 /// tag marks the one Yap speaks with.
 private struct EngineCard: View {
     let title: String, tagline: String, detail: String, icon: String
@@ -165,7 +165,7 @@ private struct EngineCard: View {
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(.orange.opacity(0.18), in: Capsule())
                 } else if active {
-                    Text("Active").font(.caption2.weight(.semibold)).foregroundStyle(.white)
+                    Text("In use").font(.caption2.weight(.semibold)).foregroundStyle(.white)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(gradient))
                 }
@@ -180,7 +180,7 @@ private struct EngineCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title) engine, \(tagline). \(detail)\(active ? ". Active" : "")")
+        .accessibilityLabel("\(title) engine, \(tagline). \(detail)\(active ? ". In use" : "")")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -300,7 +300,7 @@ struct CloneVoiceSheet: View {
                         .disabled(!nameReady || recorder.recording)
                 }
                 if !nameReady {
-                    Text("Type a name first.").font(.caption).foregroundStyle(.secondary)
+                    Text("Name the voice to turn on recording and import.").font(.caption).foregroundStyle(.secondary)
                 } else if let id = replacesExisting {
                     Label("Replaces your existing “\(id)” voice.", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.orange)
