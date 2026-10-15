@@ -771,6 +771,7 @@ final class AppState: ObservableObject {
                 let why = backend.lastError ?? "Backend not ready"
                 status = .error(why)
                 finishSpeak(speakID, .error(why))
+                startNextQueued()
                 return
             }
         }
