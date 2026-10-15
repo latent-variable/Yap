@@ -30,20 +30,14 @@ enum UIShotProbe {
             state.modelsPresent = true
             state.lastCleaned = "The nav card is closed with your reasons and moved to done. The market fix is live, and I tested it on our own report. Next up, the software comparison page."
             state.lastMethod = .clipboard
-            // A few voices of each kind so the Voices pane shows a real list.
-            state.voices = [("af_heart", "female"), ("af_bella", "female"), ("am_puck", "male"),
-                            ("am_michael", "male"), ("bf_emma", "female"), ("bm_george", "male")].map {
-                VoiceInfo(id: $0.0, lang: $0.0.hasPrefix("b") ? "en-gb" : "en-us",
-                          lang_label: $0.0.hasPrefix("b") ? "English (UK)" : "English (US)", gender: $0.1)
-            }
-            state.hdVoices = ["alba", "eve", "marius", "michael", "jean", "azelma"].map {
-                VoiceInfo(id: $0, lang: "en", lang_label: "English", gender: "", section: "Pocket Voices")
-            } + ["Lino", "Sam"].map {
-                VoiceInfo(id: $0, lang: "en", lang_label: "English", gender: "", section: "✨ Cloned", needs_cloning: true)
-            }
-            state.hdInstalled = true
-            state.cloningReady = true
-            state.cloningInstalled = true
+            seed(state)
+            state.axTrusted = true   // the unsigned probe has no grant; users who see this do
+            let plist = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                .appending(path: "../../Resources/Info.plist")
+            UpdateChecker.probeVersion = (NSDictionary(contentsOf: plist)?["CFBundleShortVersionString"] as? String)
+            // Playback as a real user has it (this is the probe's own defaults domain).
+            prefs.hdVoice = "Sam"; prefs.speed = 1.25; prefs.volume = 1; prefs.pitch = 0; prefs.pauseScale = 1
+            prefs.hotKey = HotKeyCombo.defaultCombo; prefs.dictationHotKey = HotKeyCombo.dictationDefault
             var written = 0
             for dark in [false, true] {
                 let look = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -129,6 +123,26 @@ enum UIShotProbe {
         exit(1)
     }
 
+    /// Sample voices, set again just before each capture: a pane's onAppear asks
+    /// the live backend for its voices, and the screenshots must show these
+    /// sample names, never the user's own cloned voices.
+    @MainActor private static func seed(_ state: AppState) {
+        // A few voices of each kind so the Voices pane shows a real list.
+        state.voices = [("af_heart", "female"), ("af_bella", "female"), ("am_puck", "male"),
+                        ("am_michael", "male"), ("bf_emma", "female"), ("bm_george", "male")].map {
+            VoiceInfo(id: $0.0, lang: $0.0.hasPrefix("b") ? "en-gb" : "en-us",
+                      lang_label: $0.0.hasPrefix("b") ? "English (UK)" : "English (US)", gender: $0.1)
+        }
+        state.hdVoices = ["alba", "eve", "marius", "michael", "jean", "azelma"].map {
+            VoiceInfo(id: $0, lang: "en", lang_label: "English", gender: "", section: "Pocket Voices")
+        } + ["Sam", "Riley"].map {
+            VoiceInfo(id: $0, lang: "en", lang_label: "English", gender: "", section: "✨ Cloned", needs_cloning: true)
+        }
+        state.hdInstalled = true
+        state.cloningReady = true
+        state.cloningInstalled = true
+    }
+
     /// Host `view` in an off-screen window, let SwiftUI settle, and write a PNG.
     @MainActor
     private static func shoot<V: View>(_ view: V, width: CGFloat, height: CGFloat?,
@@ -153,6 +167,11 @@ enum UIShotProbe {
             try? await Task.sleep(for: .milliseconds(120))
             host.layoutSubtreeIfNeeded()
         }
+        seed(AppState.shared)   // undo whatever the live backend returned meanwhile
+        for _ in 0..<5 {
+            try? await Task.sleep(for: .milliseconds(120))
+            host.layoutSubtreeIfNeeded()
+        }
         if height == nil {   // the popover sizes to its content
             window.setContentSize(CGSize(width: width, height: host.fittingSize.height))
             host.layoutSubtreeIfNeeded()
@@ -160,7 +179,7 @@ enum UIShotProbe {
         // A titled window draws its toolbar and sidebar chrome only when it is
         // really on screen, so take that one with `screencapture` (needs the
         // Screen Recording grant for the terminal; falls back to cacheDisplay).
-        if height != nil, onScreen(window), (window.screen?.backingScaleFactor ?? 1) >= 2 {
+        if height != nil, onScreen(window) {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
             p.arguments = ["-x", "-o", "-l\(window.windowNumber)", url.path]
@@ -168,9 +187,9 @@ enum UIShotProbe {
             window.orderOut(nil)
             if p.terminationStatus == 0, FileManager.default.fileExists(atPath: url.path) { return true }
         }
-        // A titled window on a 1x screen: draw the whole frame view (title bar
-        // and all) ourselves, at 2x.
-        let target: NSView = height != nil ? (window.contentView?.superview ?? host) : host
+        // Fallback for a titled window `screencapture` could not take: the
+        // content only (cacheDisplay draws sidebar vibrancy wrong on the frame view).
+        let target: NSView = host
         let bounds = target.bounds
         // Always 2x, whatever screen the off-screen window lands on: these images
         // go into the README and videos, where 1x looks soft.
