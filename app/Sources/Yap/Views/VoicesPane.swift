@@ -333,9 +333,9 @@ struct CloneVoiceSheet: View {
                               systemImage: recorder.recording ? "stop.circle.fill" : "mic.circle.fill")
                     }
                     .buttonStyle(CapsuleButtonStyle(gradient: recorder.recording ? Brand.earsGradient : Brand.gradient))
-                    .disabled(!nameReady && !recorder.recording)
+                    .disabled((!nameReady && !recorder.recording) || saving)
                     Button { showImporter = true } label: { Label("Import a file…", systemImage: "square.and.arrow.down") }
-                        .disabled(!nameReady || recorder.recording)
+                        .disabled(!nameReady || recorder.recording || saving)
                 }
                 if !nameReady {
                     Text("Name the voice to turn on recording and import.").font(.caption).foregroundStyle(.secondary)
