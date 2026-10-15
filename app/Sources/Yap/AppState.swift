@@ -713,7 +713,15 @@ final class AppState: ObservableObject {
     }
 
     /// How one agent request ended; nil while it is still queued or speaking.
-    func speakOutcome(_ id: Int) -> ReadOutcome? { speakOutcomes[id] }
+    ///
+    /// A ticket that is neither playing, waiting nor recorded has been settled and
+    /// pruned from the bounded record, so it reads as stopped rather than as
+    /// still pending: a waiter must never poll forever on an id nothing will settle.
+    func speakOutcome(_ id: Int) -> ReadOutcome? {
+        if let o = speakOutcomes[id] { return o }
+        let pending = id == activeSpeakID || speakQueue.contains { $0.id == id }
+        return pending ? nil : .stopped
+    }
 
     /// Items waiting behind the current read.
     var speakQueueCount: Int { speakQueue.count }
