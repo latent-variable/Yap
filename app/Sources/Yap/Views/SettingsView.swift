@@ -201,7 +201,6 @@ private struct EngineTab: View {
     @State private var showImporter = false
     @State private var newName = ""
     @State private var fetching = false
-    @State private var fetchLog = ""
     @State private var cloningLog = ""
 
     // A name that slugs to nothing (emoji only) can never become a voice id, so
@@ -418,8 +417,8 @@ private struct EngineTab: View {
             Text("Tip: 10–20 seconds of one clear voice, no music or background noise, gives the best clone.")
                 .font(.caption).foregroundStyle(.secondary)
             Button {
-                fetching = true; fetchLog = "fetching…\n"
-                state.fetchStarterVoices { l in fetchLog += l + "\n"; if l.contains("[refreshed]") { fetching = false } }
+                fetching = true
+                state.fetchStarterVoices { l in if l.contains("[refreshed]") { fetching = false } }
             } label: { Label("Get free starter voices (CMU ARCTIC)", systemImage: "person.3") }
                 .controlSize(.small).disabled(fetching)
             if fetching { ProgressView().controlSize(.small) }
