@@ -427,6 +427,21 @@ enum AgentProbe {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             ok("a late 'Allow' opens no capture", box.opened == 0 && dictation.dictation.state == .idle,
                "opened \(box.opened), state \(dictation.dictation.state)")
+            // Stopped while the prompt is still open: it must return at once, not wait out the timeout.
+            DictationController.startTimeout = 30
+            let waiting = Task { await self.call("POST", "/listen", "{}") }
+            ok("a listen is waiting on the Microphone prompt", await until(5) { dictation.agentSession != nil })
+            let tStop = Date()
+            _ = await call("POST", "/listen/stop")
+            let stoppedEarly = await waiting.value
+            ok("a stop during the prompt returns promptly, stopped",
+               stoppedEarly.json["reason"] as? String == "stopped" && Date().timeIntervalSince(tStop) < 5,
+               "\(Date().timeIntervalSince(tStop))s \(stoppedEarly.raw)")
+            box.answer?(true)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            ok("...and the Allow that follows opens nothing", box.opened == 0 && dictation.dictation.state == .idle,
+               "opened \(box.opened), state \(dictation.dictation.state)")
+            DictationController.startTimeout = 1.0
             Dictation.micAccess = { done in done(true) }                 // now it answers at once
             let again2 = Task { await self.call("POST", "/listen", #"{"max_seconds":60,"silence_seconds":10}"#) }
             ok("the next listen starts normally (the abandoned start did not block it)",

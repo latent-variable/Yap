@@ -101,7 +101,10 @@ final class DictationController: ObservableObject {
     }
 
     /// Record a finished dictation and paste it at the cursor.
-    private func insertDictated(_ text: String) {
+    /// Returns whether the text was actually pasted: false when Accessibility is
+    /// missing and it was only copied, so callers (the agent API) do not claim more.
+    @discardableResult
+    private func insertDictated(_ text: String) -> Bool {
         // Log before we try to paste — a dictation that fails to insert
         // (no Accessibility, dropped ⌘V) is exactly what History rescues.
         HistoryStore.shared.recordDictated(text, detail: targetName)
@@ -120,10 +123,11 @@ final class DictationController: ObservableObject {
             Permissions.requestAX()
             Permissions.openAXSettings()
             dismissHUDLater(after: 5)
-            return
+            return false
         }
         hideHUD()
         TextInsert.insertAtCursor(text)
+        return true
     }
 
     /// Clear a lingering message and hide the HUD after a pause, unless a newer
@@ -230,11 +234,20 @@ final class DictationController: ObservableObject {
             return .failure(APIError(500, "listen_failed", "Could not start the capture: \(error.localizedDescription)"))
         }
         // The first run asks for Microphone access, so this wait is the user's to
-        // answer; give it room. A stop or hang-up during it is NOT acted on here:
-        // the capture is coming up either way, and the loop below is what closes it.
-        // Bailing out now would leave a microphone opening with nobody holding it.
+        // answer; give it room. A stop or hang-up ends it at once (below): the
+        // start-up token is cancelled, so the capture can no longer come up.
         let startBy = Date().addingTimeInterval(Self.startTimeout)
         while dictation.state != .listening {
+            // Stopped or hung up while the mic is still coming up (often: the prompt is
+            // open). Spend the start-up token now, so an "Allow" clicked later opens nothing.
+            if Task.isCancelled || session.stopReason != nil {
+                dictation.cancelStart()
+                if dictation.state != .listening {
+                    abandon()
+                    return .success(AgentListenResult(text: "", reason: "stopped", seconds: 0, inserted: false))
+                }
+                break
+            }
             if case .error(let m) = dictation.state {
                 dictation.clearError(); abandon()
                 return .failure(APIError(500, "listen_failed", m))
@@ -287,13 +300,14 @@ final class DictationController: ObservableObject {
             if let stopError { return .failure(APIError(500, "listen_failed", stopError)) }
             return .success(AgentListenResult(text: "", reason: reason, seconds: elapsed, inserted: false))
         }
+        var pasted = false
         if insert {
-            insertDictated(text)
+            pasted = insertDictated(text)
         } else {
             HistoryStore.shared.recordDictated(text, detail: "Agent API")
             abandon()
         }
-        return .success(AgentListenResult(text: text, reason: reason, seconds: elapsed, inserted: insert))
+        return .success(AgentListenResult(text: text, reason: reason, seconds: elapsed, inserted: pasted))
     }
 
     /// Track the frontmost app — where the text will land. Polled while listening

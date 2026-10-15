@@ -162,7 +162,8 @@ dictation shortcut, or something else closed the session). With
 `X-Yap-Reason` header. The text is the accurate final pass, the same as a
 hotkey stop: stopping keeps capturing for a moment and decodes through the
 last frame, so a quiet final word is not lost. Empty `text` means nothing was
-heard.
+heard. `inserted` is true only if the text was actually pasted; with `insert: true`
+but no Accessibility permission it is false and the text is left on the clipboard.
 
 Silence ends a listen only after speech was heard. When the room is too noisy
 for Yap to tell speech from background, it never guesses; `max_seconds` ends it.
