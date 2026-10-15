@@ -199,10 +199,13 @@ if [ -n "$NOTES_FILE" ]; then NOTES_ARGS=(--notes-file "$NOTES_FILE")
 elif [ -n "$NOTES" ]; then NOTES_ARGS=(--notes "$NOTES")
 else NOTES_ARGS=(--generate-notes); fi
 
+# gh pr create printed URLs; the pr tool takes a number.
+TAP_PR_NUM="${TAP_PR##*/}"
+[[ "$TAP_PR_NUM" =~ ^[0-9]+$ ]] || die "cannot read a PR number from $TAP_PR"
 PR_TOOL="${PR_TOOL:-$HOME/.agents/bin/pr}"
 [ -x "$PR_TOOL" ] || die "pr tool not found at $PR_TOOL"
 # The tap PR must have passed the review gate (review at its head, zero blockers).
-(cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR" --repo "$TAP_SLUG" --dry-run) \
+(cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR_NUM" --repo "$TAP_SLUG" --dry-run) \
   || die "tap PR $TAP_PR has not passed the review-cycle gate: finish its review first"
 
 say "publish plan (verified)"
@@ -216,6 +219,6 @@ say "creating GitHub release $TAG"
 gh release create "$TAG" "$DMG" -R "$(stamp_get "$STAMP" yap_slug)" --target "$MAIN_SHA" \
   --title "Yap $VERSION" "${NOTES_ARGS[@]}"
 say "merging tap PR $TAP_PR"
-(cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR" --repo "$TAP_SLUG")
+(cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR_NUM" --repo "$TAP_SLUG")
 say "done: $TAG published at $MAIN_SHA, cask points at it."
 gh release view "$TAG" -R "$(stamp_get "$STAMP" yap_slug)" --json url -q .url
