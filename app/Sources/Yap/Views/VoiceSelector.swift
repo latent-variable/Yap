@@ -35,6 +35,8 @@ struct VoicePickerList: View {
     var onSelectEngine: (String) -> Void
     /// When set, cloned voices get a delete button (Settings ▸ Voices only).
     var onDelete: ((EngineVoice) -> Void)? = nil
+    /// When set, every speakable row gets a play button (Settings ▸ Voices).
+    var onPreview: ((EngineVoice) -> Void)? = nil
     var onPick: (EngineVoice) -> Void
     @State private var query = ""
 
@@ -108,6 +110,12 @@ struct VoicePickerList: View {
                     Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary)
                 } else if v.id == selectionId {
                     Image(systemName: "checkmark").foregroundStyle(.tint).font(.caption.bold())
+                }
+                if let onPreview, v.available {
+                    Button { onPreview(v) } label: { Image(systemName: "play.circle") }
+                        .buttonStyle(.borderless)
+                        .help("Preview \(v.label)")
+                        .accessibilityLabel("Preview \(v.label)")
                 }
                 if let onDelete, v.section.contains("Cloned") {
                     Button(role: .destructive) { onDelete(v) } label: { Image(systemName: "trash") }

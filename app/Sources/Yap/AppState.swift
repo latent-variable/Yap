@@ -905,7 +905,9 @@ final class AppState: ObservableObject {
         status = .idle
     }
 
-    func testVoice() {
+    /// Speak a short sample in the selected voice. `text` replaces the stock
+    /// sample (the Clone sheet's "hear your new voice").
+    func testVoice(_ text: String? = nil) {
         if deletingKokoro || deletingHD { return }  // backend is bouncing for a delete
         Task {
             if !backend.ready { await backend.start() }
@@ -921,9 +923,9 @@ final class AppState: ObservableObject {
             } catch {
                 status = .error("Audio output unavailable"); preparing = false; resetToIdle(after: 3); return
             }
-            let sample = prefs.engine == "pocket"
+            let sample = text ?? (prefs.engine == "pocket"
                 ? "This is a preview of the selected Pocket voice."
-                : Self.sampleText(for: prefs.voice)
+                : Self.sampleText(for: prefs.voice))
             // Same error handling as stream(): `try?` here would swallow a 500 or
             // a stream that stopped partway and then flush, drain and report
             // .idle — the preview would just be short, and the user would blame
@@ -1197,9 +1199,12 @@ final class AppState: ObservableObject {
     /// a filename or a stored selection: the id ends up in a synth request, where
     /// the backend rejects anything outside `[A-Za-z0-9_-]`. Writing the raw name
     /// produced a voice that was listed and selectable and 400'd on every read.
-    func addHDVoice(from src: URL, name: String) {
+    /// `onDone` gets the new voice's id once it is saved and selected, or nil
+    /// when the import failed, so the Clone sheet can offer a preview.
+    func addHDVoice(from src: URL, name: String, onDone: (@MainActor (String?) -> Void)? = nil) {
         guard let safe = VoiceID.slug(name) else {
             status = .error("Voice name needs a letter or number")
+            onDone?(nil)
             return
         }
         let dest = hdVoicesDir.appending(path: "\(safe).wav")
@@ -1216,6 +1221,7 @@ final class AppState: ObservableObject {
         } catch {
             if scoped { src.stopAccessingSecurityScopedResource() }
             status = .error("Voice import failed")
+            onDone?(nil)
             return
         }
         if scoped { src.stopAccessingSecurityScopedResource() }
@@ -1226,9 +1232,10 @@ final class AppState: ObservableObject {
                 await MainActor.run {
                     AppState.shared.refreshHD()
                     AppState.shared.prefs.hdVoice = safe
+                    onDone?(safe)
                 }
             } catch {
-                await MainActor.run { AppState.shared.status = .error("Voice import failed") }
+                await MainActor.run { AppState.shared.status = .error("Voice import failed"); onDone?(nil) }
             }
         }
     }

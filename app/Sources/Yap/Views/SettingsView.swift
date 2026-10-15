@@ -159,7 +159,7 @@ struct SettingsView: View {
             BrandMark(size: 24)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Yap").font(Brand.title(13, .bold))
-                Text("v\(UpdateChecker.currentVersion) · all local").lineLimit(1)
+                Text("v\(UpdateChecker.currentVersion)").lineLimit(1)
                     .font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()

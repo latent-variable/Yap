@@ -103,6 +103,8 @@ struct YapApp: App {
                 // window too narrow to reach its last tabs, with no way to widen it.
                 .frame(minWidth: SettingsView.minSize.width, minHeight: SettingsView.minSize.height)
         }
+        // A Settings window is fixed-size by default; let it grow past the floor.
+        .windowResizability(.contentMinSize)
     }
 }
 
