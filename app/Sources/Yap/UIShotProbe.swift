@@ -54,6 +54,11 @@ enum UIShotProbe {
                     .background(Color(nsColor: .windowBackgroundColor))
                 if await shoot(sheet, width: 480, height: nil, look: look,
                                to: out.appending(path: "clone-sheet-\(suffix).png")) { written += 1 }
+                // The Agents pane runs past the window; shoot all of it once.
+                let agents = AgentsTab().environmentObject(state).environmentObject(prefs)
+                    .frame(width: 640, height: 1180).background(Color(nsColor: .windowBackgroundColor))
+                if await shoot(agents, width: 640, height: nil, look: look,
+                               to: out.appending(path: "agents-full-\(suffix).png")) { written += 1 }
                 for pane in SettingsTab.allCases {
                     UserDefaults.standard.set(pane.rawValue, forKey: "settingsPane")
                     // The Voices pane looks different per engine: shoot both.

@@ -39,10 +39,8 @@ reports it as `api_version`. A breaking change to a route or field bumps it.
     request says `"insert": true`.
 - **Two preferences control it.** `agentAPIEnabled` (default on) runs the
   server at all; switching it off removes the socket immediately.
-  `agentListenEnabled` (default off) allows `/listen`. Settings has no control
-  for these yet; the Agents pane will bind to them. Until then, quit Yap and run
-  `defaults write dev.latentvariable.yap agentListenEnabled -bool true`, then
-  reopen it.
+  `agentListenEnabled` (default off) allows `/listen`. Both are switches in
+  **Settings ▸ Agents** (*Let agents use Yap*, *Allow agents to listen*).
 - **What lands on disk.** Text an agent has Yap speak, and words it has Yap hear,
   appear in History like any other read or dictation (marked "agent"), so you can
   see what your agents had Yap say and hear. Audio is never saved.
