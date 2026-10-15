@@ -36,11 +36,19 @@ struct BrandMark: View {
         RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
             .fill(Brand.gradient)
             .frame(width: size, height: size)
+            // The app icon in miniature: a white speech bubble with a waveform
+            // for a mouth (scripts/make_icon.swift draws the full-size one).
             .overlay(
-                Image(systemName: "waveform")
-                    .font(.system(size: size * 0.46, weight: .bold))
-                    .foregroundStyle(.white)
-                    .symbolEffect(.variableColor.iterative.reversing, isActive: active)
+                ZStack {
+                    Image(systemName: "bubble.left.fill")
+                        .font(.system(size: size * 0.56))
+                        .foregroundStyle(.white)
+                    Image(systemName: "waveform")
+                        .font(.system(size: size * 0.24, weight: .heavy))
+                        .foregroundStyle(Brand.gradient)
+                        .symbolEffect(.variableColor.iterative.reversing, isActive: active)
+                        .offset(y: -size * 0.03)
+                }
             )
             .overlay(
                 RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
