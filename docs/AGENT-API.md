@@ -43,6 +43,9 @@ reports it as `api_version`. A breaking change to a route or field bumps it.
   for these yet; the Agents pane will bind to them. Until then, quit Yap and run
   `defaults write dev.latentvariable.yap agentListenEnabled -bool true`, then
   reopen it.
+- **What lands on disk.** Text an agent has Yap speak, and words it has Yap hear,
+  appear in History like any other read or dictation (marked "agent"), so you can
+  see what your agents had Yap say and hear. Audio is never saved.
 - **Nothing leaves the machine.** The socket is a file. The API makes no network
   call and adds none (see `PRIVACY.md`).
 
@@ -131,7 +134,7 @@ has not loaded.
 
 No body. Each returns `{"state":"idle|reading|paused|…"}`; `/pause` and
 `/resume` add `"changed": true|false` (false when there was nothing to pause or
-resume). `/stop` also empties the line.
+resume). `/stop` adds `"was"`, the state it interrupted, and also empties the line.
 
 ### `POST /listen`
 

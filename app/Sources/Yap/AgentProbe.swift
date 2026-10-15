@@ -95,6 +95,7 @@ enum AgentProbe {
         let speechPath: String?
         var failures = 0
         var sock = ""
+        var micTouched = false
 
         init(port: Int, speechPath: String?) { self.port = port; self.speechPath = speechPath }
 
@@ -173,6 +174,12 @@ enum AgentProbe {
 
             let dictation = DictationController.shared
             dictation.headless = true
+            // A tripwire, not a feature: until the listen section installs its file
+            // feeder, anything that gets as far as opening the capture trips this
+            // instead of the real microphone. So a broken guard is a failed check,
+            // never a live mic on the machine running the probe.
+            micTouched = false
+            dictation.simulatedCapture = { _ in self.micTouched = true; throw CancellationError() }
             let controller = AgentAPIController(state: state, dictation: dictation, prefs: prefs, socketPath: sock)
             controller.bootstrap()
             ok("the server comes up", await until(2) { fm.fileExists(atPath: self.sock) })
@@ -208,7 +215,7 @@ enum AgentProbe {
             print("  listen is off by default")
             let denied = await call("POST", "/listen", "{}")
             ok("POST /listen is 403 while listening is off", denied.status == 403 && denied.json["code"] as? String == "listen_disabled", denied.raw)
-            ok("...and the microphone was never opened", dictation.dictation.state == .idle && dictation.agentSession == nil)
+            ok("...and the microphone was never opened", !micTouched && dictation.dictation.state == .idle && dictation.agentSession == nil)
 
             // MARK: speak
             print("  speak")
@@ -387,6 +394,20 @@ enum AgentProbe {
             dictation.toggle()
             let viaKey = await again.value
             ok("the dictation shortcut ends it (reason stopped)", viaKey.json["reason"] as? String == "stopped", viaKey.raw)
+
+            // A stop that lands while the capture is still coming up must not leave it open.
+            let comeUp = feeder(clipSecs, 20)
+            dictation.simulatedCapture = { d in
+                try await Task.sleep(nanoseconds: 1_200_000_000)   // the mic taking its time
+                try await comeUp(d)
+            }
+            let slow = Task { await self.call("POST", "/listen", #"{"max_seconds":60,"silence_seconds":10}"#) }
+            ok("a listen is starting", await until(10) { dictation.agentSession != nil && dictation.dictation.state == .idle })
+            ok("a stop during start-up is accepted", (await call("POST", "/listen/stop")).status == 200)
+            let slowReply = await slow.value
+            ok("...the listen returns stopped", slowReply.json["reason"] as? String == "stopped", slowReply.raw)
+            ok("...and the capture that was coming up is closed, not left open",
+               await until(8) { dictation.dictation.state == .idle && dictation.agentSession == nil })
 
             // A caller that hangs up discards the session.
             dictation.simulatedCapture = feeder(clipSecs, 20)

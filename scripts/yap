@@ -48,8 +48,10 @@ need_curl() { command -v curl >/dev/null 2>&1 || CODE=1 die "curl is required bu
 # JSON forbids them raw).
 json_escape() {
   local tab=$'\t'
-  tr -d '\000-\010\013-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/${tab}/\\\\t/g" |
-    awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'
+  # LC_ALL=C: bytes in, bytes out, so UTF-8 text passes through untouched and
+  # invalid UTF-8 cannot make sed or tr bail ("illegal byte sequence").
+  LC_ALL=C tr -d '\000-\010\013-\037' | LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/${tab}/\\\\t/g" |
+    LC_ALL=C awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'
 }
 
 # call METHOD PATH [BODY-FILE|-] [extra curl args...]

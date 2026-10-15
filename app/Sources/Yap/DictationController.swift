@@ -194,6 +194,11 @@ final class DictationController: ObservableObject {
             dictation.clearError(); abandon()
             return .failure(APIError(503, "model_unavailable", why))
         }
+        // Asked to stop (or hung up) while the model loaded: never open the mic.
+        if Task.isCancelled || session.stopReason != nil {
+            abandon()
+            return .success(AgentListenResult(text: "", reason: "stopped", seconds: 0, inserted: false))
+        }
         do {
             if let simulatedCapture { try await simulatedCapture(dictation) }
             else { dictation.startListening() }
@@ -202,21 +207,23 @@ final class DictationController: ObservableObject {
             return .failure(APIError(500, "listen_failed", "Could not start the capture: \(error.localizedDescription)"))
         }
         // The first run asks for Microphone access, so this wait is the user's to
-        // answer; give it room.
+        // answer; give it room. A stop or hang-up during it is NOT acted on here:
+        // the capture is coming up either way, and the loop below is what closes it.
+        // Bailing out now would leave a microphone opening with nobody holding it.
         let startBy = Date().addingTimeInterval(45)
         while dictation.state != .listening {
             if case .error(let m) = dictation.state {
                 dictation.clearError(); abandon()
                 return .failure(APIError(500, "listen_failed", m))
             }
-            if Task.isCancelled || session.stopReason != nil || Date() > startBy {
+            if Date() > startBy {
                 abandon()
-                if Task.isCancelled || session.stopReason != nil {
-                    return .success(AgentListenResult(text: "", reason: "stopped", seconds: 0, inserted: false))
-                }
+                closeLateCapture()
                 return .failure(APIError(500, "listen_failed", "Microphone did not start in time."))
             }
-            try? await Task.sleep(nanoseconds: 50_000_000)
+            // Not Task.sleep in THIS task: once the caller hangs up it is cancelled, and
+            // a cancelled sleep returns at once, which would spin this loop on the main actor.
+            await Task { try? await Task.sleep(nanoseconds: 50_000_000) }.value
         }
 
         let began = Date()
@@ -260,6 +267,25 @@ final class DictationController: ObservableObject {
             abandon()
         }
         return .success(AgentListenResult(text: text, reason: reason, seconds: elapsed, inserted: insert))
+    }
+
+    /// A capture that came up after its listen gave up (the Microphone prompt was
+    /// answered late): nobody holds it, so close it and drop the audio.
+    private func closeLateCapture() {
+        Task { @MainActor [weak self] in
+            let end = Date().addingTimeInterval(300)
+            while let self, Date() < end {
+                switch self.dictation.state {
+                case .listening:
+                    if self.agentSession == nil { _ = await self.dictation.stopAndTranscribe() }
+                    return
+                case .error:
+                    self.dictation.clearError(); return
+                default:
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+            }
+        }
     }
 
     /// Track the frontmost app — where the text will land. Polled while listening
