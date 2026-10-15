@@ -204,9 +204,20 @@ TAP_PR_NUM="${TAP_PR##*/}"
 [[ "$TAP_PR_NUM" =~ ^[0-9]+$ ]] || die "cannot read a PR number from $TAP_PR"
 PR_TOOL="${PR_TOOL:-$HOME/.agents/bin/pr}"
 [ -x "$PR_TOOL" ] || die "pr tool not found at $PR_TOOL"
-# The tap PR must have passed the review gate (review at its head, zero blockers).
-(cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR_NUM" --repo "$TAP_SLUG" --dry-run) \
-  || die "tap PR $TAP_PR has not passed the review-cycle gate: finish its review first"
+# The tap PR must pass the merge gate. The tap is outside the fleet reviewer's
+# coverage (config.exclude), so no review ever lands there: for that case `pr`
+# takes --self-reviewed, which it refuses for a covered repo. Try the reviewed
+# gate first, then the self-reviewed one; this script's own checks above (cask
+# version and sha256 match the DMG built from main's tree) are the statement.
+TAP_GATE=()
+SELF_REVIEW="release.sh verified: the cask carries version $VERSION and sha256 $SHA, the checksum of the DMG built from Yap main's tree $TREE."
+if (cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR_NUM" --repo "$TAP_SLUG" --dry-run) >/dev/null 2>&1; then
+  TAP_GATE=()
+elif (cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR_NUM" --repo "$TAP_SLUG" --dry-run --self-reviewed "$SELF_REVIEW") >/dev/null 2>&1; then
+  TAP_GATE=(--self-reviewed "$SELF_REVIEW")
+else
+  die "tap PR $TAP_PR fails the merge gate (reviewed or self-reviewed): run '$PR_TOOL merge $TAP_PR_NUM --repo $TAP_SLUG --dry-run' to see why"
+fi
 
 say "publish plan (verified)"
 echo "  tag     $TAG at $MAIN_SHA (origin/main, tree $MAIN_TREE)"
@@ -219,6 +230,6 @@ say "creating GitHub release $TAG"
 gh release create "$TAG" "$DMG" -R "$(stamp_get "$STAMP" yap_slug)" --target "$MAIN_SHA" \
   --title "Yap $VERSION" "${NOTES_ARGS[@]}"
 say "merging tap PR $TAP_PR"
-(cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR_NUM" --repo "$TAP_SLUG")
+(cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR_NUM" --repo "$TAP_SLUG" ${TAP_GATE[@]+"${TAP_GATE[@]}"})
 say "done: $TAG published at $MAIN_SHA, cask points at it."
 gh release view "$TAG" -R "$(stamp_get "$STAMP" yap_slug)" --json url -q .url
