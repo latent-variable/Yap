@@ -355,11 +355,11 @@ scripts/release.sh publish X.Y.Z [--yes] [--dry-run]
 - **prepare** creates both branches with `worktree.sh`, bumps the version,
   builds the DMG from the committed tree, bumps the cask (`version` + `sha256`),
   and opens one PR in each repo. Review and merge the Yap PR through the review
-  cycle. Plain clones or managed worktrees of either repo are accepted.
+  cycle (prepare refuses if `release/vX.Y.Z` already exists). Plain clones or managed worktrees of either repo are accepted.
 - **publish** is the separate, owner-gated step. It refuses unless `origin/main`
   carries the version with the exact tree the DMG was built from, the Yap PR is
-  merged, and the tap PR's cask has the DMG's sha256. Then it tags that verified
-  commit, uploads the DMG, and merges the tap PR. Without `--yes` it only prints
+  merged, the tap PR's cask has the DMG's sha256, and the tap PR passes `pr merge --dry-run`. Then it tags that verified
+  commit, uploads the DMG, and merges the tap PR with `pr merge`. Without `--yes` it only prints
   the plan. If main moved after prepare, rerun prepare.
 
 Refresh an existing release's binary in place:
