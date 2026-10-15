@@ -39,19 +39,19 @@ sends your audio, your text, or anything that identifies you.
 - **Pocket model files.** Once the Pocket engine is installed, its model files
   (weights, tokenizer and built-in voices) download from Hugging Face the first
   time Pocket loads. Pocket loads at launch when it is the selected engine, or
-  when **Pre-load Pocket model at launch** is on (the default, in Settings ▸
-  Engine). Turning pre-load off does not stop this while Pocket is selected.
+  when **Pre-load Pocket at launch** is on (the default, in Settings ▸
+  Models). Turning pre-load off does not stop this while Pocket is selected.
 - **The update check**, once a day. See [below](#the-update-check-optional).
 
 **When you ask for it:**
 
 - The Kokoro model (~340 MB), from **Download model** in Settings ▸ Models.
-- The Pocket engine's packages, from Settings ▸ Engine or Settings ▸ Models.
+- The Pocket engine's packages, from Settings ▸ Voices or Settings ▸ Models.
   Setup also fetches the 209 MB voice-cloning weights if no usable local copy
   exists, even if you only use catalog voices. **Download & enable cloning** in
-  Settings ▸ Engine fetches them on their own.
+  Settings ▸ Voices ▸ Clone a voice fetches them on their own.
 - The free CMU ARCTIC starter voices, from **Get free starter voices** in
-  Settings ▸ Engine.
+  Settings ▸ Voices ▸ Clone a voice.
 - Dictation models while Dictation is off, from the menu's **Dictate** button or
   engine picker, or from Settings ▸ Models.
 
@@ -135,7 +135,7 @@ the selection, then restores the saved contents. This needs Accessibility
 permission to post the key event. Set **Capture method → Accessibility** to read
 a live selection through the Accessibility API without using the clipboard.
 
-**Auto** is opt-in (Settings ▸ General ▸ Read source). It tries to read the live
+**Auto** is opt-in (Settings ▸ Permissions ▸ Read source). It tries to read the live
 selection using the selected Capture method, then falls back to the clipboard
 when no text is returned. Some apps (iTerm and other terminals) don't expose
 their selection to the Accessibility API and block synthetic ⌘C, so Yap reads

@@ -86,7 +86,7 @@ Key facts an agent must keep straight:
 - Cloning. **Never source or ship celebrity / non-consented voices.** The UI says
   clone only what you have rights to (Pocket has no built-in watermark, unlike the
   old Chatterbox). Starter voices are CMU ARCTIC (free); **Get free starter voices** in Settings ▸
-  Engine calls `/voices/hd/starters` to fetch them. (Internal Swift identifiers still use the `hd*` prefix — `hdVoice`,
+  Voices ▸ Clone a voice calls `/voices/hd/starters` to fetch them. (Internal Swift identifiers still use the `hd*` prefix — `hdVoice`,
   `hdInstalled`, `installHD` — they now denote the Pocket engine.)
 - **A selected cloned voice must survive restart.** `refreshHD` demotes a cloned
   `hdVoice` to a catalog default ONLY when cloning is *genuinely* unavailable —

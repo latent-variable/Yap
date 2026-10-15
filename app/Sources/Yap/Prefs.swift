@@ -148,7 +148,7 @@ final class Prefs: ObservableObject {
         AppMigration.runOnce()
         // Pocket TTS replaced the Chatterbox engine. Existing users stored
         // "chatterbox" but won't have Pocket installed yet, so fall back to the
-        // always-present Kokoro default; they re-install Pocket from the Engine tab.
+        // always-present Kokoro default; they re-install Pocket from Settings ▸ Voices.
         let storedEngine = d.string(forKey: "engine") ?? "kokoro"
         engine = (storedEngine == "chatterbox") ? "kokoro" : storedEngine
         voice = d.string(forKey: "voice") ?? "am_puck"

@@ -968,7 +968,7 @@ class TestClonedVoiceRefusal:
         assert e.value.status_code == 403
         detail = e.value.detail
         # The remedy the app actually offers.
-        assert "Settings" in detail and "Voice cloning" in detail
+        assert "Settings" in detail and "Clone a voice" in detail
         # The remedy it does NOT: that path is gone, Keychain.swift with it.
         low = detail.lower()
         assert "hugging face" not in low and "token" not in low and "terms" not in low

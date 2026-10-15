@@ -30,6 +30,20 @@ enum UIShotProbe {
             state.modelsPresent = true
             state.lastCleaned = "The nav card is closed with your reasons and moved to done. The market fix is live, and I tested it on our own report. Next up, the software comparison page."
             state.lastMethod = .clipboard
+            // A few voices of each kind so the Voices pane shows a real list.
+            state.voices = [("af_heart", "female"), ("af_bella", "female"), ("am_puck", "male"),
+                            ("am_michael", "male"), ("bf_emma", "female"), ("bm_george", "male")].map {
+                VoiceInfo(id: $0.0, lang: $0.0.hasPrefix("b") ? "en-gb" : "en-us",
+                          lang_label: $0.0.hasPrefix("b") ? "English (UK)" : "English (US)", gender: $0.1)
+            }
+            state.hdVoices = ["alba", "eve", "marius", "michael", "jean", "azelma"].map {
+                VoiceInfo(id: $0, lang: "en", lang_label: "English", gender: "", section: "Pocket Voices")
+            } + ["Lino", "Sam"].map {
+                VoiceInfo(id: $0, lang: "en", lang_label: "English", gender: "", section: "✨ Cloned", needs_cloning: true)
+            }
+            state.hdInstalled = true
+            state.cloningReady = true
+            state.cloningInstalled = true
             var written = 0
             for dark in [false, true] {
                 let look = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -42,11 +56,22 @@ enum UIShotProbe {
                     if await shoot(view, width: MenuContent.width, height: nil, look: look,
                                    to: out.appending(path: "menu-\(tab.rawValue)-\(suffix).png")) { written += 1 }
                 }
+                let sheet = CloneVoiceSheet().environmentObject(state).environmentObject(prefs)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                if await shoot(sheet, width: 480, height: nil, look: look,
+                               to: out.appending(path: "clone-sheet-\(suffix).png")) { written += 1 }
                 for pane in SettingsTab.allCases {
                     UserDefaults.standard.set(pane.rawValue, forKey: "settingsPane")
-                    let view = SettingsView().environmentObject(state).environmentObject(prefs)
-                    if await shoot(view, width: 860, height: 620, look: look,
-                                   to: out.appending(path: "settings-\(pane.rawValue)-\(suffix).png")) { written += 1 }
+                    // The Voices pane looks different per engine: shoot both.
+                    for engine in pane == .voice ? ["kokoro", "pocket"] : [prefs.engine] {
+                        let was = prefs.engine
+                        prefs.engine = engine
+                        let name = pane == .voice ? "\(pane.rawValue)-\(engine)" : pane.rawValue
+                        let view = SettingsView().environmentObject(state).environmentObject(prefs)
+                        if await shoot(view, width: 860, height: 620, look: look,
+                                       to: out.appending(path: "settings-\(name)-\(suffix).png")) { written += 1 }
+                        prefs.engine = was
+                    }
                 }
             }
             print("uishot: wrote \(written) images to \(out.path)")
@@ -74,6 +99,34 @@ enum UIShotProbe {
                 e(.dictated, 58, "Remind me to rerun the benchmark when the laptop is idle.", "Notes"),
             ])
         return (try? JSONEncoder().encode(snap)) ?? Data()
+    }
+
+    /// `--uihold <pane> <seconds>`: show the Settings window on one pane and
+    /// idle, so its CPU can be measured from outside (`ps`, `sample`). An open
+    /// Settings window must cost nothing while nothing changes.
+    static func hold(pane: String, seconds: Double) -> Never {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let sample = FileManager.default.temporaryDirectory.appending(path: "yap-uishot-history-\(getpid()).json")
+        try? sampleHistory().write(to: sample)
+        setenv("YAP_HISTORY_FILE", sample.path, 1)
+        Task { @MainActor in
+            UserDefaults.standard.set(pane, forKey: "settingsPane")
+            let view = SettingsView().environmentObject(AppState.shared).environmentObject(Prefs.shared)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 860, height: 620),
+                                  styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            print("uihold: \(pane) for \(seconds)s pid \(getpid())")
+            try? await Task.sleep(for: .seconds(seconds))
+            var u = rusage(); getrusage(RUSAGE_SELF, &u)
+            let cpu = Double(u.ru_utime.tv_sec + u.ru_stime.tv_sec) + Double(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6
+            print(String(format: "uihold: %.2fs CPU in %.0fs", cpu, seconds))
+            exit(0)
+        }
+        app.run()
+        exit(1)
     }
 
     /// Host `view` in an off-screen window, let SwiftUI settle, and write a PNG.

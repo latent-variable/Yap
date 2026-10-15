@@ -33,6 +33,8 @@ struct VoicePickerList: View {
     let engine: String                 // currently active engine
     let pocketAvailable: Bool          // show the Pocket segment?
     var onSelectEngine: (String) -> Void
+    /// When set, cloned voices get a delete button (Settings ▸ Voices only).
+    var onDelete: ((EngineVoice) -> Void)? = nil
     var onPick: (EngineVoice) -> Void
     @State private var query = ""
 
@@ -89,7 +91,7 @@ struct VoicePickerList: View {
             // Say why the locked rows are locked, once, instead of leaving a user
             // to guess at a voice that won't take. Only when something is locked.
             if scoped.contains(where: { !$0.available }) {
-                Text("🔒 Cloned voices need the Pocket cloning weights. Enable them in Settings ▸ Engine ▸ Voice cloning.")
+                Text("🔒 Cloned voices need the Pocket cloning weights. Enable them in Settings ▸ Voices ▸ Clone a voice.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -107,6 +109,13 @@ struct VoicePickerList: View {
                 } else if v.id == selectionId {
                     Image(systemName: "checkmark").foregroundStyle(.tint).font(.caption.bold())
                 }
+                if let onDelete, v.section.contains("Cloned") {
+                    Button(role: .destructive) { onDelete(v) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Delete this cloned voice")
+                        .accessibilityLabel("Delete \(v.label)")
+                }
             }
             .contentShape(Rectangle())
         }
@@ -118,7 +127,7 @@ struct VoicePickerList: View {
     }
 
     static let lockedHelp =
-        "Voice cloning is off, so this voice can't be spoken. Set it up in Settings ▸ Engine ▸ Voice cloning."
+        "Voice cloning is off, so this voice can't be spoken. Set it up in Settings ▸ Voices ▸ Clone a voice."
 }
 
 /// Compact control showing the current voice; opens the unified list in a popover.

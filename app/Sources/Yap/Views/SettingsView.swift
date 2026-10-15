@@ -1,20 +1,21 @@
 import SwiftUI
+import AVFoundation
 import Carbon.HIToolbox
 
 /// One case per Settings pane. The sidebar, the pane header and `--selftest`
 /// all read from here, so a new pane needs a case (and a group) to appear at
 /// all, and the selftest catches a case left out of every group.
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, shortcut, history, voice, engine, cleanup, capture, agents, models, diagnostics
+    case general, shortcut, history, dictation, voice, cleanup, agents, capture, models, diagnostics
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general:     return "General"
-        case .voice:       return "Voice"
-        case .engine:      return "Engine"
-        case .capture:     return "Capture"
+        case .voice:       return "Voices"
+        case .dictation:   return "Dictation"
+        case .capture:     return "Permissions"
         case .cleanup:     return "Cleanup"
         case .shortcut:    return "Shortcuts"
         case .history:     return "History"
@@ -28,9 +29,9 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .general:     return "What's on, what it reads, how it sounds off."
-        case .voice:       return "Pick a voice and tune how it plays."
-        case .engine:      return "Kokoro for speed, Pocket for natural voices and cloning."
-        case .capture:     return "How Yap grabs the text you selected."
+        case .voice:       return "Pick an engine and a voice, clone your own, tune how it plays."
+        case .dictation:   return "Language, sounds and filler words for push-to-talk."
+        case .capture:     return "What Yap may read and hear, and how it grabs your selection."
         case .cleanup:     return "Strip Markdown, code and citations before they're spoken."
         case .shortcut:    return "Global keys for reading and dictating."
         case .history:     return "Everything you've read and dictated, kept on this Mac."
@@ -44,8 +45,8 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general:     return "gearshape.fill"
         case .voice:       return "waveform"
-        case .engine:      return "cpu.fill"
-        case .capture:     return "text.viewfinder"
+        case .dictation:   return "mic.fill"
+        case .capture:     return "lock.shield.fill"
         case .cleanup:     return "wand.and.stars"
         case .shortcut:    return "command"
         case .history:     return "clock.arrow.circlepath"
@@ -62,7 +63,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .shortcut:    return AnyShapeStyle(Color.blue.gradient)
         case .history:     return AnyShapeStyle(Color.green.gradient)
         case .voice:       return AnyShapeStyle(Brand.voiceGradient)
-        case .engine:      return AnyShapeStyle(Brand.indigo.gradient)
+        case .dictation:   return AnyShapeStyle(Brand.earsGradient)
         case .cleanup:     return AnyShapeStyle(Color.orange.gradient)
         case .capture:     return AnyShapeStyle(Color.teal.gradient)
         case .agents:      return AnyShapeStyle(Brand.gradient)
@@ -74,9 +75,10 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     /// Sidebar groups, in order. Every case belongs to exactly one.
     static let groups: [(title: String, tabs: [SettingsTab])] = [
         ("Yap", [.general, .shortcut, .history]),
-        ("Read aloud", [.voice, .engine, .cleanup, .capture]),
+        ("Ears", [.dictation]),
+        ("Voice", [.voice, .cleanup]),
         ("Agents", [.agents]),
-        ("System", [.models, .diagnostics]),
+        ("System", [.capture, .models, .diagnostics]),
     ]
 }
 
@@ -172,9 +174,9 @@ private extension SettingsTab {
     @ViewBuilder var content: some View {
         switch self {
         case .general:     GeneralTab()
-        case .voice:       VoiceTab().padding(.horizontal, 20).padding(.vertical, 12)
-        case .engine:      EngineTab()
-        case .capture:     CaptureTab()
+        case .voice:       VoicesPane()
+        case .dictation:   DictationTab()
+        case .capture:     PermissionsTab()
         case .cleanup:     CleanupTab().padding(.horizontal, 20).padding(.vertical, 12)
         case .shortcut:    ShortcutTab()
         case .history:     HistoryTab().padding(.horizontal, 20).padding(.vertical, 12)
@@ -199,9 +201,6 @@ private struct GeneralTab: View {
                     .onChange(of: prefs.dictationEnabled) { _, _ in DictationController.shared.reapplyHotKey() }
                 Text("Turn a feature off to disable its global shortcut. The other keeps working. With Dictation on, its models load at launch and download if missing. While it is off, the menu's Dictate button and Settings ▸ Models can still download them.")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-            Picker("Read source", selection: $prefs.readSource) {
-                ForEach(ReadSource.allCases) { Text($0.label).tag($0) }
             }
             Picker("Cleanup profile", selection: $prefs.profile) {
                 ForEach(Profile.allCases) { Text($0.label).tag($0) }
@@ -243,326 +242,78 @@ private struct GeneralTab: View {
     }
 }
 
-// MARK: - Voice & Audio
+// MARK: - Dictation
 
-private struct VoiceTab: View {
-    @EnvironmentObject var prefs: Prefs
-    @EnvironmentObject var state: AppState
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Choose a voice").font(.headline)
-                Spacer()
-                Button { state.testVoice() } label: { Label("Test", systemImage: "speaker.wave.2.fill") }
-                    .controlSize(.small)
-            }
-            VoicePickerList(voices: state.combinedVoices, selectionId: state.currentVoiceId,
-                            engine: prefs.engine, pocketAvailable: state.hdInstalled,
-                            onSelectEngine: { state.selectEngine($0) }) {
-                state.selectVoice($0)
-            }
-                .frame(minHeight: 220)
-                .background(.background, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-
-            Form {
-                Section("Playback") {
-                    slider("Speed", $prefs.speed, 0.5...2.0, "%.2f×")
-                    slider("Pitch", $prefs.pitch, -600...600, "%.0f¢")
-                    slider("Volume", $prefs.volume, 0...1, "%.0f%%", scale: 100)
-                    slider("Pause", $prefs.pauseScale, 0...2.5, "%.2f×")
-                }
-            }
-            .formStyle(.grouped)
-        }
-    }
-
-    private func slider(_ label: String, _ value: Binding<Double>, _ range: ClosedRange<Double>,
-                        _ fmt: String, scale: Double = 1) -> some View {
-        HStack {
-            Text(label).frame(width: 60, alignment: .leading)
-            Slider(value: value, in: range)
-            Text(String(format: fmt, value.wrappedValue * scale))
-                .font(.caption.monospacedDigit()).frame(width: 56, alignment: .trailing)
-        }
-    }
-}
-
-// MARK: - Engine (Kokoro / Pocket TTS)
-
-private struct EngineTab: View {
-    @EnvironmentObject var state: AppState
-    @EnvironmentObject var prefs: Prefs
-    @StateObject private var recorder = VoiceRecorder()
-    @State private var installing = false
-    @State private var installLog = ""
-    @State private var showImporter = false
-    @State private var newName = ""
-    @State private var fetching = false
-    @State private var cloningLog = ""
-
-    // A name that slugs to nothing (emoji only) can never become a voice id, so
-    // it must not unlock recording — the failure would otherwise land after a
-    // 20s take.
-    private var newID: String? { VoiceID.slug(newName) }
-    private var nameReady: Bool { newID != nil }
-
-    /// The id this name will be saved under, when it isn't the name itself.
-    /// Slugging means what the user typed and what the voice is called can differ
-    /// ("Dad's voice" → "Dads-voice"), so say so rather than surprise them later.
-    private var idNote: String? {
-        guard let id = newID, id != newName else { return nil }
-        return id
-    }
-
-    /// The existing cloned voice this import would overwrite. The write is a
-    /// `rename(2)` onto `<id>.wav`, which replaces — deliberate when you re-record
-    /// a voice, but slugging means two names you typed differently can land on one
-    /// id. Name the casualty before the user commits a 20s take to it.
-    private var replacesExisting: String? {
-        guard let id = newID,
-              state.hdVoices.contains(where: { $0.id == id && $0.needs_cloning == true })
-        else { return nil }
-        return id
-    }
-
+private struct DictationTab: View {
+    @ObservedObject private var dictation = DictationController.shared.dictation
+    @ObservedObject private var prefs = Prefs.shared
     var body: some View {
         Form {
-            Section("Voice engine") {
-                Picker("Engine", selection: $prefs.engine) {
-                    Text("Kokoro — instant, 54 voices").tag("kokoro")
-                    Text("Pocket TTS — natural voices + cloning").tag("pocket")
+            Section {
+                Picker("Language", selection: Binding(
+                    get: { dictation.engineChoice },
+                    set: { c in dictation.requestLoad(c) }
+                )) {
+                    ForEach(Dictation.EngineChoice.allCases) { Text($0.label).tag($0) }
                 }
-                .pickerStyle(.radioGroup)
-                Text("Kokoro runs on CPU and starts instantly. Pocket TTS gives noticeably more natural speech with 26 built-in voices, also fully on CPU. Add your own voices by cloning a short clip (one extra download, no account). Switch any time — or just pick a voice from the dropdown.")
+                .disabled(dictation.state == .listening || dictation.state == .finishing || dictation.state == .loadingModel)
+                Text("English is fastest and most accurate for English. Multilingual understands 25 languages. Switching downloads that model pair if it is missing.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-
-            if state.hdInstalled {
-                Section {
-                    Toggle("Pre-load Pocket model at launch", isOn: $prefs.autoLoadHD)
-                    Text("Loads Pocket in the background at launch, so your first read plays right away. Pocket also loads at launch whenever it is the selected engine. Missing model files download when it loads.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+            Section("While you talk") {
+                Toggle("Play start/stop chime", isOn: $prefs.dictationChime)
+                Toggle("Remove filler words (um, uh)", isOn: $prefs.removeFillers)
+                Text("The chime cues recording on and off. Filler removal strips clear disfluencies from the inserted text, never meaningful words.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-
-            if prefs.engine == "pocket" {
-                if !state.hdInstalled {
-                    enableSection
-                } else {
-                    catalogSection
-                    cloningSection
-                    if state.cloningReady { voicesSection; addSection }
-                    ethicsSection
-                }
-            } else {
-                Section {
-                    Label("Pocket TTS adds 26 natural built-in voices and lets you clone your own. Select it above to set it up.",
-                          systemImage: "wand.and.stars").font(.caption).foregroundStyle(.secondary)
-                }
+            Section {
+                Text("A live preview floats while you talk; drag it anywhere and it opens there next time. The final, more accurate transcript is pasted at your cursor, and every dictation is kept in History.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .onAppear { state.refreshHD() }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio]) { result in
-            if case .success(let url) = result {
-                // addHDVoice owns the security-scoped access lifecycle (it reads
-                // the file on a detached task). Starting/stopping it here would
-                // revoke the sandbox extension before that task runs.
-                state.addHDVoice(from: url, name: newName)
-                newName = ""
-            }
-        }
-    }
-
-    // MARK: enable / download
-    private var enableSection: some View {
-        Section("Set up Pocket TTS") {
-            Text("Pocket downloads its engine once (~1 GB) into Application Support. It is not bundled, so the app stays small. Its model files download the first time Pocket loads, at launch if it is selected or pre-loaded. Cloning your own voice adds one more file (209 MB), fetched during this install. No account either way.")
-                .font(.caption).foregroundStyle(.secondary)
-            if installing {
-                HStack { ProgressView().controlSize(.small); Text("Installing… keep this open").font(.caption) }
-                ScrollView { Text(installLog).font(.caption.monospaced())
-                    .frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 110).border(.quaternary)
-            } else {
-                Button("Download & enable Pocket") {
-                    installing = true; installLog = ""
-                    Task {
-                        await state.installHD { line in installLog += line + "\n" }
-                        installing = false
-                    }
-                }.buttonStyle(.borderedProminent)
-            }
-        }
-    }
-
-    // MARK: built-in catalog voices (no account)
-    private var catalogSection: some View {
-        Section("Built-in voices") {
-            ForEach(state.hdVoices.filter { $0.needs_cloning != true }) { v in
-                voiceRow(v, deletable: false)
-            }
-        }
-    }
-
-    // MARK: cloned voices (require the cloning weights installed)
-    private var voicesSection: some View {
-        Section("Your cloned voices") {
-            let cloned = state.hdVoices.filter { $0.needs_cloning == true }
-            if cloned.isEmpty {
-                Text("No cloned voices yet. Add one below, or get the free starter pack.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(cloned) { v in voiceRow(v, deletable: true) }
-        }
-    }
-
-    private func voiceRow(_ v: VoiceInfo, deletable: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: prefs.hdVoice == v.id ? "largecircle.fill.circle" : "circle")
-                .foregroundStyle(prefs.hdVoice == v.id ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            Text(deletable ? "✨ \(v.id)" : v.id)
-            Spacer()
-            Button { prefs.engine = "pocket"; prefs.hdVoice = v.id; state.testVoice() } label: {
-                Image(systemName: "play.circle")
-            }.buttonStyle(.borderless).help("Test")
-            if deletable {
-                Button(role: .destructive) { state.deleteHDVoice(v.id) } label: {
-                    Image(systemName: "trash")
-                }.buttonStyle(.borderless).help("Delete")
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { prefs.engine = "pocket"; prefs.hdVoice = v.id }
-    }
-
-    // MARK: voice cloning (no account — a verified CC-BY-4.0 mirror)
-    private var cloningSection: some View {
-        Section("Voice cloning") {
-            if state.cloningReady {
-                Label("Voice cloning is active — add your own voices below.",
-                      systemImage: "checkmark.seal.fill")
-                    .font(.caption).foregroundStyle(.green)
-            } else if state.cloningInstalled {
-                // On disk but not loaded: Pocket is lazy, so this is the window
-                // between install and the first read. Nothing for the user to do.
-                Label("Cloning is installed. It loads with the engine on your next read.",
-                      systemImage: "clock.fill")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("Cloning your own voice needs one extra model file (209 MB, downloaded once). No account, no sign-in, and nothing leaves your Mac.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if state.installingCloning {
-                    HStack { ProgressView().controlSize(.small); Text(cloningLog.isEmpty ? "Downloading…" : cloningLog).font(.caption).lineLimit(1) }
-                } else {
-                    Button("Download & enable cloning") {
-                        Task { await state.installCloningWeights { cloningLog = $0 } }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            }
-            Text("Model by Kyutai Labs, CC-BY-4.0. Yap downloads it from its own mirror and verifies the checksum before use.")
-                .font(.caption2).foregroundStyle(.secondary)
-        }
-    }
-
-    // MARK: add a voice
-    private var addSection: some View {
-        Section("Add a custom voice") {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Step 1 — name this voice").font(.caption).bold().foregroundStyle(.secondary)
-                TextField("Type a name, e.g. Sam", text: $newName)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(recorder.recording)   // don't let the name change mid-record
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Step 2 — add 10–20s of audio")
-                    .font(.caption).bold()
-                    .foregroundStyle(nameReady ? .secondary : .tertiary)
-                HStack {
-                    Button { showImporter = true } label: { Label("Import audio file…", systemImage: "square.and.arrow.down") }
-                        .disabled(!nameReady || recorder.recording)
-                    Button {
-                        recorder.toggle { url in
-                            if let url { state.addHDVoice(from: url, name: newName); newName = "" }
-                        }
-                    } label: {
-                        Label(recorder.recording ? String(format: "Stop  %.0fs", recorder.elapsed) : "Record from mic",
-                              systemImage: recorder.recording ? "stop.circle.fill" : "mic.circle")
-                    }
-                    .disabled(!nameReady && !recorder.recording)
-                    .tint(recorder.recording ? .red : nil)
-                }
-                if !nameReady {
-                    Text("Enter a name above to enable recording and importing.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                } else if let id = replacesExisting {
-                    Label("Replaces your existing “\(id)” voice.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption2).foregroundStyle(.orange)
-                } else if let id = idNote {
-                    Text("Saved as “\(id)”.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-            if recorder.recording {
-                ProgressView(value: recorder.elapsed, total: recorder.maxSeconds)
-                Text("Speak naturally — it auto-stops at \(Int(recorder.maxSeconds))s.").font(.caption2).foregroundStyle(.secondary)
-            }
-            if recorder.denied {
-                Text("Microphone access denied. Enable it in System Settings ▸ Privacy ▸ Microphone.")
-                    .font(.caption).foregroundStyle(.red)
-            }
-            Text("Tip: 10–20 seconds of one clear voice, no music or background noise, gives the best clone.")
-                .font(.caption).foregroundStyle(.secondary)
-            Button {
-                fetching = true
-                state.fetchStarterVoices { l in if l.contains("[refreshed]") { fetching = false } }
-            } label: { Label("Get free starter voices (CMU ARCTIC)", systemImage: "person.3") }
-                .controlSize(.small).disabled(fetching)
-            if fetching { ProgressView().controlSize(.small) }
-        }
-    }
-
-    private var ethicsSection: some View {
-        Section {
-            Label("Only clone voices you have permission to use — your own, or someone who consented. Don't clone real people without consent.",
-                  systemImage: "checkmark.shield").font(.caption).foregroundStyle(.secondary)
-        }
     }
 }
 
-// MARK: - Capture
+// MARK: - Permissions (capture)
 
-private struct CaptureTab: View {
+private struct PermissionsTab: View {
     @EnvironmentObject var prefs: Prefs
     @EnvironmentObject var state: AppState
     @State private var trusted = Permissions.axTrusted
+    @State private var mic = AVCaptureDevice.authorizationStatus(for: .audio)
     var body: some View {
         Form {
-            Picker("Capture method", selection: $prefs.captureMode) {
-                ForEach(CaptureMode.allCases) { Text($0.label).tag($0) }
-            }
-            Section("Accessibility permission") {
-                HStack {
-                    Image(systemName: trusted ? "checkmark.seal.fill" : "xmark.seal")
-                        .foregroundStyle(trusted ? .green : .orange)
-                    Text(trusted ? "Granted — Yap can read your selected text"
-                                 : "Not granted")
-                    Spacer()
-                }
-                HStack {
-                    Button("Request access") { Permissions.requestAX() }
-                    Button("Open Settings") { Permissions.openAXSettings() }
+            Section("Permissions") {
+                permissionRow("Accessibility", granted: trusted,
+                              detail: trusted ? "Yap can read your selected text and paste dictation."
+                                              : "Needed to read your selection and paste dictation.") {
+                    Button("Grant") { Permissions.requestAX(); Permissions.openAXSettings() }
                     Button("Recheck") { trusted = Permissions.axTrusted }
                 }
+                permissionRow("Microphone", granted: mic == .authorized,
+                              detail: mic == .authorized ? "Dictation can hear you." : "Needed for dictation and recording a voice to clone.") {
+                    Button("Open Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                    }
+                    Button("Recheck") { mic = AVCaptureDevice.authorizationStatus(for: .audio) }
+                }
             }
-            Section("Why this is needed") {
-                Text("macOS only lets a trusted app read another app's selected text, and only a trusted app can simulate ⌘C for the clipboard fallback. That's the sole reason Yap asks.")
+            Section {
+                Picker("Read source", selection: $prefs.readSource) {
+                    ForEach(ReadSource.allCases) { Text($0.label).tag($0) }
+                }
+                Picker("Capture method", selection: $prefs.captureMode) {
+                    ForEach(CaptureMode.allCases) { Text($0.label).tag($0) }
+                }
+                Text("Read source decides WHAT is read: your selection, your clipboard, or Auto (selection, then clipboard for terminals that hide it). Capture method decides HOW a selection is grabbed. Clipboard needs no permission: copy first, then press the shortcut.")
                     .font(.caption).foregroundStyle(.secondary)
-                Label("No keylogging, no screen reading, nothing sent anywhere — it reads only the text you select and trigger. All local, all open source.",
+            } header: {
+                Text("Reading your selection")
+            }
+            Section("Why Yap asks") {
+                Label("No keylogging, no screen reading, nothing sent anywhere. Yap reads only the text you select and trigger, and hears only while you dictate. All local, all open source.",
                       systemImage: "lock.shield")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text("Prefer no permission? Set Capture method or Read source to Clipboard, then copy text yourself before pressing the shortcut.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Last capture") {
@@ -574,7 +325,25 @@ private struct CaptureTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { trusted = Permissions.axTrusted }
+        .onAppear { trusted = Permissions.axTrusted; mic = AVCaptureDevice.authorizationStatus(for: .audio) }
+    }
+
+    private func permissionRow<B: View>(_ name: String, granted: Bool, detail: String,
+                                        @ViewBuilder buttons: () -> B) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .font(.title3)
+                .foregroundStyle(granted ? .green : .orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).font(.body.weight(.medium))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if !granted { buttons() }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(name): \(granted ? "granted" : "not granted")")
     }
 }
 
@@ -1011,6 +780,14 @@ private struct ModelsTab: View {
                 }
             }
 
+            if state.hdInstalled {
+                Section {
+                    Toggle("Pre-load Pocket at launch", isOn: $prefs.autoLoadHD)
+                    Text("Loads Pocket in the background at launch, so the first read plays right away. It always loads at launch when Pocket is the active engine. Missing model files download when it loads.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             Section("Dictation models") {
                 Picker("Engine", selection: Binding(
                     get: { dictation.engineChoice },
@@ -1047,13 +824,7 @@ private struct ModelsTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("Dictation behavior") {
-                Toggle("Play start/stop chime", isOn: $prefs.dictationChime)
-                Toggle("Remove filler words (um, uh)", isOn: $prefs.removeFillers)
-                Text("The chime cues recording on/off. Filler removal strips clear disfluencies from the inserted text (never meaningful words).")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-        }
         .formStyle(.grouped)
         .onAppear { state.refreshHD(); refreshSizes() }
         .onChange(of: state.modelsPresent) { _, _ in refreshSizes() }

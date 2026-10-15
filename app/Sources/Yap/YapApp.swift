@@ -53,6 +53,11 @@ enum YapMain {
                                    legacy: CommandLine.arguments.contains("--legacy"),
                                    quick: CommandLine.arguments.contains("--quick"))
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--uihold") {
+            let a = CommandLine.arguments
+            UIShotProbe.hold(pane: a.count > i + 1 ? a[i + 1] : "general",
+                             seconds: a.count > i + 2 ? Double(a[i + 2]) ?? 10 : 10)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--uishot") {
             let dir = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : "uishot"
             UIShotProbe.run(dir: dir)
