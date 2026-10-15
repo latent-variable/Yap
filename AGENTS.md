@@ -341,23 +341,32 @@ persist across rebuilds.)
 ## Releases
 
 Versioned in `app/Resources/Info.plist` (`CFBundleShortVersionString`).
-`make_dmg.sh` reads it for the DMG name. Cut a release with the DMG attached:
+`make_dmg.sh` reads it for the DMG name. App is ad-hoc signed, not notarized.
+Three install paths exist (see README): Homebrew cask, DMG + `xattr -cr`,
+build-from-source.
+
+`scripts/release.sh` never writes to `main` of either repo. Two steps:
 
 ```bash
-gh release create vX.Y.Z dist/Yap-X.Y.Z.dmg --title "..." --notes "..."
-# refresh an existing release's binary in place:
-gh release upload vX.Y.Z dist/Yap-X.Y.Z.dmg --clobber
+scripts/release.sh prepare X.Y.Z [--dry-run]   # branch release/vX.Y.Z in Yap AND the tap
+scripts/release.sh publish X.Y.Z [--yes] [--dry-run]
 ```
 
-App is ad-hoc signed, not notarized. Three install paths exist (see README):
-Homebrew cask, DMG + `xattr -cr`, build-from-source.
+- **prepare** creates both branches with `worktree.sh`, bumps the version,
+  builds the DMG from the committed tree, bumps the cask (`version` + `sha256`),
+  and opens one PR in each repo. Review and merge the Yap PR through the review
+  cycle (prepare refuses if `release/vX.Y.Z` already exists). Plain clones or managed worktrees of either repo are accepted.
+- **publish** is the separate, owner-gated step. It refuses unless `origin/main`
+  carries the version with the exact tree the DMG was built from, the Yap PR is
+  merged, the tap PR's cask has the DMG's sha256, and the tap PR passes `pr merge --dry-run`. Then it tags that verified
+  commit, uploads the DMG, and merges the tap PR with `pr merge`. Without `--yes` it only prints
+  the plan. If main moved after prepare, rerun prepare.
 
-**After every release, bump the Homebrew cask** in the separate
-`latent-variable/homebrew-tap` repo (`Casks/yap.rb`): update `version` and
-`sha256` (`shasum -a 256 dist/Yap-<v>.dmg`), commit, push. The cask's
-`postflight` runs `xattr -cr` so `brew install --cask latent-variable/tap/yap`
-installs with no Gatekeeper prompt. Forgetting this leaves brew users on the old
-version.
+Refresh an existing release's binary in place:
+`gh release upload vX.Y.Z dist/Yap-X.Y.Z.dmg --clobber`. The cask's
+`postflight` runs `xattr -cr`, so `brew install --cask latent-variable/tap/yap`
+installs with no Gatekeeper prompt; skipping the tap PR leaves brew users on
+the old version.
 
 ## Acceleration (measured, not assumed)
 
