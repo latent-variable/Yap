@@ -22,8 +22,11 @@ enum UpdateChecker {
 
     /// The running app's version (CFBundleShortVersionString), e.g. "0.8.1".
     static var currentVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? probeVersion ?? "0"
     }
+    /// Probe-only (`--uishot`): the bare `swift build` binary has no Info.plist,
+    /// so the probe reads the version from the repo's and sets it here.
+    static var probeVersion: String?
 
     // MARK: Version comparison (pure, unit-tested in --selftest)
 

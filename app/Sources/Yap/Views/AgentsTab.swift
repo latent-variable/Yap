@@ -49,6 +49,24 @@ struct AgentsTab: View {
                 step(3, "Answer out loud: press, talk, press again. Your words land in the agent's prompt.",
                      combo: prefs.dictationHotKey)
             }
+
+            Section {
+                Toggle("Let agents use Yap", isOn: $prefs.agentAPIEnabled)
+                Text("Programs on this Mac can ask Yap to speak, pause or stop, through a private socket in Application Support. No web page and no other user can reach it.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Allow agents to listen", isOn: $prefs.agentListenEnabled)
+                    .disabled(!prefs.agentAPIEnabled)
+                Label("This lets any program you run use Yap's microphone permission. The dictation window always shows while it listens, and listening stops when the program hangs up.",
+                      systemImage: "mic.badge.xmark")
+                    .font(.caption).foregroundStyle(.secondary)
+                PromptBlock(label: "Terminal", icon: "terminal",
+                            text: "ln -s /Applications/Yap.app/Contents/Resources/bin/yap /usr/local/bin/yap")
+                PromptBlock(text: AgentPrompt.cliHint)
+                Text("Then `yap say \"text\"` speaks and `yap listen` returns what you said. Every endpoint is in docs/AGENT-API.md on GitHub.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Text("Let agents speak and listen on their own")
+            }
         }
         .formStyle(.grouped)
     }
@@ -68,11 +86,13 @@ struct AgentsTab: View {
 
 /// A read-only, monospaced block with a Copy button: the thing you paste.
 struct PromptBlock: View {
+    var label = "AGENTS.md"
+    var icon = "doc.text"
     let text: String
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Label("AGENTS.md", systemImage: "doc.text")
+                Label(label, systemImage: icon)
                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 CopyButton(text: text)
@@ -128,6 +148,12 @@ enum AgentPrompt {
             """
         }
     }
+
+    /// Tells an agent it can speak on its own through the `yap` command.
+    static let cliHint = """
+    ## Talking to me out loud
+    When you finish a task or need my input, also run `yap say "<one or two plain sentences>"` so I hear it without looking. No markdown, code or symbols inside the quotes.
+    """
 
     /// What an agent's block sounds like, for "Hear an example".
     static func sample(_ v: Variant) -> String {
