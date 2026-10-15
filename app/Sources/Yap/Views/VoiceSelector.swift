@@ -35,6 +35,8 @@ struct VoicePickerList: View {
     var onSelectEngine: (String) -> Void
     /// When set, cloned voices get a delete button (Settings ▸ Voices only).
     var onDelete: ((EngineVoice) -> Void)? = nil
+    /// When set, every speakable row gets a play button (Settings ▸ Voices).
+    var onPreview: ((EngineVoice) -> Void)? = nil
     var onPick: (EngineVoice) -> Void
     @State private var query = ""
 
@@ -98,30 +100,41 @@ struct VoicePickerList: View {
         }
     }
 
+    /// The pick button is the row's main area; preview and delete sit BESIDE it,
+    /// not inside it, so each is its own control (and a locked clone can still
+    /// be deleted).
     private func row(_ v: EngineVoice) -> some View {
-        Button { onPick(v) } label: {
-            HStack {
-                Text(v.label).foregroundStyle(v.available ? AnyShapeStyle(.primary)
-                                                          : AnyShapeStyle(.secondary))
-                Spacer()
-                if !v.available {
-                    Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary)
-                } else if v.id == selectionId {
-                    Image(systemName: "checkmark").foregroundStyle(.tint).font(.caption.bold())
+        HStack(spacing: 8) {
+            Button { onPick(v) } label: {
+                HStack {
+                    Text(v.label).foregroundStyle(v.available ? AnyShapeStyle(.primary)
+                                                              : AnyShapeStyle(.secondary))
+                    Spacer()
+                    if !v.available {
+                        Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary)
+                    } else if v.id == selectionId {
+                        Image(systemName: "checkmark").foregroundStyle(.tint).font(.caption.bold())
+                    }
                 }
-                if let onDelete, v.section.contains("Cloned") {
-                    Button(role: .destructive) { onDelete(v) } label: { Image(systemName: "trash") }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .help("Delete this cloned voice")
-                        .accessibilityLabel("Delete \(v.label)")
-                }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(!v.available)
+            .help(v.available ? "" : Self.lockedHelp)
+            if let onPreview, v.available {
+                Button { onPreview(v) } label: { Image(systemName: "play.circle") }
+                    .buttonStyle(.borderless)
+                    .help("Preview \(v.label)")
+                    .accessibilityLabel("Preview \(v.label)")
+            }
+            if let onDelete, v.section.contains("Cloned") {
+                Button(role: .destructive) { onDelete(v) } label: { Image(systemName: "trash") }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Delete this cloned voice")
+                    .accessibilityLabel("Delete \(v.label)")
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(!v.available)
-        .help(v.available ? "" : Self.lockedHelp)
         .id(v.id)
         .listRowBackground(v.id == selectionId ? Color.accentColor.opacity(0.15) : Color.clear)
     }

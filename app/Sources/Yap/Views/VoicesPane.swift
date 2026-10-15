@@ -57,7 +57,10 @@ struct VoicesPane: View {
                     VoicePickerList(voices: state.combinedVoices, selectionId: state.currentVoiceId,
                                     engine: shown, pocketAvailable: false,
                                     onSelectEngine: { state.selectEngine($0) },
-                                    onDelete: shown == "pocket" ? { pendingDelete = $0 } : nil) {
+                                    onDelete: shown == "pocket" ? { pendingDelete = $0 } : nil,
+                                    // Picks the voice and plays it: the sample is always
+                                    // spoken in the selected voice.
+                                    onPreview: { state.selectVoice($0); state.testVoice() }) {
                         state.selectVoice($0)
                     }
                     .padding(6)
@@ -196,6 +199,8 @@ struct CloneVoiceSheet: View {
     @State private var showImporter = false
     @State private var fetching = false
     @State private var cloningLog = ""
+    @State private var saving = false
+    @State private var saved: String?
 
     // A name that slugs to nothing (emoji only) can never become a voice id, so
     // it must not unlock recording — the failure would otherwise land after a
@@ -267,14 +272,47 @@ struct CloneVoiceSheet: View {
                 // addHDVoice owns the security-scoped access lifecycle (it reads
                 // the file on a detached task). Starting/stopping it here would
                 // revoke the sandbox extension before that task runs.
-                state.addHDVoice(from: url, name: newName)
-                newName = ""
+                save(url)
             }
+        }
+    }
+
+    /// Save a take as the new voice; it comes back selected, ready to preview.
+    private func save(_ url: URL) {
+        saving = true; saved = nil
+        state.addHDVoice(from: url, name: newName) { id in
+            saving = false
+            saved = id   // the name stays: another take under it replaces this one
+        }
+    }
+
+    /// Shown once a take is saved: hear it before closing the sheet.
+    @ViewBuilder private var result: some View {
+        if saving {
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Saving your voice…").font(.callout) }
+        } else if let saved {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("“\(saved)” is ready").font(.callout.weight(.semibold))
+                    Text("It's now your selected voice. Not quite right? Record another take under the same name.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 6)
+                Button { state.testVoice("Hi, this is my new voice in Yap. How do I sound?") } label: {
+                    Label("Preview", systemImage: "play.fill")
+                }
+                .buttonStyle(CapsuleButtonStyle(gradient: Brand.voiceGradient))
+            }
+            .glassCard()
         }
     }
 
     private var steps: some View {
         VStack(alignment: .leading, spacing: 12) {
+            result
             VStack(alignment: .leading, spacing: 6) {
                 Text("1  Name it").font(.callout.weight(.semibold))
                 TextField("e.g. Sam", text: $newName)
@@ -288,16 +326,16 @@ struct CloneVoiceSheet: View {
                 HStack {
                     Button {
                         recorder.toggle { url in
-                            if let url { state.addHDVoice(from: url, name: newName); newName = "" }
+                            if let url { save(url) }
                         }
                     } label: {
                         Label(recorder.recording ? String(format: "Stop  %.0fs", recorder.elapsed) : "Record from mic",
                               systemImage: recorder.recording ? "stop.circle.fill" : "mic.circle.fill")
                     }
                     .buttonStyle(CapsuleButtonStyle(gradient: recorder.recording ? Brand.earsGradient : Brand.gradient))
-                    .disabled(!nameReady && !recorder.recording)
+                    .disabled((!nameReady && !recorder.recording) || saving)
                     Button { showImporter = true } label: { Label("Import a file…", systemImage: "square.and.arrow.down") }
-                        .disabled(!nameReady || recorder.recording)
+                        .disabled(!nameReady || recorder.recording || saving)
                 }
                 if !nameReady {
                     Text("Name the voice to turn on recording and import.").font(.caption).foregroundStyle(.secondary)
