@@ -106,7 +106,8 @@ struct MenuContent: View {
         case .finishing:    return "Finishing"
         case .transcribing: return "Transcribing"
         case .loadingModel: return "Loading ears"
-        case .error, .idle: break
+        case .error:        return "Dictation error"
+        case .idle:         break
         }
         if state.preparing { return state.preparingDetail }
         switch state.status {
@@ -123,7 +124,8 @@ struct MenuContent: View {
         switch dictation.state {
         case .listening, .finishing, .transcribing: return Brand.magenta
         case .loadingModel: return .orange
-        case .error, .idle: break
+        case .error:        return .red
+        case .idle:         break
         }
         if state.preparing { return Brand.violet }
         switch state.status {
@@ -412,10 +414,18 @@ struct EarsSection: View {
                             ProgressView().controlSize(.mini)
                         }
                     }
-                    HStack(spacing: 6) {
-                        Text(listening ? "Press again to insert" : "Press, talk, press again")
-                            .font(.caption).foregroundStyle(.secondary)
-                        ShortcutChip(combo: prefs.dictationHotKey)
+                    if case .error(let message) = dictation.state {
+                        // The reason, not just "it failed": one line, full text on hover.
+                        Text(message)
+                            .font(.caption).foregroundStyle(.red)
+                            .lineLimit(1).truncationMode(.tail)
+                            .help(message)
+                    } else {
+                        HStack(spacing: 6) {
+                            Text(listening ? "Press again to insert" : "Press, talk, press again")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ShortcutChip(combo: prefs.dictationHotKey)
+                        }
                     }
                 }
                 Spacer(minLength: 0)
