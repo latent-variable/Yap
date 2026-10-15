@@ -325,7 +325,14 @@ private struct PermissionsTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { trusted = Permissions.axTrusted; mic = AVCaptureDevice.authorizationStatus(for: .audio) }
+        .onAppear(perform: recheck)
+        // Coming back from System Settings is when a grant changes, either way.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in recheck() }
+    }
+
+    private func recheck() {
+        trusted = Permissions.axTrusted
+        mic = AVCaptureDevice.authorizationStatus(for: .audio)
     }
 
     private func permissionRow<B: View>(_ name: String, granted: Bool, detail: String,
