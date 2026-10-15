@@ -160,7 +160,7 @@ enum UIShotProbe {
         // A titled window draws its toolbar and sidebar chrome only when it is
         // really on screen, so take that one with `screencapture` (needs the
         // Screen Recording grant for the terminal; falls back to cacheDisplay).
-        if height != nil, onScreen(window) {
+        if height != nil, onScreen(window), (window.screen?.backingScaleFactor ?? 1) >= 2 {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
             p.arguments = ["-x", "-o", "-l\(window.windowNumber)", url.path]
@@ -168,9 +168,19 @@ enum UIShotProbe {
             window.orderOut(nil)
             if p.terminationStatus == 0, FileManager.default.fileExists(atPath: url.path) { return true }
         }
-        let bounds = host.bounds
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: bounds) else { return false }
-        host.cacheDisplay(in: bounds, to: rep)
+        // A titled window on a 1x screen: draw the whole frame view (title bar
+        // and all) ourselves, at 2x.
+        let target: NSView = height != nil ? (window.contentView?.superview ?? host) : host
+        let bounds = target.bounds
+        // Always 2x, whatever screen the off-screen window lands on: these images
+        // go into the README and videos, where 1x looks soft.
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(bounds.width * 2),
+                                         pixelsHigh: Int(bounds.height * 2), bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return false }
+        rep.size = bounds.size
+        target.cacheDisplay(in: bounds, to: rep)
         window.orderOut(nil)
         guard let png = rep.representation(using: .png, properties: [:]) else { return false }
         do { try png.write(to: url); return true } catch {
