@@ -664,6 +664,8 @@ enum Selftest {
             checkBool("catalog voice unaffected by cloning state", avail(on, "eve"), true)
         }
 
+        failures += AgentSelftest.run()
+
         print("UpdateChecker — semantic version compare")
         checkBool("newer patch is newer", UpdateChecker.isNewer("0.8.2", than: "0.8.1"), true)
         checkBool("older is not newer", UpdateChecker.isNewer("0.8.0", than: "0.8.1"), false)

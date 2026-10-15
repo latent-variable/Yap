@@ -134,8 +134,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.servicesProvider = serviceProvider
         AppState.shared.bootstrap()
         DictationController.shared.bootstrap()   // the "ears": ⌘⇧D dictation
+        AgentAPIController.shared.bootstrap()    // the agent socket (docs/AGENT-API.md)
     }
     func applicationWillTerminate(_ notification: Notification) {
+        AgentAPIController.shared.stop()   // removes the socket file
         AppState.shared.backend.stop()
     }
 

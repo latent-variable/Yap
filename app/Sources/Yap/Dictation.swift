@@ -135,6 +135,21 @@ final class Dictation: ObservableObject {
 
     var isListening: Bool { state == .listening }
 
+    /// Has the speaker finished? True once speech was heard and the last `seconds`
+    /// of the recording are quiet. For callers with no hotkey to press (the agent
+    /// API's `/listen`). It only decides WHEN to stop; the stop itself is
+    /// `stopAndTranscribe`, which decodes through the last captured frame, so a
+    /// quiet last word is still in the text. When loudness cannot separate speech
+    /// from the room (`SpeechGate.threshold` nil) this stays false and the caller's
+    /// time limit ends the session instead: never a guess.
+    func speakerFinished(silence seconds: Double) -> Bool {
+        SpeechGate.endedBySilence(recorder.levels, frames: recorder.frameCount,
+                                  rate: captureFormat?.sampleRate ?? 16_000, silence: seconds)
+    }
+
+    /// The recorder hit its 180 s cap: nothing more is kept for the final pass.
+    var recorderFull: Bool { recorder.overflowed }
+
     /// Switch/load the dictation engine, superseding any in-flight load so the
     /// LAST selection wins. Use this from the UI (picker, retry, download) rather
     /// than spawning ad-hoc `Task { await loadModel(...) }`, which would race.
@@ -733,6 +748,21 @@ enum SpeechGate {
         guard let top = dbs.last, top - floor >= 12 else { return nil }
         return floor + min(max(0.25 * (top - floor), 6), 15)
     }
+
+    /// Speech has been heard, and the last `silence` seconds are below the speech
+    /// threshold. The speech floor (`minSpeechWindows`) keeps one door slam or key
+    /// click from counting as "the user spoke and stopped".
+    static func endedBySilence(_ levels: [Level], frames: Int, rate: Double, silence: Double) -> Bool {
+        guard let th = threshold(levels) else { return false }
+        guard loudWindows(levels, from: 0, to: frames, threshold: th) >= minSpeechWindows else { return false }
+        let from = frames - Int(silence * rate)
+        guard from > 0 else { return false }
+        return self.silent(levels, from: from, to: frames, threshold: th)
+    }
+
+    /// 10 ms windows of voicing before silence can end a listen: a spoken word is
+    /// a hundred ms and more, a click is tens.
+    static let minSpeechWindows = 10
 
     /// How many windows overlapping frames `from...to` are at or above `threshold`.
     static func loudWindows(_ levels: [Level], from: Int, to: Int, threshold: Float) -> Int {
