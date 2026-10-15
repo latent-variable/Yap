@@ -297,7 +297,8 @@ enum AgentProbe {
             let after = (prefs.engine, prefs.voice, prefs.hdVoice, prefs.speed, prefs.pitch, prefs.volume)
             ok("no request changed the user's engine, voice, speed, pitch or volume", after == baseline, "\(after)")
             ok("...nor what is stored on disk", UserDefaults.standard.double(forKey: "speed") == 1.0
-               && UserDefaults.standard.string(forKey: "voice") == "am_puck")
+               && UserDefaults.standard.string(forKey: "voice") == "am_puck",
+               "speed \(UserDefaults.standard.double(forKey: "speed")), voice \(UserDefaults.standard.string(forKey: "voice") ?? "nil")")
 
             // MARK: listen (simulated capture)
             await listenChecks(dictation: dictation, prefs: prefs, dir: dir)
@@ -408,6 +409,45 @@ enum AgentProbe {
             ok("...the listen returns stopped", slowReply.json["reason"] as? String == "stopped", slowReply.raw)
             ok("...and the capture that was coming up is closed, not left open",
                await until(8) { dictation.dictation.state == .idle && dictation.agentSession == nil })
+
+            // A Microphone answer that arrives after the listen gave up must open nothing.
+            // (The start-up path itself, with the permission prompt and the capture
+            // stood in for, because a probe may not ask macOS for the real thing.)
+            final class Box: @unchecked Sendable { var answer: (@Sendable (Bool) -> Void)?; var opened = 0 }
+            let box = Box()
+            dictation.simulatedCapture = nil
+            DictationController.startTimeout = 1.0
+            Dictation.micAccess = { done in box.answer = done }          // the prompt sits unanswered
+            Dictation.captureOpener = { _ in box.opened += 1 }
+            let timedOut = await call("POST", "/listen", "{}")
+            ok("a listen whose microphone never comes up gives up with an error",
+               timedOut.status == 500 && timedOut.json["code"] as? String == "listen_failed", timedOut.raw)
+            ok("...with no session left behind", dictation.agentSession == nil)
+            box.answer?(true)                                            // the user finally clicks Allow
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            ok("a late 'Allow' opens no capture", box.opened == 0 && dictation.dictation.state == .idle,
+               "opened \(box.opened), state \(dictation.dictation.state)")
+            Dictation.micAccess = { done in done(true) }                 // now it answers at once
+            let again2 = Task { await self.call("POST", "/listen", #"{"max_seconds":60,"silence_seconds":10}"#) }
+            ok("the next listen starts normally (the abandoned start did not block it)",
+               await until(10) { dictation.dictation.state == .listening && box.opened == 1 })
+            _ = await call("POST", "/listen/stop")
+            ok("...and ends on request", (await again2.value).json["reason"] as? String == "stopped")
+            Dictation.micAccess = { done in AVCaptureDevice.requestAccess(for: .audio, completionHandler: done) }
+            Dictation.captureOpener = nil
+            DictationController.startTimeout = 45
+
+            // A dismissal scheduled by an earlier dictation must not hide a newer one.
+            let dismissedBefore = dictation.delayedDismissals
+            dictation.dismissHUDLater(after: 0.8)
+            dictation.simulatedCapture = feeder(clipSecs, 6)
+            let during = await call("POST", "/listen", #"{"max_seconds":3,"silence_seconds":10}"#)   // runs ~3 s, past 0.8
+            ok("a listen ran across the old dismissal's deadline", during.json["reason"] as? String == "max_seconds", during.raw)
+            ok("...and the old dismissal did not act on it", dictation.delayedDismissals == dismissedBefore,
+               "acted \(dictation.delayedDismissals - dismissedBefore)x")
+            dictation.dismissHUDLater(after: 0.3)
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            ok("(control) a dismissal with no newer session still acts", dictation.delayedDismissals == dismissedBefore + 1)
 
             // A caller that hangs up discards the session.
             dictation.simulatedCapture = feeder(clipSecs, 20)

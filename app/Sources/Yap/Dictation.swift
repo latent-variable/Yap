@@ -245,6 +245,17 @@ final class Dictation: ObservableObject {
 
     /// Start mic capture and live streaming (asks Microphone permission once).
     private var starting = false
+    /// Identifies the start-up in flight. `cancelStart()` moves it on, and every
+    /// await in `startListening` checks it before going further, so a start that
+    /// was given up on can never open the microphone later.
+    private var startToken = 0
+
+    /// Probe-only (`--apitest`): stand-ins for the two things a headless probe must
+    /// not do, ask macOS for the Microphone and open it.
+    nonisolated(unsafe) static var micAccess: (@escaping @Sendable (Bool) -> Void) -> Void = { done in
+        AVCaptureDevice.requestAccess(for: .audio, completionHandler: done)
+    }
+    nonisolated(unsafe) static var captureOpener: ((Dictation) throws -> Void)?
 
     func startListening() {
         // `starting` blocks a second press during the async permission window —
@@ -258,14 +269,22 @@ final class Dictation: ObservableObject {
         // exists to prevent.
         let choice = engineChoice
         starting = true
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
+        startToken += 1
+        let token = startToken
+        Dictation.micAccess { granted in
             Task { @MainActor in
-                defer { self.starting = false }
+                // Given up on while the permission prompt sat open (the user took
+                // minutes to answer): the canceller already cleared `starting`, and
+                // a late "yes" must not open a microphone nobody is showing.
+                guard token == self.startToken else { return }
+                defer { if token == self.startToken { self.starting = false } }
                 guard granted else { self.state = .error("Microphone access denied"); return }
                 do {
                     try await manager.reset()
+                    guard token == self.startToken else { return }   // cancelled during the reset
                     self.beginSession()
-                    try self.beginCapture(into: manager)
+                    if let open = Dictation.captureOpener { try open(self) }
+                    else { try self.beginCapture(into: manager) }
                     self.sessionManager = manager   // bind for the whole session
                     self.sessionFinalVersion = choice.finalVersion
                     self.state = .listening
@@ -275,6 +294,13 @@ final class Dictation: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Give up on a start that has not finished. Safe at any moment: a start that
+    /// already completed is left alone (the caller then stops the session as usual).
+    func cancelStart() {
+        startToken += 1
+        starting = false
     }
 
     /// Stop capture, flush, and return the final transcript (nil if empty).

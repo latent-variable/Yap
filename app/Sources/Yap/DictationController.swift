@@ -24,6 +24,12 @@ final class DictationController: ObservableObject {
     var hudDefaults: UserDefaults = .standard
     static let hudOriginKey = "dictationHUDOrigin"
     private var targetObserver: Any?
+    /// Which HUD session is current. A delayed dismissal remembers the one that
+    /// scheduled it and does nothing if a newer session has started since: it would
+    /// otherwise hide the HUD (and clear the error) of a session whose mic is open.
+    private var hudSession = 0
+    /// Probe-only: how many delayed dismissals actually acted.
+    private(set) var delayedDismissals = 0
 
     func bootstrap() {
         dictation.engineChoice = Dictation.EngineChoice(rawValue: Prefs.shared.dictationEngine) ?? .english
@@ -68,6 +74,7 @@ final class DictationController: ObservableObject {
         case .idle:
             captureTarget()
             startTargetTracking()    // keep target live if you switch apps
+            hudSession += 1
             showHUD()
             playChime(start: true)   // immediate "now recording" feedback
             Task {
@@ -112,14 +119,25 @@ final class DictationController: ObservableObject {
             dictation.note("Copied. Enable Accessibility for Yap, then ⌘V to paste.")
             Permissions.requestAX()
             Permissions.openAXSettings()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-                self?.dictation.clearError()
-                self?.hideHUD()
-            }
+            dismissHUDLater(after: 5)
             return
         }
         hideHUD()
         TextInsert.insertAtCursor(text)
+    }
+
+    /// Clear a lingering message and hide the HUD after a pause, unless a newer
+    /// dictation session has begun by then.
+    func dismissHUDLater(after seconds: Double) {
+        let scheduledBy = hudSession
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.hudSession == scheduledBy else { return }
+                self.delayedDismissals += 1
+                self.dictation.clearError()
+                self.hideHUD()
+            }
+        }
     }
 
     // MARK: - agent listen (docs/AGENT-API.md, POST /listen)
@@ -141,6 +159,10 @@ final class DictationController: ObservableObject {
     }
 
     private(set) var agentSession: AgentSession?
+
+    /// How long a listen waits for the microphone to come up (the first run shows
+    /// macOS's Microphone prompt). A variable so the probe can shorten it.
+    static var startTimeout: TimeInterval = 45
 
     /// Probe-only (`--apitest`): feed audio from a file instead of the mic, and
     /// keep the HUD and chimes off the owner's screen and speakers. The real path
@@ -180,6 +202,7 @@ final class DictationController: ObservableObject {
         defer { agentSession = nil }
         if case .error = dictation.state { dictation.clearError() }
 
+        hudSession += 1
         if insert { captureTarget(); startTargetTracking() }
         else { targetName = "Agent (not pasted)"; targetIcon = nil }
         if !headless { showHUD() }
@@ -210,15 +233,19 @@ final class DictationController: ObservableObject {
         // answer; give it room. A stop or hang-up during it is NOT acted on here:
         // the capture is coming up either way, and the loop below is what closes it.
         // Bailing out now would leave a microphone opening with nobody holding it.
-        let startBy = Date().addingTimeInterval(45)
+        let startBy = Date().addingTimeInterval(Self.startTimeout)
         while dictation.state != .listening {
             if case .error(let m) = dictation.state {
                 dictation.clearError(); abandon()
                 return .failure(APIError(500, "listen_failed", m))
             }
             if Date() > startBy {
+                // Give the start-up up for good: a Microphone prompt answered later
+                // finds its token spent and opens nothing. (If it finished in the
+                // same instant, the session is stopped here rather than left open.)
+                dictation.cancelStart()
+                if dictation.state == .listening { _ = await dictation.stopAndTranscribe() }
                 abandon()
-                closeLateCapture()
                 return .failure(APIError(500, "listen_failed", "Microphone did not start in time."))
             }
             // Not Task.sleep in THIS task: once the caller hangs up it is cancelled, and
@@ -267,25 +294,6 @@ final class DictationController: ObservableObject {
             abandon()
         }
         return .success(AgentListenResult(text: text, reason: reason, seconds: elapsed, inserted: insert))
-    }
-
-    /// A capture that came up after its listen gave up (the Microphone prompt was
-    /// answered late): nobody holds it, so close it and drop the audio.
-    private func closeLateCapture() {
-        Task { @MainActor [weak self] in
-            let end = Date().addingTimeInterval(300)
-            while let self, Date() < end {
-                switch self.dictation.state {
-                case .listening:
-                    if self.agentSession == nil { _ = await self.dictation.stopAndTranscribe() }
-                    return
-                case .error:
-                    self.dictation.clearError(); return
-                default:
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                }
-            }
-        }
     }
 
     /// Track the frontmost app — where the text will land. Polled while listening
