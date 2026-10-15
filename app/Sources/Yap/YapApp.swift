@@ -53,6 +53,10 @@ enum YapMain {
                                    legacy: CommandLine.arguments.contains("--legacy"),
                                    quick: CommandLine.arguments.contains("--quick"))
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--uishot") {
+            let dir = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : "uishot"
+            UIShotProbe.run(dir: dir)
+        }
         if CommandLine.arguments.contains("--hudtest") {
             HUDProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
         }
@@ -79,13 +83,9 @@ struct YapApp: App {
             SettingsView()
                 .environmentObject(state)
                 .environmentObject(prefs)
-                // MINIMUM, not an exact size. This was `.frame(width: 560, height: 460)`,
-                // which pinned the window: 560pt is narrower than the nine-tab bar
-                // needs (~744pt at the system small font), so macOS collapsed the
-                // tail into a `>>` chevron — and items in that chevron menu do not
-                // switch tabs. Diagnostics was visible and unreachable, and the
-                // exact frame also meant the window could not be widened to fix it.
-                .frame(minWidth: SettingsView.minTabBarWidth, minHeight: 460)
+                // MINIMUM, not an exact size: an exact frame once pinned the
+                // window too narrow to reach its last tabs, with no way to widen it.
+                .frame(minWidth: SettingsView.minSize.width, minHeight: SettingsView.minSize.height)
         }
     }
 }

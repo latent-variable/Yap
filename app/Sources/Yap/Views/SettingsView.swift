@@ -1,79 +1,133 @@
 import SwiftUI
 import Carbon.HIToolbox
 
-/// One case per Settings tab. Both the `.tabItem` labels and the `--selftest`
-/// width guard read from here, so a rename cannot drift between what the bar
-/// renders and what the test measures — and a new tab needs a case to get a
-/// label, which puts it in `allCases` and under the guard automatically.
-enum SettingsTab: CaseIterable {
-    case general, voice, engine, capture, cleanup, shortcut, history, models, diagnostics
+/// One case per Settings pane. The sidebar, the pane header and `--selftest`
+/// all read from here, so a new pane needs a case (and a group) to appear at
+/// all, and the selftest catches a case left out of every group.
+enum SettingsTab: String, CaseIterable, Identifiable {
+    case general, shortcut, history, voice, engine, cleanup, capture, agents, models, diagnostics
+
+    var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general:     return "General"
-        case .voice:       return "Voice & Audio"
+        case .voice:       return "Voice"
         case .engine:      return "Engine"
         case .capture:     return "Capture"
         case .cleanup:     return "Cleanup"
-        case .shortcut:    return "Shortcut"
+        case .shortcut:    return "Shortcuts"
         case .history:     return "History"
+        case .agents:      return "Agents"
         case .models:      return "Models"
         case .diagnostics: return "Diagnostics"
         }
     }
 
+    /// One line under the pane title: what this pane is for.
+    var subtitle: String {
+        switch self {
+        case .general:     return "What's on, what it reads, how it sounds off."
+        case .voice:       return "Pick a voice and tune how it plays."
+        case .engine:      return "Kokoro for speed, Pocket for natural voices and cloning."
+        case .capture:     return "How Yap grabs the text you selected."
+        case .cleanup:     return "Strip Markdown, code and citations before they're spoken."
+        case .shortcut:    return "Global keys for reading and dictating."
+        case .history:     return "Everything you've read and dictated, kept on this Mac."
+        case .agents:      return "Teach your AI agents to talk to you."
+        case .models:      return "Download, check and delete each local model."
+        case .diagnostics: return "Backend health, acceleration and capture checks."
+        }
+    }
+
     var icon: String {
         switch self {
-        case .general:     return "gearshape"
+        case .general:     return "gearshape.fill"
         case .voice:       return "waveform"
-        case .engine:      return "cpu"
+        case .engine:      return "cpu.fill"
         case .capture:     return "text.viewfinder"
         case .cleanup:     return "wand.and.stars"
         case .shortcut:    return "command"
         case .history:     return "clock.arrow.circlepath"
-        case .models:      return "cube.box"
+        case .agents:      return "sparkles"
+        case .models:      return "shippingbox.fill"
         case .diagnostics: return "stethoscope"
         }
     }
 
-    var label: some View { Label(title, systemImage: icon) }
+    /// The tile behind the icon, System Settings style.
+    var tile: AnyShapeStyle {
+        switch self {
+        case .general:     return AnyShapeStyle(Color.gray.gradient)
+        case .shortcut:    return AnyShapeStyle(Color.blue.gradient)
+        case .history:     return AnyShapeStyle(Color.green.gradient)
+        case .voice:       return AnyShapeStyle(Brand.voiceGradient)
+        case .engine:      return AnyShapeStyle(Brand.indigo.gradient)
+        case .cleanup:     return AnyShapeStyle(Color.orange.gradient)
+        case .capture:     return AnyShapeStyle(Color.teal.gradient)
+        case .agents:      return AnyShapeStyle(Brand.gradient)
+        case .models:      return AnyShapeStyle(Color.brown.gradient)
+        case .diagnostics: return AnyShapeStyle(Color.red.gradient)
+        }
+    }
+
+    /// Sidebar groups, in order. Every case belongs to exactly one.
+    static let groups: [(title: String, tabs: [SettingsTab])] = [
+        ("Yap", [.general, .shortcut, .history]),
+        ("Read aloud", [.voice, .engine, .cleanup, .capture]),
+        ("Agents", [.agents]),
+        ("System", [.models, .diagnostics]),
+    ]
+}
+
+/// The coloured rounded-square icon used in the sidebar and the pane header.
+struct SettingsIcon: View {
+    let tab: SettingsTab
+    var size: CGFloat = 22
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+            .fill(tab.tile)
+            .frame(width: size, height: size)
+            .overlay(Image(systemName: tab.icon)
+                .font(.system(size: size * 0.5, weight: .semibold))
+                .foregroundStyle(.white))
+            .accessibilityHidden(true)
+    }
 }
 
 struct SettingsView: View {
-    /// Window floor applied by the `Settings` scene in YapApp.
-    ///
-    /// Below this the tab bar does not fit and macOS collapses the tail into a
-    /// `>>` chevron whose items DO NOT switch tabs, so the last tabs become
-    /// visible-but-unreachable. Nine labels need ~744pt at the system small font;
-    /// 760 leaves headroom for a rename or a larger text size.
-    ///
-    /// ADDING A TAB? Add a `SettingsTab` case and raise this if needed;
-    /// `--selftest` fails when the labels stop fitting.
-    static let minTabBarWidth: CGFloat = 760
+    /// Window floor applied by the `Settings` scene in YapApp. The sidebar
+    /// replaced the old nine-item tab bar, whose overflow chevron made the last
+    /// tabs visible-but-unreachable below 760pt; a list has no such cliff.
+    static let minSize = CGSize(width: 780, height: 540)
 
-    /// Width the macOS tab bar needs for `titles` at the current system font.
-    /// Icon-over-title items size to their title plus fixed horizontal padding.
-    static func requiredTabBarWidth(_ titles: [String]) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-        let items = titles.reduce(0.0) { total, t in
-            total + max((t as NSString).size(withAttributes: [.font: font]).width + 32, 60)
-        }
-        return items + 40   // window chrome + the TabView's own padding
-    }
+    @AppStorage("settingsPane") private var pane = SettingsTab.general
 
     var body: some View {
-        TabView {
-            GeneralTab().tabItem { SettingsTab.general.label }
-            VoiceTab().tabItem { SettingsTab.voice.label }
-            EngineTab().tabItem { SettingsTab.engine.label }
-            CaptureTab().tabItem { SettingsTab.capture.label }
-            CleanupTab().tabItem { SettingsTab.cleanup.label }
-            ShortcutTab().tabItem { SettingsTab.shortcut.label }
-            HistoryTab().tabItem { SettingsTab.history.label }
-            ModelsTab().tabItem { SettingsTab.models.label }
-            DiagnosticsTab().tabItem { SettingsTab.diagnostics.label }
+        NavigationSplitView {
+            List(selection: $pane) {
+                ForEach(SettingsTab.groups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.tabs) { tab in
+                            Label { Text(tab.title) } icon: { SettingsIcon(tab: tab, size: 20) }
+                                .tag(tab)
+                        }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .safeAreaInset(edge: .bottom) { sidebarFooter }
+            .navigationSplitViewColumnWidth(min: 210, ideal: 220, max: 260)
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
+            VStack(spacing: 0) {
+                paneHeader
+                pane.content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            .navigationTitle(pane.title)
         }
-        .padding(16)
+        .tint(Brand.violet)
         // Keep "on" toggles visibly accent-colored even when the window isn't key
         // (Yap is a menu-bar accessory, so Settings is often inactive — stock
         // switches would gray out and you couldn't tell what's on). See StableToggleStyle.
@@ -84,6 +138,50 @@ struct SettingsView: View {
         // window becomes key and accepts input, then drop back to accessory.
         .onAppear { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
         .onDisappear { NSApp.setActivationPolicy(.accessory) }
+    }
+
+    private var paneHeader: some View {
+        HStack(spacing: 12) {
+            SettingsIcon(tab: pane, size: 38)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pane.title).font(Brand.title(20, .bold))
+                Text(pane.subtitle).font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 4)
+    }
+
+    private var sidebarFooter: some View {
+        HStack(spacing: 8) {
+            BrandMark(size: 24)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Yap").font(Brand.title(13, .bold))
+                Text("v\(UpdateChecker.currentVersion) · fully local")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(12)
+    }
+}
+
+private extension SettingsTab {
+    /// The pane body. Form panes bring their own grouped insets; the free-form
+    /// panes get matching padding so every pane lines up under the header.
+    @ViewBuilder var content: some View {
+        switch self {
+        case .general:     GeneralTab()
+        case .voice:       VoiceTab().padding(.horizontal, 20).padding(.vertical, 12)
+        case .engine:      EngineTab()
+        case .capture:     CaptureTab()
+        case .cleanup:     CleanupTab().padding(.horizontal, 20).padding(.vertical, 12)
+        case .shortcut:    ShortcutTab()
+        case .history:     HistoryTab().padding(.horizontal, 20).padding(.vertical, 12)
+        case .agents:      AgentsTab()
+        case .models:      ModelsTab()
+        case .diagnostics: DiagnosticsTab()
+        }
     }
 }
 
@@ -153,7 +251,7 @@ private struct VoiceTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Voice").font(.headline)
+                Text("Choose a voice").font(.headline)
                 Spacer()
                 Button { state.testVoice() } label: { Label("Test", systemImage: "speaker.wave.2.fill") }
                     .controlSize(.small)

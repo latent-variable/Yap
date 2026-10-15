@@ -31,7 +31,10 @@ struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {
 /// (`AppState.stream`) and the dictation controller.
 @MainActor
 final class HistoryStore: ObservableObject {
-    static let shared = HistoryStore()
+    /// `YAP_HISTORY_FILE` points the store elsewhere: `--uishot` sets it so a
+    /// screenshot shows sample entries, never the user's own dictation.
+    static let shared = HistoryStore(fileURL: ProcessInfo.processInfo.environment["YAP_HISTORY_FILE"]
+        .map { URL(fileURLWithPath: $0) })
 
     /// Max entries per list. Full text is preserved; only the count is bounded so
     /// the on-disk file can't grow without limit. `nonisolated` so the pure
