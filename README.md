@@ -10,7 +10,7 @@ Press a shortcut and talk: your words type themselves wherever the cursor is. Hi
 
 [Install](#install) · [How you use it](#how-you-use-it) · [Agents](#give-your-agents-a-voice) · [Privacy](#privacy)
 
-<img src="docs/yap-ui.png" width="820" alt="Yap's menu-bar popover (Ears and Voice) next to its Settings window">
+https://github.com/user-attachments/assets/8fae0d41-6e23-4b7c-8de5-03618614a30b
 
 </div>
 
@@ -31,6 +31,8 @@ First launch: download the Kokoro voice in **Settings ▸ Models** (~340 MB) and
 | **Ears** | **⌘⇧D**, talk, **⌘⇧D** | A live preview floats while you talk. The accurate transcript is pasted at your cursor, in any app. |
 | **Voice** | Select text, **⌘⇧R** | It reads aloud as it synthesizes. Pause, stop and change speed from the menu bar. |
 | **Services** | Right-click ▸ **Read with Yap** | Same as Voice, from any app's context menu. |
+
+<p align="center"><img src="docs/yap-ui.png" width="820" alt="Yap's menu-bar popover (Ears and Voice) next to its Settings window"></p>
 
 Both shortcuts can be any chord, including a modifier-only one like ⌥⌘ held and released.
 
