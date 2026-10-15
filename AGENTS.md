@@ -384,7 +384,7 @@ scripts/release.sh publish X.Y.Z [--yes] [--dry-run]
   cycle (prepare refuses if `release/vX.Y.Z` already exists). Plain clones or managed worktrees of either repo are accepted.
 - **publish** is the separate, owner-gated step. It refuses unless `origin/main`
   carries the version with the exact tree the DMG was built from, the Yap PR is
-  merged, the tap PR's cask has the DMG's sha256, and the tap PR passes `pr merge --dry-run`. Then it tags that verified
+  merged, the tap PR's cask has the DMG's sha256, and the tap PR passes `pr merge --dry-run` (as `--self-reviewed`, since the tap is outside the reviewer's coverage). Then it tags that verified
   commit, uploads the DMG, and merges the tap PR with `pr merge`. Without `--yes` it only prints
   the plan. If main moved after prepare, rerun prepare.
 
