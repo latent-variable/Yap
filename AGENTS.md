@@ -189,6 +189,28 @@ is off. Deleted models download again at the next launch if Dictation is on.
 Models are cached in `~/Library/Application Support/FluidAudio/Models`.
 Dictation needs Microphone permission.
 
+## Agent API (voice and ears for other programs)
+
+A Unix socket (`yap.sock`, 0600, `docs/AGENT-API.md`) lets other programs speak
+through the app and open dictation. Contract for anyone touching it:
+
+- **Its voice/engine/speed travel as `ReadParams` and are never written to
+  `Prefs`.** A request must not change the user's own choice. Every start or stop
+  of a read goes through `AppState.bumpGeneration`, which also settles the
+  request's outcome and its waiting line.
+- **`/listen` is off by default (`agentListenEnabled`) and its HUD cannot be
+  turned off.** Through the socket any same-user process can use Yap's Microphone
+  grant, so that gate and the visible mic are the security model. Do not add a
+  request option that hides the HUD, and do not change the stop path
+  (`stopAndTranscribe`); only the stop *trigger* (`SpeechGate.endedBySilence`) is
+  the API's.
+- **Run the final pass in its own `Task`, never the caller's.** A client that hangs
+  up cancels the request's task, and a final pass under a cancelled task throws.
+- `AgentServer.start()` ignores SIGPIPE process-wide on purpose. Keep it.
+- Validate with `--selftest` (parser, validation, socket hygiene) and
+  `YAP_REPO=$PWD/.. Yap --apitest` (end to end on a spare port, private socket,
+  volume 0; never touches a running Yap). Not `install_local.sh`.
+
 ## Packaging / deployment
 
 The app ships a **self-contained Python runtime** so end users need nothing

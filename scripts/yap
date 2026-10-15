@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# yap: talk to the running Yap app. Voice (say) and ears (listen), from a shell.
+#
+#   yap say "text"            speak it (or: echo text | yap say)
+#   yap stop | pause | resume
+#   yap status | voices
+#   yap listen                print what you say, then exit
+#
+# Needs only bash and curl. It speaks HTTP over Yap's Unix socket; see
+# docs/AGENT-API.md for every endpoint, the exit codes and the security model.
+set -u
+
+SOCK="${YAP_API_SOCKET:-$HOME/Library/Application Support/Yap/yap.sock}"
+
+usage() {
+  cat <<'EOF'
+yap: voice and ears for the Yap app (it must be running)
+
+  yap say [options] [text...]   speak text; reads stdin when no text is given
+      --voice ID      voice id, e.g. am_puck or kokoro:am_puck (see: yap voices)
+      --engine NAME   kokoro or pocket
+      --speed N       0.25 to 4 (this request only; your setting is unchanged)
+      --wait          return when speech has finished or been stopped
+      --no-interrupt  queue behind what is already being said
+      --raw           speak the text exactly as written (skip cleanup)
+  yap stop | pause | resume
+  yap status           app and voice state, as JSON
+  yap voices           the voices Yap offers, as JSON
+  yap listen [options] open dictation, print the transcript on stdout
+      --max N         stop after N seconds (default 60, at most 170)
+      --silence S     stop after S seconds of quiet once you spoke (default 1.5)
+      --insert        also paste the text at the cursor (default: don't)
+      --json          print the full JSON result instead of just the text
+  yap stop-listening   end a running listen now
+
+Exit codes: 0 ok, 1 error, 2 bad usage, 3 Yap is not running,
+            10 (say --wait) the speech was stopped before it finished.
+Environment: YAP_API_SOCKET overrides the socket path.
+EOF
+}
+
+die() { printf 'yap: %s\n' "$*" >&2; exit "${CODE:-1}"; }
+
+need_curl() { command -v curl >/dev/null 2>&1 || CODE=1 die "curl is required but was not found"; }
+
+# JSON string body for stdin: escapes \ and ", turns tabs and newlines into
+# escapes, and drops the other control characters (they are not speakable and
+# JSON forbids them raw).
+json_escape() {
+  local tab=$'\t'
+  # LC_ALL=C: bytes in, bytes out, so UTF-8 text passes through untouched and
+  # invalid UTF-8 cannot make sed or tr bail ("illegal byte sequence").
+  LC_ALL=C tr -d '\000-\010\013-\037' | LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/${tab}/\\\\t/g" |
+    LC_ALL=C awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'
+}
+
+# call METHOD PATH [BODY-FILE|-] [extra curl args...]
+# Prints the response body; sets HTTP_CODE. Exits 3 when Yap is not running.
+HTTP_CODE=""
+call() {
+  local method="$1" path="$2" body="${3:-}"
+  shift 3 2>/dev/null || shift $#
+  need_curl
+  if [ ! -S "$SOCK" ]; then
+    CODE=3 die "Yap is not running (no socket at $SOCK). Open Yap, and check that the agent API is enabled in its settings."
+  fi
+  local out rc
+  if [ -n "$body" ]; then
+    out="$(curl -sS --unix-socket "$SOCK" -X "$method" -H 'Content-Type: application/json' \
+      --data-binary "$body" -w $'\n%{http_code}' "$@" "http://yap$path" 2>&1)"
+  else
+    out="$(curl -sS --unix-socket "$SOCK" -X "$method" -w $'\n%{http_code}' "$@" "http://yap$path" 2>&1)"
+  fi
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    if [ $rc -eq 7 ] || [ $rc -eq 56 ]; then
+      CODE=3 die "Yap is not answering on $SOCK (is it running? is the agent API enabled?)"
+    fi
+    die "request failed: ${out%$'\n'*}"
+  fi
+  HTTP_CODE="${out##*$'\n'}"
+  RESPONSE="${out%$'\n'*}"
+}
+
+# Show an API error as one line: {"code":"x","error":"message"} -> "message".
+fail_http() {
+  local msg
+  # The message may hold escaped quotes: take up to the first UNescaped one.
+  msg="$(printf '%s' "$RESPONSE" | sed -n -E 's/.*"error":"(([^"\\]|\\.)*)".*/\1/p' | sed -e 's/\\"/"/g' -e 's/\\\\/\\/g')"
+  die "${msg:-HTTP $HTTP_CODE: $RESPONSE}"
+}
+
+jfield() { # jfield NAME: a string or bare value from flat JSON on stdin
+  sed -n -e "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p" -e "s/.*\"$1\":\\([^,}\"]*\\).*/\\1/p" | head -n 1
+}
+
+cmd_say() {
+  local voice="" engine="" speed="" wait="false" interrupt="true" clean="true" text="" have_text=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --voice) [ $# -ge 2 ] || { CODE=2 die "--voice needs a value"; }; voice="$2"; shift 2 ;;
+      --engine) [ $# -ge 2 ] || { CODE=2 die "--engine needs a value"; }; engine="$2"; shift 2 ;;
+      --speed) [ $# -ge 2 ] || { CODE=2 die "--speed needs a value"; }; speed="$2"; shift 2 ;;
+      --wait) wait="true"; shift ;;
+      --no-interrupt) interrupt="false"; shift ;;
+      --raw) clean="false"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      --) shift; text="$*"; have_text=1; break ;;
+      -) shift ;;
+      -*) CODE=2 die "unknown option for say: $1 (see: yap --help)" ;;
+      *) text="${text:+$text }$1"; have_text=1; shift ;;
+    esac
+  done
+  case "$speed" in ''|*[!0-9.]*) [ -z "$speed" ] || CODE=2 die "--speed must be a number, got: $speed" ;; esac
+  if [ "$have_text" -eq 0 ] && [ -t 0 ]; then CODE=2 die "nothing to say: give some text, or pipe it in"; fi
+  # The body is built by a process substitution, so a long text streams through
+  # json_escape into curl without a temp file to clean up.
+  speak_body() {
+    printf '{"text":"'
+    if [ "$have_text" -eq 1 ]; then printf '%s' "$text" | json_escape; else json_escape; fi
+    printf '"'
+    [ -n "$voice" ] && printf ',"voice":"%s"' "$(printf '%s' "$voice" | json_escape)"
+    [ -n "$engine" ] && printf ',"engine":"%s"' "$(printf '%s' "$engine" | json_escape)"
+    [ -n "$speed" ] && printf ',"speed":%s' "$speed"
+    printf ',"interrupt":%s,"clean":%s,"wait":%s}' "$interrupt" "$clean" "$wait"
+  }
+  call POST /speak @<(speak_body) --max-time 0
+  [ "$HTTP_CODE" = "200" ] || fail_http
+  if [ "$wait" = "true" ]; then
+    case "$(printf '%s' "$RESPONSE" | jfield outcome)" in
+      finished) exit 0 ;;
+      stopped) exit 10 ;;
+      *) die "$(printf '%s' "$RESPONSE" | jfield error)" ;;
+    esac
+  fi
+}
+
+cmd_listen() {
+  local max="" silence="" insert="false" json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --max) [ $# -ge 2 ] || { CODE=2 die "--max needs a value"; }; max="$2"; shift 2 ;;
+      --silence) [ $# -ge 2 ] || { CODE=2 die "--silence needs a value"; }; silence="$2"; shift 2 ;;
+      --insert) insert="true"; shift ;;
+      --json) json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) CODE=2 die "unknown option for listen: $1 (see: yap --help)" ;;
+    esac
+  done
+  local body="{\"insert\":$insert"
+  [ -n "$max" ] && body="$body,\"max_seconds\":$max"
+  [ -n "$silence" ] && body="$body,\"silence_seconds\":$silence"
+  body="$body}"
+  if [ "$json" -eq 1 ]; then
+    call POST /listen "$body" --max-time 0
+    [ "$HTTP_CODE" = "200" ] || fail_http
+    printf '%s\n' "$RESPONSE"
+  else
+    call POST /listen "$body" --max-time 0 -H 'Accept: text/plain'
+    [ "$HTTP_CODE" = "200" ] || fail_http
+    # The server ends the text with a newline; keep exactly one.
+    printf '%s\n' "${RESPONSE%$'\n'}"
+  fi
+}
+
+simple() { # simple METHOD PATH
+  call "$1" "$2" ""
+  [ "$HTTP_CODE" = "200" ] || fail_http
+  printf '%s\n' "$RESPONSE"
+}
+
+[ $# -ge 1 ] || { usage >&2; exit 2; }
+sub="$1"; shift
+case "$sub" in
+  say|speak) cmd_say "$@" ;;
+  stop) simple POST /stop ;;
+  pause) simple POST /pause ;;
+  resume) simple POST /resume ;;
+  status) simple GET /status ;;
+  voices) simple GET /voices ;;
+  listen) cmd_listen "$@" ;;
+  stop-listening) simple POST /listen/stop ;;
+  -h|--help|help) usage ;;
+  *) printf 'yap: unknown command: %s\n\n' "$sub" >&2; usage >&2; exit 2 ;;
+esac

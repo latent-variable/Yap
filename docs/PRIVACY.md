@@ -99,17 +99,34 @@ and the only network use is downloading its models
 ([`Dictation.swift`](../app/Sources/Yap/Dictation.swift)). Don't dictate? Don't
 grant it. The read-aloud half works without it.
 
+## The agent API (a local socket)
+
+Other programs on your Mac can ask Yap to speak, or to listen, through a Unix
+socket at `~/Library/Application Support/Yap/yap.sock`
+([details](AGENT-API.md)). It is a file, not a network port: no connection leaves
+your Mac, web pages cannot reach it, and other macOS users cannot open it (it is
+mode `0600`). The API adds no outbound network call.
+
+It cannot stop a program running as *you* from using it. Speaking is harmless.
+Listening is not, because those programs would borrow Yap's Microphone grant
+without macOS asking them. So listening through the API is **off by default**, the
+dictation HUD shows whenever the mic is open, and the words go to the program
+that asked, not to your cursor, unless it asks for that. The whole API can be
+switched off, which removes the socket.
+
 ## What Yap does NOT do
 
 - No keylogging. It reads a selection only when you press the shortcut — it does
   not observe what you type.
 - No always-on listening. The mic records only during a dictation session,
-  including the 0.6-second finishing window after you press stop.
+  including the 0.6-second finishing window after you press stop. A program using
+  the [agent API](AGENT-API.md) starts the same session, with the same HUD, and
+  only once you have turned that on.
 - No screen reading or screenshots.
 - No background scraping. Nothing is captured unless you trigger it.
 - No clipboard hijacking. The fallback restores whatever was on your clipboard.
-- Nothing about you leaves the machine. There is no server, no API key, no upload
-  path in the code. Outbound requests are the downloads and the update check
+- Nothing about you leaves the machine. There is no remote server, no API key, no
+  upload path in the code (the agent API is a local socket, not a network service). Outbound requests are the downloads and the update check
   listed in [What goes over the network](#what-goes-over-the-network).
 
 ## The update check (optional)

@@ -135,6 +135,21 @@ final class Dictation: ObservableObject {
 
     var isListening: Bool { state == .listening }
 
+    /// Has the speaker finished? True once speech was heard and the last `seconds`
+    /// of the recording are quiet. For callers with no hotkey to press (the agent
+    /// API's `/listen`). It only decides WHEN to stop; the stop itself is
+    /// `stopAndTranscribe`, which decodes through the last captured frame, so a
+    /// quiet last word is still in the text. When loudness cannot separate speech
+    /// from the room (`SpeechGate.threshold` nil) this stays false and the caller's
+    /// time limit ends the session instead: never a guess.
+    func speakerFinished(silence seconds: Double) -> Bool {
+        SpeechGate.endedBySilence(recorder.levels, frames: recorder.frameCount,
+                                  rate: captureFormat?.sampleRate ?? 16_000, silence: seconds)
+    }
+
+    /// The recorder hit its 180 s cap: nothing more is kept for the final pass.
+    var recorderFull: Bool { recorder.overflowed }
+
     /// Switch/load the dictation engine, superseding any in-flight load so the
     /// LAST selection wins. Use this from the UI (picker, retry, download) rather
     /// than spawning ad-hoc `Task { await loadModel(...) }`, which would race.
@@ -230,6 +245,17 @@ final class Dictation: ObservableObject {
 
     /// Start mic capture and live streaming (asks Microphone permission once).
     private var starting = false
+    /// Identifies the start-up in flight. `cancelStart()` moves it on, and every
+    /// await in `startListening` checks it before going further, so a start that
+    /// was given up on can never open the microphone later.
+    private var startToken = 0
+
+    /// Probe-only (`--apitest`): stand-ins for the two things a headless probe must
+    /// not do, ask macOS for the Microphone and open it.
+    nonisolated(unsafe) static var micAccess: (@escaping @Sendable (Bool) -> Void) -> Void = { done in
+        AVCaptureDevice.requestAccess(for: .audio, completionHandler: done)
+    }
+    nonisolated(unsafe) static var captureOpener: ((Dictation) throws -> Void)?
 
     func startListening() {
         // `starting` blocks a second press during the async permission window —
@@ -243,14 +269,22 @@ final class Dictation: ObservableObject {
         // exists to prevent.
         let choice = engineChoice
         starting = true
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
+        startToken += 1
+        let token = startToken
+        Dictation.micAccess { granted in
             Task { @MainActor in
-                defer { self.starting = false }
+                // Given up on while the permission prompt sat open (the user took
+                // minutes to answer): the canceller already cleared `starting`, and
+                // a late "yes" must not open a microphone nobody is showing.
+                guard token == self.startToken else { return }
+                defer { if token == self.startToken { self.starting = false } }
                 guard granted else { self.state = .error("Microphone access denied"); return }
                 do {
                     try await manager.reset()
+                    guard token == self.startToken else { return }   // cancelled during the reset
                     self.beginSession()
-                    try self.beginCapture(into: manager)
+                    if let open = Dictation.captureOpener { try open(self) }
+                    else { try self.beginCapture(into: manager) }
                     self.sessionManager = manager   // bind for the whole session
                     self.sessionFinalVersion = choice.finalVersion
                     self.state = .listening
@@ -260,6 +294,13 @@ final class Dictation: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Give up on a start that has not finished. Safe at any moment: a start that
+    /// already completed is left alone (the caller then stops the session as usual).
+    func cancelStart() {
+        startToken += 1
+        starting = false
     }
 
     /// Stop capture, flush, and return the final transcript (nil if empty).
@@ -733,6 +774,21 @@ enum SpeechGate {
         guard let top = dbs.last, top - floor >= 12 else { return nil }
         return floor + min(max(0.25 * (top - floor), 6), 15)
     }
+
+    /// Speech has been heard, and the last `silence` seconds are below the speech
+    /// threshold. The speech floor (`minSpeechWindows`) keeps one door slam or key
+    /// click from counting as "the user spoke and stopped".
+    static func endedBySilence(_ levels: [Level], frames: Int, rate: Double, silence: Double) -> Bool {
+        guard let th = threshold(levels) else { return false }
+        guard loudWindows(levels, from: 0, to: frames, threshold: th) >= minSpeechWindows else { return false }
+        let from = frames - Int(silence * rate)
+        guard from > 0 else { return false }
+        return self.silent(levels, from: from, to: frames, threshold: th)
+    }
+
+    /// 10 ms windows of voicing before silence can end a listen: a spoken word is
+    /// a hundred ms and more, a click is tens.
+    static let minSpeechWindows = 10
 
     /// How many windows overlapping frames `from...to` are at or above `threshold`.
     static func loudWindows(_ levels: [Level], from: Int, to: Int, threshold: Float) -> Int {

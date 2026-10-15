@@ -24,6 +24,12 @@ final class DictationController: ObservableObject {
     var hudDefaults: UserDefaults = .standard
     static let hudOriginKey = "dictationHUDOrigin"
     private var targetObserver: Any?
+    /// Which HUD session is current. A delayed dismissal remembers the one that
+    /// scheduled it and does nothing if a newer session has started since: it would
+    /// otherwise hide the HUD (and clear the error) of a session whose mic is open.
+    private var hudSession = 0
+    /// Probe-only: how many delayed dismissals actually acted.
+    private(set) var delayedDismissals = 0
 
     func bootstrap() {
         dictation.engineChoice = Dictation.EngineChoice(rawValue: Prefs.shared.dictationEngine) ?? .english
@@ -57,10 +63,18 @@ final class DictationController: ObservableObject {
 
     /// Push-to-talk toggle.
     func toggle() {
+        // An agent's listen owns the session: the shortcut ends it (the agent gets
+        // the words, nothing is pasted unless it asked for that) instead of racing
+        // it with a second, human start/stop.
+        if let session = agentSession {
+            session.stopReason = session.stopReason ?? "stopped"
+            return
+        }
         switch dictation.state {
         case .idle:
             captureTarget()
             startTargetTracking()    // keep target live if you switch apps
+            hudSession += 1
             showHUD()
             playChime(start: true)   // immediate "now recording" feedback
             Task {
@@ -74,31 +88,7 @@ final class DictationController: ObservableObject {
                     self.playChime(start: false)
                 }
                 guard let text else { hideHUD(); return }
-                // Log before we try to paste — a dictation that fails to insert
-                // (no Accessibility, dropped ⌘V) is exactly what History rescues.
-                HistoryStore.shared.recordDictated(text, detail: targetName)
-                // Pasting fires a synthetic ⌘V, which needs Accessibility. Without
-                // it the keystroke is dropped. Don't run the normal paste path then:
-                // it would set the clipboard, fail to paste, and 0.6s later RESTORE
-                // the old clipboard — wiping the dictated text. Instead leave the
-                // text on the clipboard (no restore), keep the HUD up with a clear
-                // message, and open the Accessibility pane so the next dictation
-                // just works.
-                guard Permissions.axTrusted else {
-                    let pb = NSPasteboard.general
-                    pb.clearContents()
-                    pb.setString(text, forType: .string)
-                    dictation.note("Copied. Enable Accessibility for Yap, then ⌘V to paste.")
-                    Permissions.requestAX()
-                    Permissions.openAXSettings()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-                        self?.dictation.clearError()
-                        self?.hideHUD()
-                    }
-                    return
-                }
-                hideHUD()
-                TextInsert.insertAtCursor(text)
+                insertDictated(text)
             }
         case .loadingModel, .finishing, .transcribing:
             break   // mid-flight — ignore re-trigger
@@ -108,6 +98,216 @@ final class DictationController: ObservableObject {
             dictation.clearError()
             hideHUD()
         }
+    }
+
+    /// Record a finished dictation and paste it at the cursor.
+    /// Returns whether the text was actually pasted: false when Accessibility is
+    /// missing and it was only copied, so callers (the agent API) do not claim more.
+    @discardableResult
+    private func insertDictated(_ text: String) -> Bool {
+        // Log before we try to paste — a dictation that fails to insert
+        // (no Accessibility, dropped ⌘V) is exactly what History rescues.
+        HistoryStore.shared.recordDictated(text, detail: targetName)
+        // Pasting fires a synthetic ⌘V, which needs Accessibility. Without
+        // it the keystroke is dropped. Don't run the normal paste path then:
+        // it would set the clipboard, fail to paste, and 0.6s later RESTORE
+        // the old clipboard — wiping the dictated text. Instead leave the
+        // text on the clipboard (no restore), keep the HUD up with a clear
+        // message, and open the Accessibility pane so the next dictation
+        // just works.
+        guard Permissions.axTrusted else {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+            dictation.note("Copied. Enable Accessibility for Yap, then ⌘V to paste.")
+            Permissions.requestAX()
+            Permissions.openAXSettings()
+            dismissHUDLater(after: 5)
+            return false
+        }
+        hideHUD()
+        TextInsert.insertAtCursor(text)
+        return true
+    }
+
+    /// Clear a lingering message and hide the HUD after a pause, unless a newer
+    /// dictation session has begun by then.
+    func dismissHUDLater(after seconds: Double) {
+        let scheduledBy = hudSession
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.hudSession == scheduledBy else { return }
+                self.delayedDismissals += 1
+                self.dictation.clearError()
+                self.hideHUD()
+            }
+        }
+    }
+
+    // MARK: - agent listen (docs/AGENT-API.md, POST /listen)
+
+    /// One agent's open microphone. `stopReason` is how it ends early: the
+    /// shortcut, or `POST /listen/stop`.
+    final class AgentSession {
+        let insert: Bool
+        var stopReason: String?
+        init(insert: Bool) { self.insert = insert }
+    }
+
+    struct AgentListenResult: Equatable {
+        var text: String
+        /// "silence", "max_seconds" or "stopped".
+        var reason: String
+        var seconds: Double
+        var inserted: Bool
+    }
+
+    private(set) var agentSession: AgentSession?
+
+    /// How long a listen waits for the microphone to come up (the first run shows
+    /// macOS's Microphone prompt). A variable so the probe can shorten it.
+    static var startTimeout: TimeInterval = 45
+
+    /// Probe-only (`--apitest`): feed audio from a file instead of the mic, and
+    /// keep the HUD and chimes off the owner's screen and speakers. The real path
+    /// (nil / false) always shows the HUD: the user must be able to SEE the mic is
+    /// open, and no API parameter can turn that off.
+    var simulatedCapture: ((Dictation) async throws -> Void)?
+    var headless = false
+
+    /// Ask the running agent listen (if any) to end. False when there is none.
+    @discardableResult
+    func stopAgentListen(reason: String = "stopped") -> Bool {
+        guard let s = agentSession else { return false }
+        s.stopReason = s.stopReason ?? reason
+        return true
+    }
+
+    /// Open dictation for an agent: HUD up, mic on, end on trailing silence, the
+    /// time limit, or a stop request; then the accurate final pass, exactly as a
+    /// hotkey stop does (`stopAndTranscribe`). The text goes back to the caller,
+    /// and is pasted at the cursor only if `insert` is set.
+    ///
+    /// Cancelling the calling task (the client hung up, the API was switched off,
+    /// listening was revoked) ends the session and DISCARDS the words.
+    func listenForAgent(maxSeconds: Double, silenceSeconds: Double, insert: Bool) async -> Result<AgentListenResult, APIError> {
+        guard Prefs.shared.dictationEnabled else {
+            return .failure(APIError(403, "dictation_disabled", "Dictation is turned off in Yap's settings."))
+        }
+        // Another listen, or the human's own dictation, owns the mic.
+        if agentSession != nil || dictation.state == .listening || dictation.state == .finishing || dictation.state == .transcribing {
+            return .failure(APIError(409, "already_listening", "Yap is already listening. Wait for it to finish, or POST /listen/stop."))
+        }
+        if dictation.state == .loadingModel {
+            return .failure(APIError(503, "model_loading", "The dictation model is still loading. Try again in a moment."))
+        }
+        let session = AgentSession(insert: insert)
+        agentSession = session
+        defer { agentSession = nil }
+        if case .error = dictation.state { dictation.clearError() }
+
+        hudSession += 1
+        if insert { captureTarget(); startTargetTracking() }
+        else { targetName = "Agent (not pasted)"; targetIcon = nil }
+        if !headless { showHUD() }
+        if !headless { playChime(start: true) }
+
+        func abandon() { if !headless { hideHUD() } else { stopTargetTracking() } }
+
+        if !dictation.modelReady { await dictation.loadModelAwaiting(dictation.engineChoice) }
+        guard dictation.modelReady else {
+            let why: String
+            if case .error(let m) = dictation.state { why = m } else { why = "The dictation model is not available." }
+            dictation.clearError(); abandon()
+            return .failure(APIError(503, "model_unavailable", why))
+        }
+        // Asked to stop (or hung up) while the model loaded: never open the mic.
+        if Task.isCancelled || session.stopReason != nil {
+            abandon()
+            return .success(AgentListenResult(text: "", reason: "stopped", seconds: 0, inserted: false))
+        }
+        do {
+            if let simulatedCapture { try await simulatedCapture(dictation) }
+            else { dictation.startListening() }
+        } catch {
+            abandon()
+            return .failure(APIError(500, "listen_failed", "Could not start the capture: \(error.localizedDescription)"))
+        }
+        // The first run asks for Microphone access, so this wait is the user's to
+        // answer; give it room. A stop or hang-up ends it at once (below): the
+        // start-up token is cancelled, so the capture can no longer come up.
+        let startBy = Date().addingTimeInterval(Self.startTimeout)
+        while dictation.state != .listening {
+            // Stopped or hung up while the mic is still coming up (often: the prompt is
+            // open). Spend the start-up token now, so an "Allow" clicked later opens nothing.
+            if Task.isCancelled || session.stopReason != nil {
+                dictation.cancelStart()
+                if dictation.state != .listening {
+                    abandon()
+                    return .success(AgentListenResult(text: "", reason: "stopped", seconds: 0, inserted: false))
+                }
+                break
+            }
+            if case .error(let m) = dictation.state {
+                dictation.clearError(); abandon()
+                return .failure(APIError(500, "listen_failed", m))
+            }
+            if Date() > startBy {
+                // Give the start-up up for good: a Microphone prompt answered later
+                // finds its token spent and opens nothing. (If it finished in the
+                // same instant, the session is stopped here rather than left open.)
+                dictation.cancelStart()
+                if dictation.state == .listening { _ = await dictation.stopAndTranscribe() }
+                abandon()
+                return .failure(APIError(500, "listen_failed", "Microphone did not start in time."))
+            }
+            // Not Task.sleep in THIS task: once the caller hangs up it is cancelled, and
+            // a cancelled sleep returns at once, which would spin this loop on the main actor.
+            await Task { try? await Task.sleep(nanoseconds: 50_000_000) }.value
+        }
+
+        let began = Date()
+        var reason = "max_seconds"
+        var discard = false
+        while true {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if Task.isCancelled || !Prefs.shared.agentListenEnabled { discard = true; break }
+            if let r = session.stopReason { reason = r; break }
+            guard dictation.state == .listening else { reason = "stopped"; break }
+            if Date().timeIntervalSince(began) >= maxSeconds || dictation.recorderFull { reason = "max_seconds"; break }
+            if dictation.speakerFinished(silence: silenceSeconds) { reason = "silence"; break }
+        }
+        let elapsed = Date().timeIntervalSince(began)
+
+        // Its own task, never this one: a caller that hung up has cancelled THIS task,
+        // and the final pass run under a cancelled task throws, which would leave
+        // the session in an error state instead of closed (found by --apitest).
+        let text = await Task { @MainActor [weak self] () -> String? in
+            guard let self else { return nil }
+            return await self.dictation.stopAndTranscribe { [weak self] in
+                guard let self, !self.headless else { return }
+                self.playChime(start: false)
+            }
+        }.value
+        var stopError: String?
+        if case .error(let m) = dictation.state { stopError = m; dictation.clearError() }
+        if discard {
+            abandon()
+            return .success(AgentListenResult(text: "", reason: "stopped", seconds: elapsed, inserted: false))
+        }
+        guard let text, !text.isEmpty else {
+            abandon()
+            if let stopError { return .failure(APIError(500, "listen_failed", stopError)) }
+            return .success(AgentListenResult(text: "", reason: reason, seconds: elapsed, inserted: false))
+        }
+        var pasted = false
+        if insert {
+            pasted = insertDictated(text)
+        } else {
+            HistoryStore.shared.recordDictated(text, detail: "Agent API")
+            abandon()
+        }
+        return .success(AgentListenResult(text: text, reason: reason, seconds: elapsed, inserted: pasted))
     }
 
     /// Track the frontmost app — where the text will land. Polled while listening

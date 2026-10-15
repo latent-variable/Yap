@@ -125,7 +125,11 @@ final class AppState: ObservableObject {
     }
 
     let prefs = Prefs.shared
-    let backend = BackendManager()
+    /// Probe-only (`--apitest`): run against a backend of the probe's own, on a
+    /// spare port, so a probe never touches the one the running app owns. Set
+    /// before first use of `shared`.
+    static var probeBackendPort: Int?
+    let backend = BackendManager(port: AppState.probeBackendPort ?? 8766)
     let audio = AudioPlayer()
     let hotkey = HotKeyManager()
     /// Owned here (not in the Settings view) so a Kokoro download keeps running
@@ -133,6 +137,62 @@ final class AppState: ObservableObject {
     let downloader: ModelDownloader
 
     private var generation = 0   // cancels stale streams
+
+    /// Supersede whatever is reading or about to. Every path that starts or stops
+    /// a read goes through here, so the agent API's tickets (`activeSpeakID`) and
+    /// its waiting-line are settled in one place rather than at each call site.
+    /// `keepQueue` is for the line advancing itself: starting the next item must
+    /// not discard the ones behind it.
+    private func bumpGeneration(keepQueue: Bool = false) {
+        finishSpeak(activeSpeakID, .stopped)
+        if !keepQueue { clearSpeakQueue() }
+        generation += 1
+    }
+
+    // MARK: agent API speaking (see AgentAPI.swift, docs/AGENT-API.md)
+
+    /// What one agent request asked for, before it is checked against what exists.
+    struct SpeakOptions: Equatable {
+        var engine: String?
+        var voice: String?
+        var speed: Double?
+        var clean = true
+    }
+
+    /// The engine, voice and speed one read actually uses.
+    struct ReadParams: Equatable {
+        var engine: String
+        var voice: String
+        var speed: Double
+    }
+
+    enum ReadOutcome: Equatable {
+        case finished, stopped
+        case error(String)
+        var name: String {
+            switch self { case .finished: "finished"; case .stopped: "stopped"; case .error: "error" }
+        }
+    }
+
+    struct SpeakTicket: Equatable {
+        let id: Int
+        /// Nil when the read started now; otherwise its place in line (1 = next).
+        let queuePosition: Int?
+    }
+
+    private struct QueuedSpeak {
+        let id: Int
+        let raw: String
+        let cleaned: String
+        let options: SpeakOptions
+    }
+
+    private var speakQueue: [QueuedSpeak] = []
+    private var nextSpeakID = 1
+    /// The ticket whose read owns the current generation, if an agent started it.
+    private var activeSpeakID: Int?
+    private var speakOutcomes: [Int: ReadOutcome] = [:]
+    static let maxSpeakQueue = 20
     private var playingText = "" // text currently being read (for the smart toggle)
     private var lastReadCleaned = ""        // last text actually read aloud (stale-read guard)
     private var lastWarningTime: Double = 0 // uptime of the last stale warning; 4s override window
@@ -411,7 +471,7 @@ final class AppState: ObservableObject {
         // Honor the "ignore re-trigger" preference if the user turned it off.
         if wasPlaying && !prefs.stopOnNewTrigger { return }
 
-        generation += 1
+        bumpGeneration()
         let gen = generation
         if !wasPlaying { status = .capturing }
 
@@ -507,7 +567,7 @@ final class AppState: ObservableObject {
         if deletingKokoro || deletingHD { return }  // backend is bouncing for a delete
         let cleaned = cleanedText(raw)
         guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        generation += 1
+        bumpGeneration()
         let gen = generation
         audio.stop()
         lastCaptured = raw
@@ -519,6 +579,161 @@ final class AppState: ObservableObject {
         status = .loadingModel
         preparing = true
         Task { await stream(cleaned, gen: gen) }
+    }
+
+    // MARK: agent speak
+
+    /// Check an agent's voice/engine/speed against what this Mac can actually
+    /// speak, and fill the gaps from the user's selection.
+    ///
+    /// Only an OVERRIDDEN voice or engine is validated: the user's own selection
+    /// is trusted exactly as the hotkey trusts it, so a request that overrides
+    /// nothing never fails on a voice list that has not loaded yet. Pure and
+    /// static so `--selftest` can exercise it.
+    nonisolated static func resolveRead(_ o: SpeakOptions, combined: [EngineVoice], hdInstalled: Bool,
+                                        prefsEngine: String, prefsVoice: String, prefsHDVoice: String,
+                                        prefsSpeed: Double) -> Result<ReadParams, APIError> {
+        var engine = o.engine
+        var voice = o.voice
+        // "kokoro:am_puck" is the id /voices prints; accept it whole.
+        if let v = voice, let colon = v.firstIndex(of: ":") {
+            let e = String(v[..<colon])
+            guard e == "kokoro" || e == "pocket" else {
+                return .failure(APIError(400, "bad_voice", "Voice '\(v)' has an unknown engine prefix '\(e)'. Use kokoro or pocket."))
+            }
+            if let given = engine, given != e {
+                return .failure(APIError(400, "bad_voice", "Voice '\(v)' belongs to engine \(e), not \(given)."))
+            }
+            engine = e
+            voice = String(v[v.index(after: colon)...])
+        }
+        let eff = engine ?? prefsEngine
+        let speed = o.speed ?? prefsSpeed
+        let overridden = engine != nil || voice != nil
+        let id = voice ?? (eff == "pocket" ? prefsHDVoice : prefsVoice)
+        guard overridden else { return .success(ReadParams(engine: eff, voice: id, speed: speed)) }
+        if eff == "pocket" && !hdInstalled {
+            return .failure(APIError(400, "engine_unavailable", "The Pocket engine is not installed. Install it from Yap Settings, Engine."))
+        }
+        if id.isEmpty {
+            return .failure(APIError(400, "bad_voice", "No \(eff) voice is selected. Pass \"voice\"; GET /voices lists them."))
+        }
+        guard !combined.isEmpty else {
+            return .failure(APIError(503, "voices_not_loaded", "Yap has not loaded its voice list yet. Try again in a moment."))
+        }
+        guard let hit = combined.first(where: { $0.engine == eff && $0.voiceId == id }) else {
+            return .failure(APIError(400, "bad_voice", "Unknown \(eff) voice '\(id)'. GET /voices lists them."))
+        }
+        guard hit.available else {
+            return .failure(APIError(409, "voice_unavailable", "Voice '\(id)' needs voice cloning, which is not ready."))
+        }
+        return .success(ReadParams(engine: eff, voice: id, speed: speed))
+    }
+
+    /// Speak `raw` for an agent, through the same player the hotkey uses, so the
+    /// menu bar's pause and stop govern it. `interrupt` replaces whatever is
+    /// reading and empties the line; without it the request waits its turn.
+    func speak(_ raw: String, options: SpeakOptions, interrupt: Bool) -> Result<SpeakTicket, APIError> {
+        if deletingKokoro || deletingHD {
+            return .failure(APIError(503, "busy", "Yap is changing its voice models. Try again in a moment."))
+        }
+        switch Self.resolveRead(options, combined: combinedVoices, hdInstalled: hdInstalled,
+                                prefsEngine: prefs.engine, prefsVoice: prefs.voice,
+                                prefsHDVoice: prefs.hdVoice, prefsSpeed: prefs.speed) {
+        case .failure(let e): return .failure(e)
+        case .success: break
+        }
+        let cleaned = options.clean ? cleanedText(raw) : raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure(APIError(400, "empty_text", "Nothing left to say after cleanup. Pass \"clean\": false to speak the text as written."))
+        }
+        let id = nextSpeakID
+        nextSpeakID += 1
+        let playing = status == .reading || status == .paused || activeSpeakID != nil
+        if !interrupt && playing {
+            guard speakQueue.count < Self.maxSpeakQueue else {
+                return .failure(APIError(429, "queue_full", "Yap already has \(Self.maxSpeakQueue) requests waiting to be spoken."))
+            }
+            speakQueue.append(QueuedSpeak(id: id, raw: raw, cleaned: cleaned, options: options))
+            return .success(SpeakTicket(id: id, queuePosition: speakQueue.count))
+        }
+        beginSpeak(QueuedSpeak(id: id, raw: raw, cleaned: cleaned, options: options), keepQueue: !interrupt)
+        return .success(SpeakTicket(id: id, queuePosition: nil))
+    }
+
+    private func beginSpeak(_ q: QueuedSpeak, keepQueue: Bool) {
+        // Re-resolved here, not trusted from the request: a queued item may start
+        // minutes later, after the user changed engines or deleted a model.
+        let params: ReadParams
+        switch Self.resolveRead(q.options, combined: combinedVoices, hdInstalled: hdInstalled,
+                                prefsEngine: prefs.engine, prefsVoice: prefs.voice,
+                                prefsHDVoice: prefs.hdVoice, prefsSpeed: prefs.speed) {
+        case .success(let p): params = p
+        case .failure(let e):
+            recordOutcome(q.id, .error(e.message))
+            startNextQueued()
+            return
+        }
+        bumpGeneration(keepQueue: keepQueue)
+        let gen = generation
+        audio.stop()
+        activeSpeakID = q.id
+        lastCaptured = q.raw
+        lastCleaned = q.cleaned
+        lastMethod = .none
+        status = .loadingModel
+        preparing = true
+        Task { await stream(q.cleaned, gen: gen, params: params, speakID: q.id) }
+    }
+
+    /// The line advances when a read ends on its own. A stop empties it instead.
+    private func startNextQueued() {
+        guard activeSpeakID == nil, status != .reading, status != .paused, !speakQueue.isEmpty else { return }
+        beginSpeak(speakQueue.removeFirst(), keepQueue: true)
+    }
+
+    private func clearSpeakQueue() {
+        for q in speakQueue { recordOutcome(q.id, .stopped) }
+        speakQueue.removeAll()
+    }
+
+    private func recordOutcome(_ id: Int, _ outcome: ReadOutcome) {
+        if speakOutcomes[id] == nil { speakOutcomes[id] = outcome }
+        // Bounded: a long-lived app answers thousands of requests.
+        if speakOutcomes.count > 64 { speakOutcomes = speakOutcomes.filter { $0.key > id - 64 } }
+    }
+
+    /// Settle the ticket that owned the read that just ended. A ticket that
+    /// already has an outcome keeps it, so a stop that races a natural finish
+    /// reports whichever happened first.
+    private func finishSpeak(_ id: Int?, _ outcome: ReadOutcome) {
+        guard let id else { return }
+        recordOutcome(id, outcome)
+        if activeSpeakID == id { activeSpeakID = nil }
+    }
+
+    /// How one agent request ended; nil while it is still queued or speaking.
+    ///
+    /// A ticket that is neither playing, waiting nor recorded has been settled and
+    /// pruned from the bounded record, so it reads as stopped rather than as
+    /// still pending: a waiter must never poll forever on an id nothing will settle.
+    func speakOutcome(_ id: Int) -> ReadOutcome? {
+        if let o = speakOutcomes[id] { return o }
+        let pending = id == activeSpeakID || speakQueue.contains { $0.id == id }
+        return pending ? nil : .stopped
+    }
+
+    /// Items waiting behind the current read.
+    var speakQueueCount: Int { speakQueue.count }
+
+    /// An agent gave up waiting (its connection closed): stop its read if it is
+    /// the one playing, or take it out of the line.
+    func cancelSpeak(_ id: Int) {
+        if activeSpeakID == id { stop(); return }
+        if let i = speakQueue.firstIndex(where: { $0.id == id }) {
+            speakQueue.remove(at: i)
+            recordOutcome(id, .stopped)
+        }
     }
 
     /// Flow control for a streaming read, handed to `BackendClient.streamPCM`.
@@ -539,7 +754,12 @@ final class AppState: ObservableObject {
 
     /// Shared synth + playback path: ensure the backend is up, then stream the
     /// cleaned text for this generation. Used by both the hotkey and Services.
-    private func stream(_ cleaned: String, gen: Int) async {
+    ///
+    /// `params` is the agent API's per-request voice/engine/speed. Nil means "what
+    /// the user has selected", read here, so the hotkey and Services paths are
+    /// unchanged. It is carried down this call instead of being written into
+    /// `prefs`: a request must never change the user's own choice.
+    private func stream(_ cleaned: String, gen: Int, params: ReadParams? = nil, speakID: Int? = nil) async {
         // readAloud() hops through a Task before calling us, so a newer trigger
         // may have bumped generation already — bail before touching shared state.
         guard gen == generation else { return }
@@ -548,33 +768,37 @@ final class AppState: ObservableObject {
             await backend.start()
             guard gen == generation else { return }
             if !backend.ready {
-                status = .error(backend.lastError ?? "Backend not ready")
+                let why = backend.lastError ?? "Backend not ready"
+                status = .error(why)
+                finishSpeak(speakID, .error(why))
+                startNextQueued()
                 return
             }
         }
 
+        let p = params ?? ReadParams(engine: prefs.engine, voice: activeVoice, speed: prefs.speed)
         playingText = cleaned
         lastReadCleaned = cleaned   // remember for the stale-selection guard (covers Services reads too)
         // Log what we're about to speak (both hotkey + Services reads land here,
         // past the empty/failed-capture guards) so it's recoverable from History.
         HistoryStore.shared.recordSpoken(cleaned,
-            detail: "\(prefs.engine == "pocket" ? "Pocket" : "Kokoro") · \(activeVoice)")
+            detail: "\(p.engine == "pocket" ? "Pocket" : "Kokoro") · \(p.voice)\(speakID == nil ? "" : " · agent")")
         status = .reading
         preparing = true   // first audio not here yet (Pocket cold-load takes a moment)
-        preparingDetail = prepDetail()
+        preparingDetail = prepDetail(engine: p.engine)
         // Counts what actually reached the player, so a stream that dies mid-read
         // can say how far it got instead of failing silently (see the catch).
         let delivered = ByteCounter()
         do {
             // Inside the do so an engine-start failure is caught below (park +
             // error) instead of scheduling into a dead engine and hanging the drain.
-            try audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(prefs.speed),
+            try audio.start(volume: Float(prefs.volume), pitchCents: Float(prefs.pitch), rate: Float(p.speed),
                             cushionSeconds: 0.35)   // Pocket is ~10x realtime; Kokoro is instant
             // Speed is applied at playback (real-time, both engines), so the
             // backend synthesizes at 1.0 and pauses stretch along with it.
-            try await backend.client.streamPCM(text: cleaned, voice: activeVoice,
+            try await backend.client.streamPCM(text: cleaned, voice: p.voice,
                                                 speed: 1.0, pauseScale: prefs.pauseScale,
-                                                engine: prefs.engine,
+                                                engine: p.engine,
                                                 awaitCapacity: streamGate(gen: gen)) { [weak self] data in
                 guard let self, gen == self.generation else { return }
                 delivered.add(data.count)
@@ -583,7 +807,7 @@ final class AppState: ObservableObject {
                 // callback runs off-main); doing it here crashed the menu bar.
                 Task { @MainActor in
                     if self.preparing { self.preparing = false }
-                    if self.prefs.engine == "pocket" { self.hdWarm = true }
+                    if p.engine == "pocket" { self.hdWarm = true }
                 }
             }
             // Superseded: the newer read already called audio.stop()/start() and
@@ -608,6 +832,8 @@ final class AppState: ObservableObject {
             if gen == generation && (status == .reading || status == .paused) {
                 audio.stop()   // playback drained — park the audio engine (stop idle CPU spin)
                 status = .idle; playingText = ""; preparing = false
+                finishSpeak(speakID, .finished)
+                startNextQueued()
             }
         } catch {
             // audio.start() already ran, so park the engine here too — otherwise a
@@ -623,6 +849,8 @@ final class AppState: ObservableObject {
                 Log.write(String(format: "read stream failed after %.1fs of audio: %@",
                                  Double(delivered.value / 2) / 24000.0, error.localizedDescription))
                 audio.stop(); preparing = false; status = .error(error.localizedDescription); resetToIdle(after: 3)
+                finishSpeak(speakID, .error(error.localizedDescription))
+                startNextQueued()
             }
         }
     }
@@ -656,8 +884,8 @@ final class AppState: ObservableObject {
     }
 
     /// What to show while waiting for first audio — flags the Pocket cold-load.
-    private func prepDetail() -> String {
-        if prefs.engine == "pocket" {
+    private func prepDetail(engine: String? = nil) -> String {
+        if (engine ?? prefs.engine) == "pocket" {
             return hdWarm ? "Generating Pocket audio…" : "Loading Pocket voice — first use, a few sec…"
         }
         return "Preparing voice…"
@@ -670,7 +898,7 @@ final class AppState: ObservableObject {
     func togglePlayPause() { status == .paused ? resume() : pause() }
 
     func stop() {
-        generation += 1
+        bumpGeneration()
         audio.stop()
         playingText = ""
         preparing = false
@@ -682,7 +910,7 @@ final class AppState: ObservableObject {
         Task {
             if !backend.ready { await backend.start() }
             guard backend.ready else { status = .error("Backend not ready"); return }
-            generation += 1
+            bumpGeneration()
             let gen = generation
             status = .reading
             preparing = true

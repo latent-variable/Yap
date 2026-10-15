@@ -62,6 +62,17 @@ enum YapMain {
             let dir = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : "uishot"
             UIShotProbe.run(dir: dir)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--apitest") {
+            let rest = CommandLine.arguments.dropFirst(i + 1).filter { !$0.hasPrefix("--") }
+            let port = rest.first.flatMap { Int($0) }
+            let speech = rest.first(where: { Int($0) == nil })
+            AgentProbe.run(port: port ?? 18770, speechPath: speech)
+        }
+        if let i = CommandLine.arguments.firstIndex(of: "--apiserve") {
+            let rest = CommandLine.arguments.dropFirst(i + 1).filter { !$0.hasPrefix("--") }
+            AgentProbe.serve(port: rest.first.flatMap { Int($0) } ?? 18771,
+                             speechPath: rest.first(where: { Int($0) == nil }))
+        }
         if CommandLine.arguments.contains("--hudtest") {
             HUDProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
         }
@@ -134,8 +145,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.servicesProvider = serviceProvider
         AppState.shared.bootstrap()
         DictationController.shared.bootstrap()   // the "ears": ⌘⇧D dictation
+        AgentAPIController.shared.bootstrap()    // the agent socket (docs/AGENT-API.md)
     }
     func applicationWillTerminate(_ notification: Notification) {
+        AgentAPIController.shared.stop()   // removes the socket file
         AppState.shared.backend.stop()
     }
 

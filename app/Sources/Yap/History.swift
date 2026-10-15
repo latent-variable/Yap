@@ -33,8 +33,11 @@ struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {
 final class HistoryStore: ObservableObject {
     /// `YAP_HISTORY_FILE` points the store elsewhere: `--uishot` sets it so a
     /// screenshot shows sample entries, never the user's own dictation.
-    static let shared = HistoryStore(fileURL: ProcessInfo.processInfo.environment["YAP_HISTORY_FILE"]
-        .map { URL(fileURLWithPath: $0) })
+    /// `probeFileURL` does the same for `--apitest`, so a probe's reads stay out of
+    /// the History file the running app also writes. Set before first use of `shared`.
+    static var probeFileURL: URL?
+    static let shared = HistoryStore(fileURL: HistoryStore.probeFileURL
+        ?? ProcessInfo.processInfo.environment["YAP_HISTORY_FILE"].map { URL(fileURLWithPath: $0) })
 
     /// Max entries per list. Full text is preserved; only the count is bounded so
     /// the on-disk file can't grow without limit. `nonisolated` so the pure
