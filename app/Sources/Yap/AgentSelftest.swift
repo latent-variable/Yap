@@ -14,7 +14,7 @@ enum AgentSelftest {
     }
 
     /// One blocking request: connect, send `bytes`, read to EOF. For tests only.
-    static func raw(_ path: String, _ bytes: String, closeEarly: Bool = false) -> String {
+    static func raw(_ path: String, _ bytes: String, closeEarly: Bool = false, hold: Double = 0, timeout: Int = 5) -> String {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return "" }
         defer { close(fd) }
@@ -29,8 +29,8 @@ enum AgentSelftest {
         }
         guard rc == 0 else { return "CONNECT-FAILED \(errno)" }
         _ = AgentServer.writeAll(fd, Data(bytes.utf8))
-        if closeEarly { return "" }
-        var tv = timeval(tv_sec: 5, tv_usec: 0)
+        if closeEarly { if hold > 0 { Thread.sleep(forTimeInterval: hold) }; return "" }
+        var tv = timeval(tv_sec: timeout, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         var out = Data()
         var buf = [UInt8](repeating: 0, count: 4096)

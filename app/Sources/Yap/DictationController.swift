@@ -232,20 +232,25 @@ final class DictationController: ObservableObject {
         }
         let elapsed = Date().timeIntervalSince(began)
 
-        let text = await dictation.stopAndTranscribe { [weak self] in
-            guard let self, !self.headless else { return }
-            self.playChime(start: false)
-        }
+        // Its own task, never this one: a caller that hung up has cancelled THIS task,
+        // and the final pass run under a cancelled task throws, which would leave
+        // the session in an error state instead of closed (found by --apitest).
+        let text = await Task { @MainActor [weak self] () -> String? in
+            guard let self else { return nil }
+            return await self.dictation.stopAndTranscribe { [weak self] in
+                guard let self, !self.headless else { return }
+                self.playChime(start: false)
+            }
+        }.value
+        var stopError: String?
+        if case .error(let m) = dictation.state { stopError = m; dictation.clearError() }
         if discard {
             abandon()
             return .success(AgentListenResult(text: "", reason: "stopped", seconds: elapsed, inserted: false))
         }
         guard let text, !text.isEmpty else {
-            if case .error(let m) = dictation.state {
-                dictation.clearError(); abandon()
-                return .failure(APIError(500, "listen_failed", m))
-            }
             abandon()
+            if let stopError { return .failure(APIError(500, "listen_failed", stopError)) }
             return .success(AgentListenResult(text: "", reason: reason, seconds: elapsed, inserted: false))
         }
         if insert {

@@ -169,6 +169,11 @@ enum AgentAPI {
 
     // MARK: encoding
 
+    /// A double as JSON prints it: `4.2`, not `4.2000000000000002`.
+    static func decimal(_ d: Double, places: Int = 2) -> NSDecimalNumber {
+        NSDecimalNumber(string: String(format: "%.\(places)f", d))
+    }
+
     static func encode(_ object: [String: Any]) -> Data {
         // Without escaping slashes: "\/" is valid JSON but makes a shell script's
         // sed extraction (see scripts/yap) needlessly fragile.

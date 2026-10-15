@@ -156,7 +156,7 @@ final class AgentAPIController {
                 return .text(res.text + "\n", headers: ["X-Yap-Reason": res.reason])
             }
             return .json(["text": res.text, "reason": res.reason,
-                          "seconds": (res.seconds * 10).rounded() / 10, "inserted": res.inserted])
+                          "seconds": AgentAPI.decimal(res.seconds, places: 1), "inserted": res.inserted])
         }
     }
 
@@ -191,7 +191,7 @@ final class AgentAPIController {
             "engine": prefs.engine,
             "voice": state.activeVoice,
             "id": state.currentVoiceId,
-            "speed": prefs.speed,
+            "speed": AgentAPI.decimal(prefs.speed),
             "queued": state.speakQueueCount,
             "enabled": prefs.voiceEnabled,
             "backend_ready": state.backend.ready,

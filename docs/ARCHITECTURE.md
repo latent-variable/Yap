@@ -43,6 +43,12 @@ behind one int16-PCM contract.
 | HUD drag probe (`--hudtest`, real mouse events against the real panel) | `HUDProbe.swift` |
 | Paste transcript at cursor | `TextInsert.swift` |
 | Optional speech-filler cleanup | `Fillers.swift` |
+| **Agent API** (docs/AGENT-API.md) | |
+| Wire format: strict HTTP parsing, route table, request validation (pure) | `AgentAPI.swift` |
+| Unix-socket HTTP server (0600 socket, stale-socket handling, hang-up cancels) | `AgentServer.swift` |
+| Routes onto `AppState.speak` and `DictationController.listenForAgent`; follows `agentAPIEnabled` live | `AgentAPIController.swift` |
+| `yap` command-line client (bash + curl; ships in the bundle at `Resources/bin/yap`) | `scripts/yap` |
+| `--selftest` cases for the above; `--apitest` end-to-end probe; `--apiserve` silent dev server | `AgentSelftest.swift`, `AgentProbe.swift` |
 | **App support** | |
 | Shared-secret authentication with the backend | `BackendAuth.swift` |
 | Release version check | `UpdateChecker.swift` |

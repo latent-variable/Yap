@@ -45,6 +45,12 @@ cp "$ROOT/backend/"*.py "$ROOT/backend/"requirements*.txt "$APP/Contents/Resourc
 cp "$ROOT/scripts/run_backend.sh" "$APP/Contents/Resources/repo/scripts/"
 chmod +x "$APP/Contents/Resources/repo/scripts/run_backend.sh"
 
+# The `yap` command-line client for the agent API (docs/AGENT-API.md): bash + curl,
+# so it needs nothing installed. Users link it onto their PATH.
+mkdir -p "$APP/Contents/Resources/bin"
+cp "$ROOT/scripts/yap" "$APP/Contents/Resources/bin/yap"
+chmod +x "$APP/Contents/Resources/bin/yap"
+
 # Embed the self-contained Python runtime so the app needs no system Python.
 # Built by scripts/bundle_python.sh (cached). Without it, the app falls back to
 # building a venv from system Python (dev machines only).

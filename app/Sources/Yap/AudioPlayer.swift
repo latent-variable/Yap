@@ -293,6 +293,9 @@ final class AudioPlayer {
     /// this session. Cumulative, so it survives the queue draining to empty.
     var playedSeconds: Double { q.sync { Double(playedFrames) / 24000.0 } }
 
+    /// Test hook (`--apitest`): the playback rate currently applied.
+    var currentRate: Float { pitchUnit.rate }
+
     /// Test hook (`--selftest`): observe engine run state to verify idle-parking.
     var isEngineRunning: Bool { engine.isRunning }
 }
