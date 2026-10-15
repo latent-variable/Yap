@@ -33,6 +33,8 @@ struct VoicePickerList: View {
     let engine: String                 // currently active engine
     let pocketAvailable: Bool          // show the Pocket segment?
     var onSelectEngine: (String) -> Void
+    /// When set, cloned voices get a delete button (Settings ▸ Voices only).
+    var onDelete: ((EngineVoice) -> Void)? = nil
     var onPick: (EngineVoice) -> Void
     @State private var query = ""
 
@@ -75,7 +77,13 @@ struct VoicePickerList: View {
                     ForEach(grouped, id: \.0) { section, list in
                         Section(section) { ForEach(list) { row($0) } }
                     }
-                    if grouped.isEmpty { Text("No matches").foregroundStyle(.secondary).font(.caption) }
+                    if grouped.isEmpty {
+                        // An empty search that finds nothing means the list never
+                        // loaded, not that the search failed: say which.
+                        Text(query.isEmpty ? "Voices appear once the voice engine is running."
+                                           : "No voices match “\(query)”.")
+                            .foregroundStyle(.secondary).font(.caption)
+                    }
                 }
                 .listStyle(.inset)
                 .onAppear { proxy.scrollTo(selectionId, anchor: .center) }
@@ -83,7 +91,7 @@ struct VoicePickerList: View {
             // Say why the locked rows are locked, once, instead of leaving a user
             // to guess at a voice that won't take. Only when something is locked.
             if scoped.contains(where: { !$0.available }) {
-                Text("🔒 Cloned voices need the Pocket cloning weights. Enable them in Settings ▸ Engine ▸ Voice cloning.")
+                Text("🔒 Cloned voices need the Pocket cloning weights. Enable them in Settings ▸ Voices ▸ Clone a voice.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -101,6 +109,13 @@ struct VoicePickerList: View {
                 } else if v.id == selectionId {
                     Image(systemName: "checkmark").foregroundStyle(.tint).font(.caption.bold())
                 }
+                if let onDelete, v.section.contains("Cloned") {
+                    Button(role: .destructive) { onDelete(v) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Delete this cloned voice")
+                        .accessibilityLabel("Delete \(v.label)")
+                }
             }
             .contentShape(Rectangle())
         }
@@ -112,7 +127,7 @@ struct VoicePickerList: View {
     }
 
     static let lockedHelp =
-        "Voice cloning is off, so this voice can't be spoken. Set it up in Settings ▸ Engine ▸ Voice cloning."
+        "Voice cloning is off, so this voice can't be spoken. Set it up in Settings ▸ Voices ▸ Clone a voice."
 }
 
 /// Compact control showing the current voice; opens the unified list in a popover.
@@ -135,17 +150,29 @@ struct VoiceMenuButton: View {
 
     var body: some View {
         Button { open.toggle() } label: {
-            HStack(spacing: 6) {
-                Text(current).lineLimit(1).truncationMode(.tail)
+            HStack(spacing: 8) {
+                Text(String(current.drop(while: { !$0.isLetter }).prefix(1)).uppercased())
+                    .font(Brand.title(12, .bold)).foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(engine == "pocket" ? Brand.gradient : Brand.voiceGradient))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(current).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.tail)
+                    Text(engine == "pocket" ? "Pocket TTS" : "Kokoro")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 8).padding(.vertical, 5)
             .frame(maxWidth: .infinity)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Voice: \(current)")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             VoicePickerList(voices: voices, selectionId: selectionId, engine: engine,
                             pocketAvailable: pocketAvailable, onSelectEngine: onSelectEngine) { v in

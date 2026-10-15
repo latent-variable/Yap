@@ -39,9 +39,9 @@ struct StableToggleStyle: ToggleStyle {
 
     private func switchTrack(isOn: Bool) -> some View {
         Capsule()
-            // accentColor on a hand-drawn shape is not subject to the inactive-
-            // window desaturation that AppKit applies to native controls.
-            .fill(isOn ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
+            // The brand violet, fixed: not subject to the inactive-window
+            // desaturation AppKit applies to native controls.
+            .fill(isOn ? Brand.violet : Color(nsColor: .tertiaryLabelColor))
             .frame(width: 38, height: 22)
             .overlay(
                 Circle()

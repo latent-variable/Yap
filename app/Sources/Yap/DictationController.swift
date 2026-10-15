@@ -418,6 +418,12 @@ struct DictationHUD: View {
         .frame(width: 460, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.08)))
+        // A live mic gets the ears gradient on the rim: you can tell from the
+        // corner of your eye that Yap is listening.
+        .overlay(RoundedRectangle(cornerRadius: 16)
+            .strokeBorder(Brand.earsGradient, lineWidth: 1.5)
+            .opacity(dictation.state == .listening ? 0.85 : 0))
+        .animation(.easeOut(duration: 0.2), value: dictation.state == .listening)
         // Report the box's natural height so the panel can grow/shrink to fit.
         .background(GeometryReader { g in
             Color.clear.preference(key: HUDHeightKey.self, value: g.size.height)
@@ -474,7 +480,13 @@ struct DictationHUD: View {
 
     @ViewBuilder private var statusDot: some View {
         switch dictation.state {
-        case .listening, .finishing:   Circle().fill(.red).frame(width: 9, height: 9)
+        case .listening:
+            Image(systemName: "waveform")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Brand.earsGradient)
+                .symbolEffect(.variableColor.iterative.reversing, isActive: true)
+                .frame(width: 16, height: 12)
+        case .finishing:   Circle().fill(Brand.magenta).frame(width: 9, height: 9)
         case .loadingModel, .transcribing:
             ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 9, height: 9)
         case .error:       Circle().fill(.orange).frame(width: 9, height: 9)

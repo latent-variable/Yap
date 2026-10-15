@@ -734,7 +734,7 @@ def _segment_synth(req: SynthReq):
             # add a Hugging Face token and accept Kyutai's terms, a flow that no
             # longer exists (the weights come from our own CC-BY-4.0 mirror).
             raise HTTPException(403, "voice cloning is not installed. Enable it in "
-                                "Settings ▸ Engine ▸ Voice cloning")
+                                "Settings ▸ Voices ▸ Clone a voice")
         else:
             raise HTTPException(400, f"voice '{req.voice}' not found")
         return lambda text: pk_engine.synth(text, target, req.speed)

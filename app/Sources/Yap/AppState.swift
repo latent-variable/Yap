@@ -736,7 +736,7 @@ final class AppState: ObservableObject {
     }
 
     /// On-demand Pocket engine + weights (torch, pocket-tts, model files) — not
-    /// bundled; installed here via the Engine tab. Used by the Models tab to
+    /// bundled; installed here via Settings ▸ Voices. Used by the Models tab to
     /// report Pocket status alongside Kokoro. Sibling of hd-voices, so derive it
     /// from hdVoicesDir to reuse that base (no duplicate Application Support lookup).
     var hdPackagesDir: URL {
@@ -861,7 +861,7 @@ final class AppState: ObservableObject {
 
     /// Delete the on-demand Pocket engine + weights (~1 GB) to reclaim disk. Falls
     /// back to Kokoro if Pocket was the active engine. Re-installable from this tab
-    /// or the Engine tab. Callers should confirm first.
+    /// or Settings ▸ Voices. Callers should confirm first.
     func deleteHDModel() {
         guard backend.ownsProcess else { return }  // unsafe against a reused backend
         guard !deletingKokoro, !deletingHD else { return }  // one delete at a time
@@ -1014,8 +1014,10 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// To the Trash, not a real delete: a cloned voice is the user's own
+    /// recording, the one thing here nothing can download again.
     func deleteHDVoice(_ id: String) {
-        try? FileManager.default.removeItem(at: hdVoicesDir.appending(path: "\(id).wav"))
+        try? FileManager.default.trashItem(at: hdVoicesDir.appending(path: "\(id).wav"), resultingItemURL: nil)
         refreshHD()
     }
 

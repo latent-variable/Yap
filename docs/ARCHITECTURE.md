@@ -30,6 +30,10 @@ behind one int16-PCM contract.
 | Model management (size on disk, delete, re-download) | `AppState.swift` + `Views/SettingsView.swift` (Models tab) |
 | Launch at login | `LoginItem.swift` |
 | Views | `Views/MenuContent.swift`, `Views/SettingsView.swift`, `Views/VoiceSelector.swift`, `Views/StableToggleStyle.swift` |
+| Brand look (colours, mark, cards, orb buttons) shared by the menu, Settings and the HUD | `Views/Theme.swift` |
+| Settings ▸ Voices: engine cards, the voice list per engine, the Clone a voice sheet, playback | `Views/VoicesPane.swift` |
+| Settings ▸ Agents: the copy-ready "Speak to me" instructions for coding agents | `Views/AgentsTab.swift` |
+| UI screenshots of the menu and every Settings pane, light and dark (`--uishot <dir>`, sample history, never the user's) | `UIShotProbe.swift` |
 | Logic self-test / pipe probe | `Selftest.swift`, `CLITest.swift` |
 | **Dictation (ears)** | |
 | Microphone capture, streaming ASR, accurate batch transcription + rolling preview | `Dictation.swift` |

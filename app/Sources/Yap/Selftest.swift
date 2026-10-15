@@ -15,28 +15,17 @@ enum Selftest {
             if ok { print("  ✓ \(name)") } else { failures += 1; print("    got: \(got.replacingOccurrences(of: "\n", with: "⏎"))") }
         }
 
-        print("Settings tab bar fits")
-        // Regression: the Settings scene sizes its window to CONTENT, so when the
-        // bar needed more width than the widest tab body, macOS collapsed the tail
-        // into a `>>` chevron whose items do not switch tabs. Diagnostics was
-        // visible and unreachable, with no way to widen the window.
-        let needed = SettingsView.requiredTabBarWidth(SettingsTab.allCases.map(\.title))
-        let cap = SettingsView.minTabBarWidth
-        if needed <= cap {
-            print(String(format: "  ✓ %d tabs need %.0fpt, window floor is %.0fpt",
-                         SettingsTab.allCases.count, needed, cap))
+        print("Settings sidebar reaches every pane")
+        // A pane whose case is in no sidebar group compiles, has a title and an
+        // icon, and can never be opened. Every case must sit in exactly one group.
+        let grouped = SettingsTab.groups.flatMap(\.tabs)
+        let missing = SettingsTab.allCases.filter { t in !grouped.contains(t) }
+        let doubled = SettingsTab.allCases.filter { t in grouped.filter { $0 == t }.count > 1 }
+        if missing.isEmpty && doubled.isEmpty {
+            print("  ✓ \(SettingsTab.allCases.count) panes, each in one group")
         } else {
             failures += 1
-            print(String(format: "  ✗ tab bar needs %.0fpt but the window floor is only %.0fpt — raise SettingsView.minTabBarWidth or shorten a label",
-                         needed, cap))
-        }
-        // Control: the guard must actually fire. A label long enough to overflow
-        // has to be caught, or the check above passes for any input.
-        let overflowing = SettingsTab.allCases.map(\.title) + [String(repeating: "X", count: 60)]
-        if SettingsView.requiredTabBarWidth(overflowing) > cap {
-            print("  ✓ control: an over-long label is detected")
-        } else {
-            failures += 1; print("  ✗ control: the width guard does not fire on overflow")
+            print("  ✗ not in the sidebar: \(missing.map(\.title)); listed twice: \(doubled.map(\.title))")
         }
 
         print("Preprocess — Markdown profile")

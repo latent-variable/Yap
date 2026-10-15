@@ -4,13 +4,22 @@ import SwiftUI
 /// voice (text-to-speech). Persisted so the popover reopens where you left it.
 enum MenuTab: String { case ears, voice }
 
+/// The menu-bar popover. Every block here has a size that does not depend on
+/// timing or on a scroll position: `.menuBarExtraStyle(.window)` sizes the
+/// popover to this content, and a size that never settles turns into a
+/// self-sustaining layout loop (AGENTS.md, "Menu-bar UI"). No ScrollView, no
+/// text selection, no timers.
+@MainActor
 struct MenuContent: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var prefs: Prefs
+    @ObservedObject private var dictation = DictationController.shared.dictation
     @Environment(\.openSettings) private var openSettings
     // @AppStorage binds directly to the RawRepresentable enum — no separate raw
     // string + computed property needed.
     @AppStorage("menuTab") private var tab = MenuTab.ears
+
+    static let width: CGFloat = 320
 
     /// Open Settings and force it to the front, even when the app is an
     /// accessory (no dock icon) and the window is already buried behind others.
@@ -39,70 +48,187 @@ struct MenuContent: View {
                 permissionBanner
             }
 
-            Picker("", selection: $tab) {
-                Label("Ears", systemImage: "waveform.badge.mic").tag(MenuTab.ears)
-                Label("Voice", systemImage: "speaker.wave.2.fill").tag(MenuTab.voice)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            PillSwitch(selection: $tab, options: [
+                (MenuTab.ears, "Ears", "mic.fill", Brand.earsGradient),
+                (MenuTab.voice, "Voice", "speaker.wave.2.fill", Brand.voiceGradient),
+            ])
 
             Group {
                 if tab == .ears { EarsSection() } else { voiceSection }
             }
 
-            Divider()
-
-            HStack {
-                Button { showSettings() } label: {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
-            }
-            .font(.callout)
+            footer
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: Self.width)
+        // A faint wash of the brand colour behind the header. Fixed height and
+        // pinned to the top, so it can never feed back into the popover's size.
+        .background(alignment: .top) {
+            LinearGradient(colors: [(tab == .ears ? Brand.magenta : Brand.violet).opacity(0.16), .clear],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 120)
+                .allowsHitTesting(false)
+        }
+        .tint(tab == .ears ? Brand.magenta : Brand.violet)
         .onAppear { state.refreshHD() }   // pick up newly added HD voices
+    }
+
+    // MARK: Header + footer
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            BrandMark(size: 36, active: busy)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Yap").font(Brand.title(17, .bold))
+                Text("Voice & ears, all local")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .lineLimit(1).fixedSize()
+            }
+            Spacer(minLength: 6)
+            if !state.modelsPresent && !state.preparing {
+                Button { showSettings() } label: {
+                    StatusPill(text: "Set up", color: .orange)
+                }
+                .buttonStyle(.plain)
+                .help("Models not installed — open Settings ▸ Models")
+            } else {
+                StatusPill(text: statusText, color: statusColor, busy: busy)
+                    .frame(maxWidth: 140, alignment: .trailing)
+            }
+        }
+    }
+
+    /// One status for the whole app: dictation outranks reading, because a
+    /// live mic is the thing you most need to see.
+    private var statusText: String {
+        switch dictation.state {
+        case .listening:    return "Listening"
+        case .finishing:    return "Finishing"
+        case .transcribing: return "Transcribing"
+        case .loadingModel: return "Loading ears"
+        case .error:        return "Dictation error"
+        case .idle:         break
+        }
+        if state.preparing { return state.preparingDetail }
+        switch state.status {
+        case .idle:         return "Ready"
+        case .loadingModel: return "Loading voice"
+        case .capturing:    return "Capturing"
+        case .reading:      return "Reading"
+        case .paused:       return "Paused"
+        case .error:        return "Error"
+        }
+    }
+
+    private var statusColor: Color {
+        switch dictation.state {
+        case .listening, .finishing, .transcribing: return Brand.magenta
+        case .loadingModel: return .orange
+        case .error:        return .red
+        case .idle:         break
+        }
+        if state.preparing { return Brand.violet }
+        switch state.status {
+        case .idle:                  return .green
+        case .reading, .capturing:   return Brand.violet
+        case .paused, .loadingModel: return .orange
+        case .error:                 return .red
+        }
+    }
+
+    private var busy: Bool {
+        dictation.state == .listening || dictation.state == .transcribing
+            || dictation.state == .finishing || state.status == .reading || state.preparing
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Button { showSettings() } label: {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            Spacer()
+            Text("v\(UpdateChecker.currentVersion)")
+                .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+            Button { NSApp.terminate(nil) } label: {
+                Image(systemName: "power")
+            }
+            .buttonStyle(GhostIconButtonStyle(size: 24))
+            .help("Quit Yap")
+            .accessibilityLabel("Quit Yap")
+        }
+        .font(.callout)
+        .padding(.top, 2)
     }
 
     // MARK: Voice (text-to-speech)
 
+    private var reading: Bool { state.status == .reading || state.status == .paused }
+
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                VoiceMenuButton(voices: state.combinedVoices, selectionId: state.currentVoiceId,
-                                engine: prefs.engine, pocketAvailable: state.hdInstalled,
-                                onSelectEngine: { state.selectEngine($0) }) {
-                    state.selectVoice($0)
+            // Who is speaking, and the big button.
+            HStack(spacing: 12) {
+                Button {
+                    if reading { state.togglePlayPause() } else { state.triggerRead() }
+                } label: {
+                    Image(systemName: state.status == .reading ? "pause.fill" : "play.fill")
+                        .offset(x: state.status == .reading ? 0 : 2)
+                        .contentTransition(.symbolEffect(.replace))
                 }
-                Button { state.testVoice() } label: {
-                    Image(systemName: "speaker.wave.2.fill")
+                .buttonStyle(OrbButtonStyle(gradient: Brand.voiceGradient, glow: Brand.violet))
+                .accessibilityLabel(state.status == .reading ? "Pause"
+                                    : state.status == .paused ? "Resume" : "Read selection")
+                .help(reading ? "Pause or resume" : "Read the selected text aloud")
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(voiceHeadline).font(Brand.title(15)).lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text("Select text, press").font(.caption).foregroundStyle(.secondary)
+                        ShortcutChip(combo: prefs.hotKey)
+                    }
                 }
-                .buttonStyle(.borderless)
-                .help("Test voice")
-            }
-
-            VStack(spacing: 4) {
-                HStack {
-                    Text("Speed").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%.2f×", prefs.speed)).font(.caption.monospacedDigit())
+                Spacer(minLength: 0)
+                if reading {
+                    Button { state.stop() } label: { Image(systemName: "stop.fill") }
+                        .buttonStyle(GhostIconButtonStyle())
+                        .help("Stop reading")
+                        .accessibilityLabel("Stop reading")
                 }
-                Slider(value: $prefs.speed, in: 0.5...2.0, step: 0.05)
             }
+            .glassCard(radius: 14, padding: 12)
 
-            transport
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    VoiceMenuButton(voices: state.combinedVoices, selectionId: state.currentVoiceId,
+                                    engine: prefs.engine, pocketAvailable: state.hdInstalled,
+                                    onSelectEngine: { state.selectEngine($0) }) {
+                        state.selectVoice($0)
+                    }
+                    Button { state.testVoice() } label: {
+                        Image(systemName: "speaker.wave.2.fill")
+                    }
+                    .buttonStyle(GhostIconButtonStyle())
+                    .help("Test voice")
+                    .accessibilityLabel("Test voice")
+                }
 
-            HStack {
-                Text("Read shortcut").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                ShortcutChip(combo: prefs.hotKey)
+                HStack(spacing: 8) {
+                    Image(systemName: "hare.fill").font(.caption).foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Slider(value: $prefs.speed, in: 0.5...2.0, step: 0.05)
+                        .controlSize(.small)
+                        .accessibilityLabel("Speed")
+                    Text(String(format: "%.2f×", prefs.speed))
+                        .font(.caption.monospacedDigit().weight(.medium))
+                        .frame(width: 40, alignment: .trailing)
+                }
             }
+            .glassCard()
 
             if !state.lastCleaned.isEmpty {
-                LastResultCard(title: "Last read", text: state.lastCleaned) {
+                LastResultCard(title: "Last read", icon: "text.quote", text: state.lastCleaned) {
                     if state.lastMethod != .none {
                         Text("via \(state.lastMethod.rawValue)")
                             .font(.caption2).foregroundStyle(.tertiary)
@@ -117,42 +243,16 @@ struct MenuContent: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            brandMark
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Yap").font(.headline)
-                Text(state.preparing ? state.preparingDetail : state.status.label)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer()
-            if state.preparing {
-                ProgressView().controlSize(.small)
-            } else if !state.modelsPresent {
-                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
-                    .help("Models not installed — open Settings ▸ Models")
-            }
+    private var voiceHeadline: String {
+        switch state.status {
+        case .reading:   return "Reading aloud"
+        case .paused:    return "Paused"
+        case .capturing: return "Grabbing text…"
+        default:         return state.preparing ? "Warming up…" : "Read anything"
         }
     }
 
-    /// App glyph in a tinted rounded badge — echoes the indigo gradient of the
-    /// app/menu-bar icon so the popover reads as the same product.
-    private var brandMark: some View {
-        RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .fill(LinearGradient(
-                colors: [Color(red: 0.44, green: 0.49, blue: 1.0),
-                         Color(red: 0.29, green: 0.24, blue: 0.84)],
-                startPoint: .top, endPoint: .bottom))
-            .frame(width: 34, height: 34)
-            .overlay(
-                Image(systemName: state.status.symbol)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .symbolEffect(.pulse, isActive: state.status == .reading)
-            )
-            .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
-    }
+    // MARK: Banners
 
     /// Shown when a newer release exists. Yap installs via Homebrew or a DMG, so
     /// there's no in-app installer — the button opens the release page (notes +
@@ -160,14 +260,16 @@ struct MenuContent: View {
     private func updateBanner(_ update: UpdateChecker.Release) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Update available — \(update.version)", systemImage: "arrow.down.circle.fill")
-                .font(.caption.bold()).foregroundStyle(.blue)
+                .font(.caption.bold()).foregroundStyle(Brand.violet)
             Text("You're on \(UpdateChecker.currentVersion). Update with “brew upgrade yap”, or download the new release.")
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button("Release notes & download") { NSWorkspace.shared.open(update.url) }
-                .controlSize(.small).buttonStyle(.borderedProminent)
+                .buttonStyle(CapsuleButtonStyle(gradient: Brand.voiceGradient))
+                .controlSize(.small)
         }
-        .padding(8)
-        .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Brand.violet.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var permissionBanner: some View {
@@ -178,49 +280,30 @@ struct MenuContent: View {
                 .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Grant Access") { Permissions.requestAX(); Permissions.openAXSettings() }
-                    .controlSize(.small).buttonStyle(.borderedProminent)
+                    .controlSize(.small).buttonStyle(.borderedProminent).tint(.orange)
                 Button("Use Clipboard") { prefs.readSource = .clipboard }
                     .controlSize(.small)
             }
         }
-        .padding(8)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var transport: some View {
-        HStack(spacing: 16) {
-            Button { state.togglePlayPause() } label: {
-                Image(systemName: state.status == .paused ? "play.fill" : "pause.fill")
-                    .font(.title2)
-            }
-            .disabled(state.status != .reading && state.status != .paused)
-
-            Button { state.stop() } label: {
-                Image(systemName: "stop.fill").font(.title2)
-            }
-            .disabled(state.status != .reading && state.status != .paused)
-
-            Spacer()
-
-            Button { state.triggerRead() } label: {
-                Label("Read selection", systemImage: "text.badge.plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
 // MARK: - Shared pieces
 
-/// Monospaced key-combo pill used wherever a shortcut is shown in the menu.
+/// Key-combo keycaps used wherever a shortcut is shown in the menu.
 struct ShortcutChip: View {
     let combo: HotKeyCombo
     var body: some View {
         Text(KeyName.describe(combo))
-            .font(.caption.monospaced())
+            .font(.caption.monospaced().weight(.semibold))
             .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            .background(.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .strokeBorder(.primary.opacity(0.12), lineWidth: 0.5))
+            .accessibilityLabel("Shortcut \(KeyName.describe(combo))")
     }
 }
 
@@ -237,6 +320,7 @@ struct CopyButton: View {
         } label: {
             Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                 .font(.caption2)
+                .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.borderless)
         .help("Copy to clipboard")
@@ -247,10 +331,14 @@ struct CopyButton: View {
 /// the old disclosure dropdown so copying is a single click.
 struct LastResultCard<Actions: View>: View {
     let title: String
+    var icon = "text.quote"
     let text: String
     @ViewBuilder var actions: () -> Actions
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            Label(title.uppercased(), systemImage: icon)
+                .font(.caption2.weight(.semibold)).tracking(0.4)
+                .foregroundStyle(.secondary)
             // Fixed-height, line-limited, truncated — NOT a ScrollView. A
             // ScrollView here (plus .textSelection) made the MenuBarExtra(.window)
             // content renegotiate its size on every display cycle, so CoreAnimation
@@ -260,19 +348,18 @@ struct LastResultCard<Actions: View>: View {
             // converge. The full text is one click away via the Copy button in
             // `actions`, so losing in-card scroll/selection costs little.
             Text(text)
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.callout)
+                .foregroundStyle(.primary.opacity(0.85))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(3)
                 .truncationMode(.tail)
-                .frame(height: 56, alignment: .top)
+                .frame(height: 54, alignment: .top)
                 .clipped()
             HStack(spacing: 10) {
-                Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 actions()
             }
         }
-        .padding(8)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .glassCard()
     }
 }
 
@@ -297,23 +384,59 @@ struct EarsSection: View {
     @ObservedObject private var dictation = DictationController.shared.dictation
     @ObservedObject private var prefs = Prefs.shared
 
+    private var listening: Bool { dictation.state == .listening }
+    private var working: Bool {
+        dictation.state == .loadingModel || dictation.state == .finishing || dictation.state == .transcribing
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Button { controller.toggle() } label: {
-                    Label(buttonLabel, systemImage: buttonIcon)
+                    Image(systemName: listening ? "stop.fill" : "mic.fill")
+                        .symbolEffect(.pulse, isActive: listening)
+                        .contentTransition(.symbolEffect(.replace))
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(OrbButtonStyle(gradient: Brand.earsGradient, glow: Brand.magenta))
+                .accessibilityLabel(listening ? "Stop and insert" : "Dictate")
                 .help("Dictate — press, speak, press again to insert")
-                Spacer()
-                ShortcutChip(combo: prefs.dictationHotKey)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(headline).font(Brand.title(15)).lineLimit(1)
+                        if listening {
+                            Image(systemName: "waveform")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(Brand.earsGradient)
+                                .symbolEffect(.variableColor.iterative.reversing, isActive: true)
+                                .accessibilityHidden(true)
+                        } else if working {
+                            ProgressView().controlSize(.mini)
+                        }
+                    }
+                    if case .error(let message) = dictation.state {
+                        // The reason, not just "it failed": one line, full text on hover.
+                        Text(message)
+                            .font(.caption).foregroundStyle(.red)
+                            .lineLimit(1).truncationMode(.tail)
+                            .help(message)
+                    } else {
+                        HStack(spacing: 6) {
+                            Text(listening ? "Press again to insert" : "Press, talk, press again")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ShortcutChip(combo: prefs.dictationHotKey)
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
             }
+            .glassCard(radius: 14, padding: 12)
 
             HStack {
-                Text("Engine").font(.caption).foregroundStyle(.secondary)
+                Label("Language", systemImage: "globe")
+                    .font(.callout).foregroundStyle(.secondary)
                 Spacer()
-                Picker("", selection: Binding(
+                Picker("Language", selection: Binding(
                     get: { dictation.engineChoice },
                     set: { choice in dictation.requestLoad(choice) }
                 )) {
@@ -322,12 +445,14 @@ struct EarsSection: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 150)
-                .disabled(dictation.state == .listening || dictation.state == .finishing || dictation.state == .loadingModel)
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(listening || working)
             }
+            .glassCard(padding: 8)
 
             if !dictation.lastFinal.isEmpty {
-                LastResultCard(title: "Last dictation", text: dictation.lastFinal) {
+                LastResultCard(title: "Last dictation", icon: "text.bubble", text: dictation.lastFinal) {
                     Spacer()
                     CopyButton(text: dictation.lastFinal)
                     Button { TextInsert.insertAtCursor(dictation.lastFinal) } label: {
@@ -340,20 +465,14 @@ struct EarsSection: View {
         }
     }
 
-    private var buttonLabel: String {
+    private var headline: String {
         switch dictation.state {
-        case .listening:    return "Stop & Insert"
+        case .listening:    return "Listening…"
         case .loadingModel: return "Loading model…"
         case .finishing:    return "Finishing…"
         case .transcribing: return "Transcribing…"
-        default:            return "Dictate"
-        }
-    }
-
-    private var buttonIcon: String {
-        switch dictation.state {
-        case .listening: return "stop.circle.fill"
-        default:         return "mic.fill"
+        case .error:        return "Try again"
+        case .idle:         return "Dictate anywhere"
         }
     }
 }

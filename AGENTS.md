@@ -86,7 +86,7 @@ Key facts an agent must keep straight:
 - Cloning. **Never source or ship celebrity / non-consented voices.** The UI says
   clone only what you have rights to (Pocket has no built-in watermark, unlike the
   old Chatterbox). Starter voices are CMU ARCTIC (free); **Get free starter voices** in Settings ▸
-  Engine calls `/voices/hd/starters` to fetch them. (Internal Swift identifiers still use the `hd*` prefix — `hdVoice`,
+  Voices ▸ Clone a voice calls `/voices/hd/starters` to fetch them. (Internal Swift identifiers still use the `hd*` prefix — `hdVoice`,
   `hdInstalled`, `installHD` — they now denote the Pocket engine.)
 - **A selected cloned voice must survive restart.** `refreshHD` demotes a cloned
   `hdVoice` to a catalog default ONLY when cloning is *genuinely* unavailable —
@@ -243,6 +243,10 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 # vs a full pass, real time. --legacy forces the full final pass (the control).
 "$(swift build --show-bin-path)/Yap" --dictbench speech.aiff
 "$(swift build --show-bin-path)/Yap" --dictstop speech.aiff [seconds] [--legacy]
+# Render the menu (both halves) and every Settings pane, light + dark, to PNGs.
+# Uses sample history, never yours; titled windows need Screen Recording for the
+# terminal, else they fall back to an offscreen draw without window chrome.
+"$(swift build --show-bin-path)/Yap" --uishot /tmp/yap-ui
 # Can the dictation HUD be dragged, including while the transcript grows, and
 # does it come back where it was left without ever resting off screen? Posts
 # real mouse events, so it runs from the SIGNED bundle through `open` (that is
