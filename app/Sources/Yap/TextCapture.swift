@@ -61,9 +61,7 @@ enum TextCapture {
     /// empty. Ask once per app; the tree appears shortly after, so the first read
     /// right after launch may still miss and the next one works.
     private static func wakeWebAccessibility() {
-        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
-              pid != ProcessInfo.processInfo.processIdentifier,
-              !wokenPIDs.contains(pid) else { return }
+        guard let pid = targetPID(), !wokenPIDs.contains(pid) else { return }
         wokenPIDs.insert(pid)
         let app = AXUIElementCreateApplication(pid)
         let r1 = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
@@ -71,13 +69,48 @@ enum TextCapture {
         Log.write("accessibility: woke pid \(pid) (manual=\(r1.rawValue) enhanced=\(r2.rawValue))")
     }
 
+    /// The last app other than Yap that was in front. Clicking Yap's menu-bar
+    /// button (unlike the hotkey) makes Yap itself the active app, so "the focused
+    /// element" is Yap's own popover and the selection the user made is in this app.
+    private static var lastExternalPID: pid_t?
+    private static var frontObserver: NSObjectProtocol?
+
+    /// Start remembering the last non-Yap frontmost app. Call once at launch.
+    static func trackFrontApp() {
+        guard frontObserver == nil else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        func note(_ app: NSRunningApplication?) {
+            if let pid = app?.processIdentifier, pid != me { lastExternalPID = pid }
+        }
+        note(NSWorkspace.shared.frontmostApplication)
+        frontObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { n in
+            note(n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
+        }
+    }
+
+    /// The app whose selection to read: the frontmost one, or when that is Yap
+    /// itself, the app that was in front before it.
+    private static func targetPID() -> pid_t? {
+        let me = ProcessInfo.processInfo.processIdentifier
+        if let front = NSWorkspace.shared.frontmostApplication?.processIdentifier, front != me { return front }
+        return lastExternalPID
+    }
+
     /// Read currently selected text from the focused UI element via AXUIElement.
     static func viaAccessibility() -> String? {
         guard Permissions.axTrusted else { return nil }
         wakeWebAccessibility()
-        let system = AXUIElementCreateSystemWide()
+        let me = ProcessInfo.processInfo.processIdentifier
+        let source: AXUIElement
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == me, let pid = lastExternalPID {
+            source = AXUIElementCreateApplication(pid)   // Yap is active: ask the app behind it
+        } else {
+            source = AXUIElementCreateSystemWide()
+        }
         var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+        guard AXUIElementCopyAttributeValue(source, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let element = focused else { return nil }
         let el = element as! AXUIElement
 
