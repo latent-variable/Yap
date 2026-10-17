@@ -471,6 +471,17 @@ final class AppState: ObservableObject {
         // Honor the "ignore re-trigger" preference if the user turned it off.
         if wasPlaying && !prefs.stopOnNewTrigger { return }
 
+        // No voice installed at all (fresh install, nothing downloaded): say so now.
+        // Otherwise the read captures text, fails inside the backend, and the only
+        // sign is a menu-bar pill nobody is looking at while they press ⌘⇧R.
+        if !wasPlaying, !modelsPresent, !hdInstalled {
+            Log.write("read aborted: no voice model installed (Settings ▸ Models)")
+            status = .error("Voice not downloaded — open Yap ▸ Set up")
+            playFailCue()
+            resetToIdle(after: 5)
+            return
+        }
+
         bumpGeneration()
         let gen = generation
         if !wasPlaying { status = .capturing }
