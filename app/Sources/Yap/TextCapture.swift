@@ -52,9 +52,29 @@ enum TextCapture {
         return s
     }
 
+    /// Pids already switched to full accessibility this run.
+    private static var wokenPIDs = Set<pid_t>()
+
+    /// Chrome and other Chromium/Electron apps build their web accessibility tree
+    /// only once an assistive app asks (AXManualAccessibility). Until then the
+    /// focused element has no selected text, so selections in a page come back
+    /// empty. Ask once per app; the tree appears shortly after, so the first read
+    /// right after launch may still miss and the next one works.
+    private static func wakeWebAccessibility() {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              pid != ProcessInfo.processInfo.processIdentifier,
+              !wokenPIDs.contains(pid) else { return }
+        wokenPIDs.insert(pid)
+        let app = AXUIElementCreateApplication(pid)
+        let r1 = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        let r2 = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        Log.write("accessibility: woke pid \(pid) (manual=\(r1.rawValue) enhanced=\(r2.rawValue))")
+    }
+
     /// Read currently selected text from the focused UI element via AXUIElement.
     static func viaAccessibility() -> String? {
         guard Permissions.axTrusted else { return nil }
+        wakeWebAccessibility()
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
