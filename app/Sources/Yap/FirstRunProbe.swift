@@ -48,9 +48,13 @@ enum FirstRunProbe {
             print("First-run probe: home \(home), own sidecar on :\(port)")
 
             AppState.probeBackendPort = port
-            let prefs = Prefs.shared
-            prefs.muteAllSounds = true
-            prefs.voiceEnabled = true
+            // Writes no prefs: CFFIXED_USER_HOME moves Application Support but not
+            // the defaults domain, so from the signed bundle a write would land in
+            // the user's real settings. One fail cue may play.
+            guard Prefs.shared.voiceEnabled else {
+                print("refusing: Reading aloud is off, and launch only fetches a voice when it is on")
+                return 2
+            }
             let state = AppState.shared
             guard !state.backend.kokoroFilesOnDisk else {
                 print("refusing: Kokoro is already in \(yap.path), so this is not a first run")
