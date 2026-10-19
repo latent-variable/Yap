@@ -62,10 +62,13 @@ enum TextCapture {
     /// right after launch may still miss and the next one works.
     private static func wakeWebAccessibility() {
         guard let pid = targetPID(), !wokenPIDs.contains(pid) else { return }
-        wokenPIDs.insert(pid)
         let app = AXUIElementCreateApplication(pid)
         let r1 = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         let r2 = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        // Remember the app only once a switch took, so an app that refused
+        // (still launching, say) is asked again on the next read.
+        guard r1 == .success || r2 == .success else { return }
+        wokenPIDs.insert(pid)
         Log.write("accessibility: woke pid \(pid) (manual=\(r1.rawValue) enhanced=\(r2.rawValue))")
     }
 

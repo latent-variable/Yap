@@ -666,6 +666,21 @@ enum Selftest {
 
         failures += AgentSelftest.run()
 
+        print("Kokoro on disk — a read is only refused when the voice is truly missing")
+        do {
+            let fm = FileManager.default
+            let dir = fm.temporaryDirectory.appending(path: "yap-kokoro-\(UUID().uuidString)")
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            checkBool("empty models dir reads as missing", BackendManager.kokoroFiles(in: dir), false)
+            fm.createFile(atPath: dir.appending(path: "kokoro-v1.0.onnx").path, contents: Data("m".utf8))
+            checkBool("model without voices reads as missing", BackendManager.kokoroFiles(in: dir), false)
+            fm.createFile(atPath: dir.appending(path: "voices-v1.0.bin").path, contents: Data("v".utf8))
+            checkBool("both files read as installed", BackendManager.kokoroFiles(in: dir), true)
+            if dir.path.hasPrefix(fm.temporaryDirectory.path), dir.lastPathComponent.hasPrefix("yap-kokoro-") {
+                try? fm.trashItem(at: dir, resultingItemURL: nil)
+            }
+        }
+
         print("UpdateChecker — semantic version compare")
         checkBool("newer patch is newer", UpdateChecker.isNewer("0.8.2", than: "0.8.1"), true)
         checkBool("older is not newer", UpdateChecker.isNewer("0.8.0", than: "0.8.1"), false)

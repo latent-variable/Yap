@@ -475,9 +475,13 @@ final class AppState: ObservableObject {
         // No voice installed at all (fresh install, nothing downloaded): say so now.
         // Otherwise the read captures text, fails inside the backend, and the only
         // sign is a menu-bar pill nobody is looking at while they press ⌘⇧R.
-        if !wasPlaying, !modelsPresent, !hdInstalled {
+        // Checked on disk, not via modelsPresent/hdInstalled: those start false and
+        // stay false until the backend answers, which would reject launch-time reads.
+        if !wasPlaying, !backend.kokoroFilesOnDisk, !backend.hdInstalledOnDisk {
             Log.write("read aborted: no voice model installed (Settings ▸ Models)")
-            status = .error("Voice not downloaded — open Yap ▸ Set up")
+            status = .error(downloader.downloading
+                ? "Voice still downloading. Try again when it finishes"
+                : "Voice not downloaded. Open the Yap menu ▸ Set up")
             playFailCue()
             resetToIdle(after: 5)
             return
