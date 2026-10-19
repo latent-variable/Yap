@@ -279,6 +279,11 @@ CFFIXED_USER_HOME=$(mktemp -d) "$(swift build --show-bin-path)/Yap" --firstrun
 # where the Accessibility grant lives) and takes the pointer for ~8s. --legacy
 # is the pre-fix drag behaviour, the control that must fail.
 bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/hudtest.txt --args --hudtest [--legacy]; cat /tmp/hudtest.txt
+# Does the menu's Read button, in Clipboard capture, read the app behind Yap?
+# Opens a scratch file in TextEdit, clicks a Yap window to bring Yap forward, then
+# runs the clipboard capture. Signed bundle through `open`, needs an unlocked
+# screen, takes the keyboard for a few seconds. --legacy is the control.
+bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/readbutton.txt --args --readbuttontest [--legacy]; cat /tmp/readbutton.txt
 
 # backend robustness suite — fast set (every code path, one cheap case each)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q

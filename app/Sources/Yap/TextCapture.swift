@@ -93,6 +93,39 @@ enum TextCapture {
         }
     }
 
+    /// Probe control (`--readbuttontest --legacy`): skip handing focus back.
+    static var returnsFocusForCopy = true
+
+    /// When Yap is frontmost (its menu's Read button was clicked), activate the
+    /// app that was in front before it and wait until it is, so the ⌘C lands
+    /// there. Activating it also closes the menu, as clicking that app would.
+    /// No-op from the hotkey, which never brings Yap forward. False only when Yap
+    /// is frontmost and there is no app behind it, or it would not come forward.
+    @MainActor
+    static func returnFocusForCopy() async -> Bool {
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard returnsFocusForCopy,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == me else { return true }
+        // Yap is in front from here on: with no app to hand back to, copy nothing.
+        guard let pid = lastExternalPID,
+              let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
+            Log.write("capture: Yap is in front and no app is behind it; not copying from Yap")
+            return false
+        }
+        NSApp.yieldActivation(to: app)
+        app.activate(from: NSRunningApplication.current, options: [])
+        let deadline = ProcessInfo.processInfo.systemUptime + 1.0
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+                Log.write("capture: handed focus back to \(app.localizedName ?? "pid \(pid)") for ⌘C")
+                return true
+            }
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return false }
+        }
+        Log.write("capture: \(app.localizedName ?? "pid \(pid)") did not come forward; not copying from Yap")
+        return false
+    }
+
     /// The app whose selection to read: the frontmost one, or when that is Yap
     /// itself, the app that was in front before it.
     private static func targetPID() -> pid_t? {
@@ -191,6 +224,11 @@ enum TextCapture {
         guard !isCapturing else { return nil }
         isCapturing = true
         defer { isCapturing = false }
+
+        // A synthetic ⌘C goes to the frontmost app, and the menu's Read button
+        // makes that Yap. Hand focus back to the app the selection is in first,
+        // and if it will not come forward, copy nothing rather than copy from Yap.
+        guard await returnFocusForCopy() else { return nil }
 
         // The read hotkey (e.g. ⌘⇧R) is almost always still physically held when
         // capture fires. A synthetic ⌘C posted now merges with those held

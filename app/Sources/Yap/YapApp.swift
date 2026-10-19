@@ -77,6 +77,9 @@ enum YapMain {
             let port = CommandLine.arguments.count > i + 1 ? Int(CommandLine.arguments[i + 1]) : nil
             FirstRunProbe.run(port: port ?? 18772)
         }
+        if CommandLine.arguments.contains("--readbuttontest") {
+            ReadButtonProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
+        }
         if CommandLine.arguments.contains("--hudtest") {
             HUDProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
         }
