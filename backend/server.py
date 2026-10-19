@@ -279,7 +279,12 @@ def resolve_provider(mode: str) -> str:
 # prints "Error processing file ... phontab" and the process dies loading Kokoro.
 # Measured 2026-10-18 with one bundle: 107 chars (/Applications) works, 160 (a deep
 # checkout's dist/) dies. Below this length the package's own path is used as is.
+# Bytes, not characters: the buffer holds the encoded path, and é or ü takes two.
 ESPEAK_PATH_LIMIT = 150
+
+
+def _path_bytes(p) -> int:
+    return len(os.fsencode(str(p)))
 
 
 def espeak_data_path(real: Optional[str] = None, base: Optional[str] = None,
@@ -302,13 +307,13 @@ def espeak_data_path(real: Optional[str] = None, base: Optional[str] = None,
             version = version or pkg_version("espeakng-loader")
         except Exception:  # noqa: BLE001
             version = "unknown"
-    if len(real) < ESPEAK_PATH_LIMIT:
+    if _path_bytes(real) < ESPEAK_PATH_LIMIT:
         return None
     if not base:
         return None
     dest = Path(base) / f"espeak-ng-data-{version}"
-    if len(str(dest)) >= ESPEAK_PATH_LIMIT:
-        log.warning("espeak data path is %d chars and %s is too long too; Kokoro may fail", len(real), dest)
+    if _path_bytes(dest) >= ESPEAK_PATH_LIMIT:
+        log.warning("espeak data path is %d bytes and %s is too long too; Kokoro may fail", _path_bytes(real), dest)
         return None
     if not (dest / ".complete").exists():
         import shutil
@@ -321,7 +326,7 @@ def espeak_data_path(real: Optional[str] = None, base: Optional[str] = None,
             if not (dest / ".complete").exists():   # a concurrent load may have won
                 log.warning("could not copy espeak data to %s (%s); Kokoro may fail", dest, e)
                 return None
-    log.info("espeak data path is %d chars; using %s", len(real), dest)
+    log.info("espeak data path is %d bytes; using %s", _path_bytes(real), dest)
     return str(dest)
 
 

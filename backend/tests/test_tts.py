@@ -111,6 +111,19 @@ class TestEspeakDataPath:
         got = espeak_data_path(real, str(base), "0.2.4")
         assert got is None or (Path(got) / ".complete").exists()
 
+    def test_the_limit_counts_bytes_not_characters(self, tmp_path):
+        from server import espeak_data_path, ESPEAK_PATH_LIMIT
+        tail = len("/") + len("/espeak-ng-data")
+        room = ESPEAK_PATH_LIMIT - 1 - len(str(tmp_path)) - tail   # characters still under the limit
+        if room < 2 or len(str(tmp_path / "s" / "espeak-ng-data-0.2.4")) >= ESPEAK_PATH_LIMIT:
+            pytest.skip("temp dir too long to build a short-in-characters, long-in-bytes path")
+        real = tmp_path / ("é" * room) / "espeak-ng-data"   # few characters, many bytes
+        real.mkdir(parents=True)
+        (real / "phontab").write_bytes(b"x")
+        assert len(str(real)) < ESPEAK_PATH_LIMIT <= len(str(real).encode())
+        base = tmp_path / "s"; base.mkdir()
+        assert espeak_data_path(str(real), str(base), "0.2.4") is not None
+
     def test_no_base_means_the_long_path(self, tmp_path):
         from server import espeak_data_path
         assert espeak_data_path(self._real(tmp_path), None, "0.2.4") is None
