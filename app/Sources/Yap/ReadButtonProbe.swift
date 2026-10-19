@@ -117,14 +117,25 @@ enum ReadButtonProbe {
             print("readbuttontest FAILED: the probe window is not on top at its click point, refusing to click")
             win.close(); await closeDocument(); return 1
         }
+        // A click on a window does not by itself make its app active on macOS 14+;
+        // the app asks to activate while it handles the click, as the menu-bar
+        // extra does. Do the same, and record that the click arrived at all.
+        final class Flag { var hit = false }
+        let flag = Flag()
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { e in
+            if e.window === win { flag.hit = true; NSApp.activate() }
+            return e
+        }
         let saved = CGEvent(source: nil)?.location
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: pt, mouseButton: .left)?
                 .post(tap: .cghidEventTap)
+            try? await Task.sleep(for: .milliseconds(80))
         }
-        if let saved { CGWarpMouseCursorPosition(saved) }
         let me = ProcessInfo.processInfo.processIdentifier
         let yapFront = await until(3) { NSWorkspace.shared.frontmostApplication?.processIdentifier == me }
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        if let saved { CGWarpMouseCursorPosition(saved) }
 
         var failures = 0
         func ok(_ name: String, _ cond: Bool, _ detail: String = "") {
@@ -132,7 +143,7 @@ enum ReadButtonProbe {
             if !cond { failures += 1 }
         }
         ok("Yap is frontmost before the capture, as after a menu click", yapFront,
-           yapFront ? "" : "(front: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"))")
+           yapFront ? "" : "(front: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"), click arrived: \(flag.hit))")
         let before = NSPasteboard.general.string(forType: .string)
         let got = yapFront ? (await TextCapture.capture(mode: .clipboard)).text : ""
         ok("the clipboard capture read TextEdit's selection", got.contains(marker), "(got \(got.count) chars)")
