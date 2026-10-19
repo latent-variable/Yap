@@ -36,7 +36,7 @@ First launch: Yap downloads the Kokoro voice (~340 MB) on its own; grant Microph
 
 Both shortcuts can be any chord, including a modifier-only one like ⌥⌘ held and released.
 
-- **Dictation** runs NVIDIA Parakeet on the Apple Neural Engine: a fast streaming model for the live preview, an accurate one for the text it inserts. English, or 25 languages in multilingual mode. Everything you dictate is kept in Settings ▸ History, so a missed paste is never lost.
+- **Dictation** runs NVIDIA Parakeet on the Apple Neural Engine: a fast streaming model for the live preview, an accurate one for the text it inserts. English, or 25 languages in multilingual mode. Your last 500 dictations are kept in Settings ▸ History, so a missed paste can be copied again.
 - **Two voice engines.** Kokoro: 54 voices in 8 languages, instant, on CPU. Pocket TTS (optional): 26 more natural voices, and **voice cloning** from a 20-second clip.
 - **Cleanup before it speaks.** Markdown, code blocks, citations and URLs are stripped so you hear the words, not the punctuation.
 
