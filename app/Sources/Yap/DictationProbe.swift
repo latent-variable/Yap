@@ -129,11 +129,24 @@ enum DictationProbe {
                     if !finalDecoded { failures += 1; print("FAILED: ending was not decoded") }
                     if !sameWords { failures += 1 }
                     let verdict = text == full ? "identical" : sameWords ? "same words (punctuation differs)" : "WORDS DIFFER"
-                    print(String(format: "  pause %.1fs: stop %5.0f ms  %-16@ %@", gap, stopMs,
-                                 d.lastStop.components(separatedBy: " in ").first ?? "", verdict))
+                    let ph = d.lastStopPhases
+                    print(String(format: "  pause %.1fs: stop %5.0f ms  %-16@ %@  [window %.0f, preview wait %.0f, decode %.0f]",
+                                 gap, stopMs, d.lastStop.components(separatedBy: " in ").first ?? "", verdict,
+                                 ph.window, ph.previewWait, ph.decode))
                     if !sameWords { print("     pasted: …\(text.suffix(90))\n     full:   …\(full.suffix(90))") }
                     try await Task.sleep(nanoseconds: 300_000_000)
                 }
+                // #95: do two FULL passes of the same speech already disagree when
+                // only the trailing silence differs? If so, a word difference at a
+                // given pause is the batch model, not the stop path.
+                func fullPass(_ pad: Double) async throws -> String {
+                    var st = TdtDecoderState.make(decoderLayers: await ref.decoderLayerCount)
+                    let a = join(prefix(speech, seconds: seconds), silence(seconds: pad, format: speech.format))
+                    return try await ref.transcribe(a, decoderState: &st, language: nil).text
+                }
+                let one = try await fullPass(1), two = try await fullPass(2)
+                print("  full pass, 1s vs 2s trailing silence: \(words(one) == words(two) ? "same words" : "WORDS DIFFER")")
+                if words(one) != words(two) { print("     1s: …\(one.suffix(90))\n     2s: …\(two.suffix(90))") }
                 print(failures == 0 ? "ALL WORDS MATCH" : "\(failures) REGRESSION(S)")
                 exit(failures == 0 ? 0 : 1)
             } catch {
