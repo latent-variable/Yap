@@ -143,7 +143,7 @@ Key facts an agent must keep straight:
   (`Task { @MainActor in … }`) — doing it off-main updates the menu bar off-main
   and SIGABRTs. This bit us once.
 - **CLI probes that park the run loop run from `YapMain`, not the app delegate.**
-  `--pipetest` / `--backpressure` / `--tailtest` / `--providertest` end in `dispatchMain()` (`--hudtest` in `NSApplication.run()`); started from
+  `--pipetest` / `--backpressure` / `--tailtest` / `--providertest` / `--firstrun` end in `dispatchMain()` (`--hudtest` in `NSApplication.run()`); started from
   `applicationDidFinishLaunching` they SIGTRAP on
   `NSViewIsCurrentlyBuildingLayerTreeForDisplay` because the MenuBarExtra's layer
   tree is mid-build. Flags that just print and `exit(0)` are fine where they are.
@@ -265,6 +265,10 @@ cd app && swift build && "$(swift build --show-bin-path)/Yap" --selftest
 # vs a full pass, real time. --legacy forces the full final pass (the control).
 "$(swift build --show-bin-path)/Yap" --dictbench speech.aiff
 "$(swift build --show-bin-path)/Yap" --dictstop speech.aiff [seconds] [--legacy]
+# A fresh install, end to end: launch fetches Kokoro (~340 MB, real download),
+# the backend reloads it, the voice list fills. Needs an EMPTY fake home; it
+# refuses otherwise and runs its own sidecar on 18772.
+CFFIXED_USER_HOME=$(mktemp -d) "$(swift build --show-bin-path)/Yap" --firstrun
 # Render the menu (both halves) and every Settings pane, light + dark, to PNGs.
 # Uses sample history, never yours; titled windows need Screen Recording for the
 # terminal, else they fall back to an offscreen draw without window chrome.
@@ -456,6 +460,14 @@ an agent must keep:
   60s. Kokoro presence is `kokoroFilesPresent` (from `/health`), tracked
   separately from `ready`. After re-downloading Kokoro the running (model-less)
   sidecar must be **restarted**, not just `start()`ed, to load the new files.
+  `AppState` does that on the downloader's `done`, whoever started it (launch,
+  a read, Settings), so it works with the Settings window closed.
+- **No voice at all means fetch Kokoro.** With neither Kokoro files nor Pocket
+  on disk, launch (and a read pressed then) starts the download
+  (`downloadVoiceIfMissing`). Decide from disk (`kokoroFilesOnDisk`,
+  `hdInstalledOnDisk`), never `modelsPresent`/`hdInstalled`: those read false
+  until the backend answers. Pocket installed = leave Kokoro alone, the user may
+  have deleted it on purpose. `--firstrun` checks the whole path.
 <!-- canon-override: destructive filesystem commands (use trash, not rm) — a user
      pressing Delete in Settings to reclaim ~1.2 GB gets nothing back if it goes to
      the Trash, and every byte is re-downloadable. Applies ONLY to the model/engine
@@ -497,7 +509,7 @@ Rules for `MenuContent` and anything it shows:
 
 - **Fully local. No cloud TTS, no accounts, no analytics, ever.** That's the
   product. **Any network call not on this list is a regression:** model and
-  engine downloads (Kokoro, the dictation pair at launch, Pocket packages and
+  engine downloads (Kokoro, at launch when no voice is installed, the dictation pair at launch, Pocket packages and
   its catalog files at load, cloning weights, starter voices) and the optional
   daily update check. No user audio or text is ever sent. Adding a call means
   adding it to this list and to `docs/PRIVACY.md` in the same change.

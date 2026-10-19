@@ -22,7 +22,7 @@ brew install --cask latent-variable/tap/yap
 
 Or grab `Yap-*.dmg` from [Releases](https://github.com/latent-variable/Yap/releases), drag it to Applications, and run `xattr -cr /Applications/Yap.app` once (it's open source, not notarized). Or build it: `git clone https://github.com/latent-variable/Yap.git && cd Yap && bash scripts/build_app.sh && open dist/Yap.app`.
 
-First launch: download the Kokoro voice in **Settings ▸ Models** (~340 MB) and grant Microphone and Accessibility when asked. The app bundles its own Python, so there is nothing else to install.
+First launch: Yap downloads the Kokoro voice (~340 MB) on its own; grant Microphone and Accessibility when asked. The app bundles its own Python, so there is nothing else to install.
 
 ## How you use it
 
@@ -79,7 +79,7 @@ It is HTTP over a private socket in `~/Library/Application Support/Yap`, so no w
 
 Everything runs on your Mac: no account, no telemetry, and your audio and text never leave it. **Accessibility** lets Yap read your selection and paste; **Microphone** feeds dictation. Don't want to grant Accessibility? Set **Read source** to Clipboard and copy text yourself.
 
-Yap goes online only to download models (the dictation pair at launch while Dictation is on, Pocket's files when it loads, and anything you start in Settings) and for a once-a-day update check you can turn off. The full list is in [docs/PRIVACY.md](docs/PRIVACY.md).
+Yap goes online only to download models (the Kokoro voice on first launch, the dictation pair at launch while Dictation is on, Pocket's files when it loads, and anything you start in Settings) and for a once-a-day update check you can turn off. The full list is in [docs/PRIVACY.md](docs/PRIVACY.md).
 
 Don't take my word for it. Point your coding agent at this repo and have it confirm nothing about you leaves the machine. If it holds up, a ⭐ helps.
 

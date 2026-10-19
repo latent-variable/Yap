@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
     @Published var hdVoices: [VoiceInfo] = []
     @Published var hdInstalled = false
     @Published var preparing = false   // synth requested, first audio not yet playing
+    @Published var kokoroDownloading = false   // mirrors downloader.downloading, without its progress ticks
     @Published var preparingDetail = "Preparing voice…"
     // Update awareness (see UpdateChecker). availableUpdate is non-nil only when a
     // strictly newer release exists; checkedForUpdate flips true after any check
@@ -225,6 +226,37 @@ final class AppState: ObservableObject {
         prefs.$hdVoice.dropFirst().sink { [weak self] _ in
             if self?.prefs.engine == "pocket" { self?.warmHD() }
         }.store(in: &cancellables)
+        // The menu shows the download, but observing the downloader itself would
+        // re-render it on every progress tick. Mirror only the on/off.
+        downloader.$downloading.removeDuplicates().sink { [weak self] in
+            self?.kokoroDownloading = $0
+        }.store(in: &cancellables)
+        // Load the new files wherever the download was started (launch, a read,
+        // or Settings), even with the Settings window closed.
+        downloader.$done.removeDuplicates().filter { $0 }.sink { [weak self] _ in
+            self?.reloadAfterKokoroDownload()
+        }.store(in: &cancellables)
+        // Turning reading on later is the same first run as a launch with it on.
+        prefs.$voiceEnabled.dropFirst().removeDuplicates().filter { $0 }.sink { [weak self] _ in
+            self?.downloadVoiceIfMissing("reading turned on")
+        }.store(in: &cancellables)
+    }
+
+    /// No voice can speak until one is on disk, so with neither Kokoro nor Pocket
+    /// installed, fetch Kokoro (~340 MB, pinned SHA-256) without waiting for a
+    /// click. Pocket installed means the user can already speak, and may have
+    /// deleted Kokoro on purpose, so it is left alone. Returns whether a download
+    /// is running.
+    @discardableResult
+    func downloadVoiceIfMissing(_ why: String) -> Bool {
+        guard !backend.kokoroFilesOnDisk, !backend.hdInstalledOnDisk, !deletingKokoro else {
+            return downloader.downloading
+        }
+        if !downloader.downloading {
+            Log.write("no voice installed: downloading Kokoro (\(why))")
+            downloader.start()
+        }
+        return true
     }
 
     /// Keep only the active engine resident, freeing the other's memory (Pocket +
@@ -382,19 +414,25 @@ final class AppState: ObservableObject {
                 if trusted != self.axTrusted { self.axTrusted = trusted }
             }
         }
-        Task {
-            status = .loadingModel
-            await backend.start()
-            let health = await backend.client.health()
-            // Kokoro presence is its own files — NOT backend.ready, which is true
-            // whenever any engine (incl. HD) can serve.
-            modelsPresent = health?.files_present ?? backend.kokoroFilesPresent
-            voices = await backend.client.voices()
-            refreshHD()
-            status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
-        }
+        Task { await startVoice() }
         restoreCachedUpdate()
         maybeAutoCheckForUpdates()
+    }
+
+    /// The voice half of launch: bring the backend up, read what it has, and on a
+    /// first run fetch a voice. Its own function so `--firstrun` drives this exact
+    /// path without the hotkey, permission prompts and timers of `bootstrap`.
+    func startVoice() async {
+        status = .loadingModel
+        await backend.start()
+        let health = await backend.client.health()
+        // Kokoro presence is its own files — NOT backend.ready, which is true
+        // whenever any engine (incl. HD) can serve.
+        modelsPresent = health?.files_present ?? backend.kokoroFilesPresent
+        voices = await backend.client.voices()
+        refreshHD()
+        status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
+        if prefs.voiceEnabled { downloadVoiceIfMissing("launch") }
     }
 
     // MARK: - update awareness
@@ -479,7 +517,8 @@ final class AppState: ObservableObject {
         // stay false until the backend answers, which would reject launch-time reads.
         if !wasPlaying, !backend.kokoroFilesOnDisk, !backend.hdInstalledOnDisk {
             Log.write("read aborted: no voice model installed (Settings ▸ Models)")
-            status = .error(downloader.downloading
+            // A launch download that failed (offline, say) gets another try here.
+            status = .error(downloadVoiceIfMissing("read pressed")
                 ? "Voice still downloading. Try again when it finishes"
                 : "Voice not downloaded. Open the Yap menu ▸ Set up")
             playFailCue()
@@ -1101,6 +1140,9 @@ final class AppState: ObservableObject {
         Task {
             await backend.restart()
             modelsPresent = backend.kokoroFilesPresent
+            // The list came back empty while the model was missing; nothing else
+            // asks again, so the picker stayed empty until the next launch.
+            voices = await backend.client.voices()
             status = backend.ready ? .idle : .error(backend.lastError ?? "Backend not ready")
         }
     }

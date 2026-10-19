@@ -29,6 +29,12 @@ sends your audio, your text, or anything that identifies you.
 
 **At launch, without a click:**
 
+- **The Kokoro voice** (~340 MB), only when no voice is installed: no Kokoro
+  files and no Pocket engine. Both files are checked against pinned SHA-256
+  hashes before use. If the download fails, pressing the read shortcut tries
+  again. If you delete Kokoro in Settings ▸ Models with Pocket not installed,
+  it downloads again at the next launch. Turn off **Reading aloud (voice)** in
+  Settings ▸ General to stop this.
 - **Dictation models.** With Dictation on (the default), Yap loads the selected
   model pair at launch and downloads any missing files. English uses Parakeet
   Flash for streaming and Parakeet TDT v2 for the final pass; multilingual uses
