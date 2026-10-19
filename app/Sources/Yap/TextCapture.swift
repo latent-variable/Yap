@@ -100,14 +100,18 @@ enum TextCapture {
     /// app that was in front before it and wait until it is, so the ⌘C lands
     /// there. Activating it also closes the menu, as clicking that app would.
     /// No-op from the hotkey, which never brings Yap forward. False only when Yap
-    /// is frontmost and the app behind it would not come forward.
+    /// is frontmost and there is no app behind it, or it would not come forward.
     @MainActor
     static func returnFocusForCopy() async -> Bool {
         let me = ProcessInfo.processInfo.processIdentifier
         guard returnsFocusForCopy,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == me,
-              let pid = lastExternalPID,
-              let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return true }
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == me else { return true }
+        // Yap is in front from here on: with no app to hand back to, copy nothing.
+        guard let pid = lastExternalPID,
+              let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
+            Log.write("capture: Yap is in front and no app is behind it; not copying from Yap")
+            return false
+        }
         NSApp.yieldActivation(to: app)
         app.activate(from: NSRunningApplication.current, options: [])
         let deadline = ProcessInfo.processInfo.systemUptime + 1.0
