@@ -369,6 +369,17 @@ enum AgentProbe {
                plain.raw.contains("Content-Type: text/plain") && plain.raw.lowercased().contains("quick brown fox")
                && plain.raw.contains("X-Yap-Reason: silence"), plain.raw)
 
+            // insert:true, with the paste caught so nothing reaches a real app.
+            var pastedText: String?
+            dictation.simulatedPaste = { pastedText = $0 }
+            dictation.simulatedCapture = feeder(clipSecs, 6)
+            let ins = await call("POST", "/listen", #"{"max_seconds":30,"silence_seconds":1.2,"insert":true}"#)
+            ok("insert:true pastes the transcript",
+               ins.json["inserted"] as? Bool == true && pastedText?.lowercased().contains("fox") == true, ins.raw)
+            let insDetail = HistoryStore.shared.dictated.first?.detail ?? ""
+            ok("...and History marks it as the agent's, not the user's", insDetail.hasPrefix("Agent API"), insDetail)
+            dictation.simulatedPaste = nil
+
             // The time limit: speech that never stops.
             dictation.simulatedCapture = feeder(clipSecs, 0)
             let m = await call("POST", "/listen", #"{"max_seconds":2,"silence_seconds":5}"#)

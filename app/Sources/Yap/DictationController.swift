@@ -104,10 +104,11 @@ final class DictationController: ObservableObject {
     /// Returns whether the text was actually pasted: false when Accessibility is
     /// missing and it was only copied, so callers (the agent API) do not claim more.
     @discardableResult
-    private func insertDictated(_ text: String) -> Bool {
+    private func insertDictated(_ text: String, agent: Bool = false) -> Bool {
         // Log before we try to paste — a dictation that fails to insert
         // (no Accessibility, dropped ⌘V) is exactly what History rescues.
-        HistoryStore.shared.recordDictated(text, detail: targetName)
+        HistoryStore.shared.recordDictated(text, detail: Self.historyDetail(target: targetName, agent: agent))
+        if let simulatedPaste { stopTargetTracking(); simulatedPaste(text); return true }
         // Pasting fires a synthetic ⌘V, which needs Accessibility. Without
         // it the keystroke is dropped. Don't run the normal paste path then:
         // it would set the clipboard, fail to paste, and 0.6s later RESTORE
@@ -174,6 +175,16 @@ final class DictationController: ObservableObject {
     /// open, and no API parameter can turn that off.
     var simulatedCapture: ((Dictation) async throws -> Void)?
     var headless = false
+    /// Probe-only (`--apitest`): receives the text instead of a real ⌘V, so the
+    /// pasted path runs without touching the user's frontmost app or clipboard.
+    var simulatedPaste: ((String) -> Void)?
+
+    /// What History shows as a dictation's context. An agent's words are marked
+    /// whether or not they were pasted, so they never pass for the user's own.
+    nonisolated static func historyDetail(target: String, agent: Bool) -> String {
+        guard agent else { return target }
+        return target.isEmpty ? "Agent API" : "Agent API → \(target)"
+    }
 
     /// Ask the running agent listen (if any) to end. False when there is none.
     @discardableResult
@@ -302,7 +313,7 @@ final class DictationController: ObservableObject {
         }
         var pasted = false
         if insert {
-            pasted = insertDictated(text)
+            pasted = insertDictated(text, agent: true)
         } else {
             HistoryStore.shared.recordDictated(text, detail: "Agent API")
             abandon()
