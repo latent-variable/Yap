@@ -45,6 +45,18 @@ enum FirstRunProbe {
                 return 2
             }
             let yap = support.appending(path: "Yap")
+            // The real home passes the prefix check above, so name it outright.
+            if let pw = getpwuid(getuid()), let real = String(validatingCString: pw.pointee.pw_dir),
+               URL(fileURLWithPath: real).standardizedFileURL.path == URL(fileURLWithPath: home).standardizedFileURL.path {
+                print("refusing: CFFIXED_USER_HOME is your real home; use an empty directory")
+                return 2
+            }
+            // The Pocket case below creates and then trashes hd-packages, so it must
+            // be the probe's own: never one that was already there.
+            guard !fm.fileExists(atPath: yap.appending(path: "hd-packages").path) else {
+                print("refusing: \(yap.path) already has a Pocket install, so this is not a first run")
+                return 2
+            }
             print("First-run probe: home \(home), own sidecar on :\(port)")
 
             AppState.probeBackendPort = port
