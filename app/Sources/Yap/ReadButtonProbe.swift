@@ -99,12 +99,23 @@ enum ReadButtonProbe {
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
                            styleMask: [.titled], backing: .buffered, defer: false)
         win.title = "Yap probe"
-        win.center()
+        win.level = .floating
+        // On the primary display, the one CG coordinates are measured from; center()
+        // picks the display with keyboard focus, which may be another one.
+        if let primary = NSScreen.screens.first?.visibleFrame {
+            win.setFrameOrigin(NSPoint(x: primary.midX - 120, y: primary.midY - 60))
+        }
         win.orderFrontRegardless()
         try? await Task.sleep(for: .milliseconds(300))
         let f = win.frame
         let main = NSScreen.screens.first?.frame.height ?? 0
         let pt = CGPoint(x: f.midX, y: main - f.midY)   // AppKit → CG coordinates
+        // A synthetic click lands on whatever is on top there. Never click unless it
+        // is this window, or the click goes into the user's own app.
+        guard NSWindow.windowNumber(at: NSPoint(x: f.midX, y: f.midY), belowWindowWithWindowNumber: 0) == win.windowNumber else {
+            print("readbuttontest FAILED: the probe window is not on top at its click point, refusing to click")
+            win.close(); await closeDocument(); return 1
+        }
         let saved = CGEvent(source: nil)?.location
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: pt, mouseButton: .left)?
