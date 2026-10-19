@@ -149,6 +149,12 @@ enum AgentSelftest {
         ok("silence_seconds under the floor is rejected", code(listen(#"{"silence_seconds":0.1}"#)) == "bad_field")
         ok("insert must be a boolean", code(listen(#"{"insert":"yes"}"#)) == "bad_field")
         ok("a misspelt listen field is rejected", code(listen(#"{"max_second":5}"#)) == "unknown_field")
+        ok("an agent dictation pasted into an app is marked as the agent's",
+           DictationController.historyDetail(target: "Notes", agent: true) == "Agent API → Notes")
+        ok("...and one with no target still says Agent API",
+           DictationController.historyDetail(target: "", agent: true) == "Agent API")
+        ok("the user's own dictation keeps just the app name",
+           DictationController.historyDetail(target: "Notes", agent: false) == "Notes")
 
         print("Agent API — which voice a request means")
         let list: [EngineVoice] = [
