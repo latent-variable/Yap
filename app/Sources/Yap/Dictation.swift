@@ -121,9 +121,10 @@ final class Dictation: ObservableObject {
     /// How the last stop got its text, and how long it took. For the log and
     /// `--dictstop`.
     private(set) var lastStop = ""
-    /// Where the last stop's time went, in ms: the capture window, waiting on a
-    /// preview pass already running, and the final decode. For the log and #95.
-    private(set) var lastStopPhases: (window: Double, previewWait: Double, decode: Double) = (0, 0, 0)
+    /// Where the last stop's time went, in ms: the capture window, draining the
+    /// audio pump, waiting on a preview pass already running, and the final
+    /// decode. They add up to the stop's total. For the log and #95.
+    private(set) var lastStopPhases: (window: Double, pump: Double, previewWait: Double, decode: Double) = (0, 0, 0, 0)
     /// How long each preview pass of this session took, in ms.
     private var previewPassMs: [Double] = []
     /// Probe control: always run the full final pass (the pre-reuse behaviour).
@@ -375,8 +376,8 @@ final class Dictation: ObservableObject {
             }
             if accurate == nil { accurate = await runFinalPass(recorded) }
         }
-        lastStopPhases = (tClosed.timeIntervalSince(t0) * 1000, tDecode.timeIntervalSince(tWait) * 1000,
-                          Date().timeIntervalSince(tDecode) * 1000)
+        lastStopPhases = (tClosed.timeIntervalSince(t0) * 1000, tWait.timeIntervalSince(tClosed) * 1000,
+                          tDecode.timeIntervalSince(tWait) * 1000, Date().timeIntervalSince(tDecode) * 1000)
         do {
             var text: String
             if let accurate, !accurate.isEmpty {
@@ -391,9 +392,9 @@ final class Dictation: ObservableObject {
             }
             if Prefs.shared.removeFillers { text = Fillers.clean(text) }
             let passes = previewPassMs
-            lastStop = String(format: "%@ in %.0f ms (%.1fs of audio; window %.0f, preview wait %.0f, decode %.0f ms; %d preview passes, last %.0f, max %.0f ms)",
+            lastStop = String(format: "%@ in %.0f ms (%.1fs of audio; window %.0f, pump %.0f, preview wait %.0f, decode %.0f ms; %d preview passes, last %.0f, max %.0f ms)",
                               path, Date().timeIntervalSince(t0) * 1000, Double(total) / rate,
-                              lastStopPhases.window, lastStopPhases.previewWait, lastStopPhases.decode,
+                              lastStopPhases.window, lastStopPhases.pump, lastStopPhases.previewWait, lastStopPhases.decode,
                               passes.count, passes.last ?? 0, passes.max() ?? 0)
             Log.write("dictation stop: \(lastStop)")
             lastFinal = text

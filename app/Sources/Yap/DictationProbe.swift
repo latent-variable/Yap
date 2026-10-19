@@ -130,9 +130,9 @@ enum DictationProbe {
                     if !sameWords { failures += 1 }
                     let verdict = text == full ? "identical" : sameWords ? "same words (punctuation differs)" : "WORDS DIFFER"
                     let ph = d.lastStopPhases
-                    print(String(format: "  pause %.1fs: stop %5.0f ms  %-16@ %@  [window %.0f, preview wait %.0f, decode %.0f]",
+                    print(String(format: "  pause %.1fs: stop %5.0f ms  %-16@ %@  [window %.0f, pump %.0f, preview wait %.0f, decode %.0f]",
                                  gap, stopMs, d.lastStop.components(separatedBy: " in ").first ?? "", verdict,
-                                 ph.window, ph.previewWait, ph.decode))
+                                 ph.window, ph.pump, ph.previewWait, ph.decode))
                     if !sameWords { print("     pasted: …\(text.suffix(90))\n     full:   …\(full.suffix(90))") }
                     try await Task.sleep(nanoseconds: 300_000_000)
                 }
