@@ -27,6 +27,7 @@ import re
 import secrets
 import stat
 import sys
+import tempfile
 import threading
 import wave
 from pathlib import Path
@@ -273,6 +274,57 @@ def resolve_provider(mode: str) -> str:
     return PROVIDER_ALIASES.get(mode, mode)
 
 
+# espeak-ng copies its data path into a fixed 160-byte buffer (N_PATH_HOME). A
+# longer path is dropped for the build machine's path (/Users/runner/...), espeak
+# prints "Error processing file ... phontab" and the process dies loading Kokoro.
+# Measured 2026-10-18 with one bundle: 107 chars (/Applications) works, 160 (a deep
+# checkout's dist/) dies. Below this length the package's own path is used as is.
+ESPEAK_PATH_LIMIT = 150
+
+
+def espeak_data_path(real: Optional[str] = None, base: Optional[str] = None,
+                     version: Optional[str] = None) -> Optional[str]:
+    """None when espeak-ng can hold the package's data path; otherwise a copy of
+    the data (19 MB) under `base`, made once per espeakng-loader version.
+
+    A copy, not a symlink: phonemizer resolve()s the path it is given, which
+    walks a symlink straight back to the long one. The copy is built under a
+    unique name and renamed into place whole, so a half-copied directory is
+    never used, and nothing is ever deleted."""
+    if real is None or version is None:
+        try:
+            import espeakng_loader
+            from importlib.metadata import version as pkg_version
+        except ImportError:
+            return None
+        real = real or espeakng_loader.get_data_path()
+        try:
+            version = version or pkg_version("espeakng-loader")
+        except Exception:  # noqa: BLE001
+            version = "unknown"
+    if len(real) < ESPEAK_PATH_LIMIT:
+        return None
+    if not base:
+        return None
+    dest = Path(base) / f"espeak-ng-data-{version}"
+    if len(str(dest)) >= ESPEAK_PATH_LIMIT:
+        log.warning("espeak data path is %d chars and %s is too long too; Kokoro may fail", len(real), dest)
+        return None
+    if not (dest / ".complete").exists():
+        import shutil
+        tmp = dest.with_name(f"{dest.name}.partial-{secrets.token_hex(6)}")
+        try:
+            shutil.copytree(real, tmp)
+            (tmp / ".complete").write_text(real)
+            os.rename(tmp, dest)
+        except OSError as e:
+            if not (dest / ".complete").exists():   # a concurrent load may have won
+                log.warning("could not copy espeak data to %s (%s); Kokoro may fail", dest, e)
+                return None
+    log.info("espeak data path is %d chars; using %s", len(real), dest)
+    return str(dest)
+
+
 class Engine:
     def __init__(self, models_dir: Path, provider_mode: str = "auto"):
         self.models_dir = models_dir
@@ -312,7 +364,12 @@ class Engine:
             from kokoro_onnx import Kokoro
             os.environ["ONNX_PROVIDER"] = provider  # kokoro-onnx reads this
             log.info("loading Kokoro from %s (provider=%s)", self.models_dir, provider)
-            kokoro = Kokoro(str(self.model_path), str(self.voices_path))
+            kwargs = {}
+            short = espeak_data_path(base=str(self.models_dir.parent))
+            if short:
+                from kokoro_onnx.config import EspeakConfig
+                kwargs["espeak_config"] = EspeakConfig(data_path=short)
+            kokoro = Kokoro(str(self.model_path), str(self.voices_path), **kwargs)
             kokoro.create("Ready.", voice="af_heart", speed=1.0, lang="en-us")  # warm
             self.kokoro = kokoro
             self.active_providers = list(kokoro.sess.get_providers())
