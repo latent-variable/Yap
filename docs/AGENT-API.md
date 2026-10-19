@@ -41,9 +41,10 @@ reports it as `api_version`. A breaking change to a route or field bumps it.
   server at all; switching it off removes the socket immediately.
   `agentListenEnabled` (default off) allows `/listen`. Both are switches in
   **Settings ▸ Agents** (*Let agents use Yap*, *Allow agents to listen*).
-- **What lands on disk.** Text an agent has Yap speak, and words it has Yap hear,
-  appear in History like any other read or dictation (marked "agent"), so you can
-  see what your agents had Yap say and hear. Audio is never saved.
+- **What lands on disk.** Text an agent has Yap speak appears in History marked
+  "agent". Dictation from `/listen` also appears there: with `"insert": false`,
+  it is marked `Agent API`; with `"insert": true`, it is recorded under the
+  target app's name, like other inserted dictation. Audio is never saved.
 - **Nothing leaves the machine.** The socket is a file. The API makes no network
   call and adds none (see `PRIVACY.md`).
 
