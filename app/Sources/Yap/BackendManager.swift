@@ -95,6 +95,18 @@ final class BackendManager: NSObject, ObservableObject {
     /// from `ready`: the backend can be ready (HD) with Kokoro deleted.
     @Published private(set) var kokoroFilesPresent = false
 
+    /// Kokoro's model files, read straight from disk. Unlike `kokoroFilesPresent`
+    /// this is right before the backend has answered, so a read pressed during
+    /// launch is never told an installed voice is missing.
+    var kokoroFilesOnDisk: Bool { Self.kokoroFiles(in: appSupportBase.appending(path: "models")) }
+
+    /// Both files server.py's `files_present` requires.
+    nonisolated static func kokoroFiles(in dir: URL) -> Bool {
+        ["kokoro-v1.0.onnx", "voices-v1.0.bin"].allSatisfy {
+            FileManager.default.fileExists(atPath: dir.appending(path: $0).path)
+        }
+    }
+
     /// A ready flag can outlive its child by a small scheduling window after a
     /// crash. Read the Process state synchronously so a read still enters start().
     var needsStart: Bool {

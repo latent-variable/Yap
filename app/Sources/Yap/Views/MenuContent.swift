@@ -86,7 +86,11 @@ struct MenuContent: View {
             }
             Spacer(minLength: 6)
             if !state.modelsPresent && !state.preparing {
-                Button { showSettings() } label: {
+                Button {
+                    // Land on the pane with the Download button, not the last one used.
+                    UserDefaults.standard.set(SettingsTab.models.rawValue, forKey: "settingsPane")
+                    showSettings()
+                } label: {
                     StatusPill(text: "Set up", color: .orange)
                 }
                 .buttonStyle(.plain)
