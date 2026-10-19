@@ -121,6 +121,12 @@ final class Dictation: ObservableObject {
     /// How the last stop got its text, and how long it took. For the log and
     /// `--dictstop`.
     private(set) var lastStop = ""
+    /// Where the last stop's time went, in ms: the capture window, draining the
+    /// audio pump, waiting on a preview pass already running, and the final
+    /// decode. They add up to the stop's total. For the log and #95.
+    private(set) var lastStopPhases: (window: Double, pump: Double, previewWait: Double, decode: Double) = (0, 0, 0, 0)
+    /// How long each preview pass of this session took, in ms.
+    private var previewPassMs: [Double] = []
     /// Probe control: always run the full final pass (the pre-reuse behaviour).
     static var forceFinalPass = false
     /// A probe session feeds audio itself; there is no mic tap to tear down.
@@ -338,6 +344,7 @@ final class Dictation: ObservableObject {
         // Confirm the mic cutoff now, without waiting for pump/ASR work. The
         // cue cannot enter the recording because admission and the tap are closed.
         onCaptureClosed()
+        let tClosed = Date()
         // Await the pump's actual termination — cancel() alone doesn't wait, and
         // a still-running append/process would race finish() on the same actor.
         pump?.cancel()
@@ -351,8 +358,10 @@ final class Dictation: ObservableObject {
         // Cancel the loop, but let its active decode finish before using finalASR.
         // Its result may give us a newer, shorter final segment.
         refineTask?.cancel()
+        let tWait = Date()
         await refineTask?.value
         refineTask = nil
+        let tDecode = Date()
         let recorded = recorder.drain()
         var accurate: String?
         var path = "final pass"
@@ -367,6 +376,8 @@ final class Dictation: ObservableObject {
             }
             if accurate == nil { accurate = await runFinalPass(recorded) }
         }
+        lastStopPhases = (tClosed.timeIntervalSince(t0) * 1000, tWait.timeIntervalSince(tClosed) * 1000,
+                          tDecode.timeIntervalSince(tWait) * 1000, Date().timeIntervalSince(tDecode) * 1000)
         do {
             var text: String
             if let accurate, !accurate.isEmpty {
@@ -380,8 +391,11 @@ final class Dictation: ObservableObject {
                 path = "live stream"
             }
             if Prefs.shared.removeFillers { text = Fillers.clean(text) }
-            lastStop = String(format: "%@ in %.0f ms (%.1fs of audio)",
-                              path, Date().timeIntervalSince(t0) * 1000, Double(total) / rate)
+            let passes = previewPassMs
+            lastStop = String(format: "%@ in %.0f ms (%.1fs of audio; window %.0f, pump %.0f, preview wait %.0f, decode %.0f ms; %d preview passes, last %.0f, max %.0f ms)",
+                              path, Date().timeIntervalSince(t0) * 1000, Double(total) / rate,
+                              lastStopPhases.window, lastStopPhases.pump, lastStopPhases.previewWait, lastStopPhases.decode,
+                              passes.count, passes.last ?? 0, passes.max() ?? 0)
             Log.write("dictation stop: \(lastStop)")
             lastFinal = text
             partial = ""
@@ -488,10 +502,12 @@ final class Dictation: ObservableObject {
             }.value
             guard let combined = snap.0?.buffer, session == mySession else { continue }
             var decoderState = TdtDecoderState.make(decoderLayers: await finalASR.decoderLayerCount)
+            let passStart = Date()
             let result = try? await finalASR.transcribe(combined, decoderState: &decoderState, language: nil)
             // This pass may finish after stop, even after the next session began:
             // only its own session may use it.
             guard session == mySession else { break }
+            previewPassMs.append(Date().timeIntervalSince(passStart) * 1000)
             lastFrames = snap.1
             nextDue = Date().addingTimeInterval(0.8)
             guard let result else { continue }
@@ -550,6 +566,7 @@ final class Dictation: ObservableObject {
     private func beginSession() {
         session += 1
         settled = nil
+        previewPassMs = []
         captureGate?.close()
         captureGate = nil
         partial = ""
