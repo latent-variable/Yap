@@ -91,10 +91,13 @@ struct MenuContent: View {
                     UserDefaults.standard.set(SettingsTab.models.rawValue, forKey: "settingsPane")
                     showSettings()
                 } label: {
-                    StatusPill(text: "Set up", color: .orange)
+                    StatusPill(text: state.kokoroDownloading ? "Getting voice" : "Set up",
+                               color: .orange, busy: state.kokoroDownloading)
                 }
                 .buttonStyle(.plain)
-                .help("Models not installed — open Settings ▸ Models")
+                .help(state.kokoroDownloading
+                      ? "Downloading the Kokoro voice. Progress is in Settings ▸ Models"
+                      : "Models not installed. Open Settings ▸ Models")
             } else {
                 StatusPill(text: statusText, color: statusColor, busy: busy)
                     .frame(maxWidth: 140, alignment: .trailing)

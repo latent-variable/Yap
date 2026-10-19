@@ -748,7 +748,7 @@ private struct ModelsTab: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let e = dl.error { Text(e).font(.caption).foregroundStyle(.red) }
-                if dl.done { Text("Downloaded. Restart playback to load.").font(.caption).foregroundStyle(.green) }
+                if dl.done { Text("Downloaded.").font(.caption).foregroundStyle(.green) }
             }
             Section {
                 Text("Voices included: 54 across English, Spanish, French, Italian, Hindi, Japanese, Portuguese, and Chinese.")
@@ -838,7 +838,7 @@ private struct ModelsTab: View {
         .onChange(of: state.hdInstalled) { _, _ in refreshSizes() }
         .onChange(of: hdInstalling) { _, _ in refreshSizes() }
         .onChange(of: dl.done) { _, done in
-            if done { state.reloadAfterKokoroDownload(); refreshSizes() }
+            if done { refreshSizes() }   // AppState reloads the backend itself
         }
         .confirmationDialog("Delete the Kokoro model?", isPresented: $confirmDeleteKokoro, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { kokoroSize = nil; state.deleteKokoroModel() }

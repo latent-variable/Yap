@@ -73,6 +73,10 @@ enum YapMain {
             AgentProbe.serve(port: rest.first.flatMap { Int($0) } ?? 18771,
                              speechPath: rest.first(where: { Int($0) == nil }))
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--firstrun") {
+            let port = CommandLine.arguments.count > i + 1 ? Int(CommandLine.arguments[i + 1]) : nil
+            FirstRunProbe.run(port: port ?? 18772)
+        }
         if CommandLine.arguments.contains("--hudtest") {
             HUDProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
         }

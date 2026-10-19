@@ -11,24 +11,22 @@ PORT="${YAP_PORT:-${PARLEY_PORT:-8766}}"
 MODELS_DIR="${YAP_MODELS_DIR:-${PARLEY_MODELS_DIR:-$SUPPORT/models}}"
 mkdir -p "$SUPPORT"
 
-if [ ! -x "$VENV/bin/python" ]; then
+# Call the venv's own python, never `activate` + bare `python`: activate hardcodes
+# the path the venv was created at, so a venv moved by the Parley -> Yap rename
+# put a dead directory first on PATH and `python` silently became whatever the
+# shell found next (Anaconda, with no kokoro_onnx).
+PY="$VENV/bin/python"
+if [ ! -x "$PY" ]; then
   echo "[yap] creating venv..."
   if command -v uv >/dev/null 2>&1; then
     uv venv --python 3.12 "$VENV"
-    # shellcheck disable=SC1091
-    source "$VENV/bin/activate"
-    uv pip install -r "$BACKEND/requirements.txt"
+    uv pip install --python "$PY" -r "$BACKEND/requirements.txt"
   else
     python3 -m venv "$VENV"
-    # shellcheck disable=SC1091
-    source "$VENV/bin/activate"
-    pip install -r "$BACKEND/requirements.txt"
+    "$PY" -m pip install -r "$BACKEND/requirements.txt"
   fi
-else
-  # shellcheck disable=SC1091
-  source "$VENV/bin/activate"
 fi
 
 export YAP_MODELS_DIR="$MODELS_DIR"
-exec python "$BACKEND/server.py" --port "$PORT" --models-dir "$MODELS_DIR" \
+exec "$PY" "$BACKEND/server.py" --port "$PORT" --models-dir "$MODELS_DIR" \
      --provider "${YAP_PROVIDER:-${PARLEY_PROVIDER:-auto}}" "$@"
