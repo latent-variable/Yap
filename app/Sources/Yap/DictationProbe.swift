@@ -123,22 +123,17 @@ enum DictationProbe {
                     // Words are the contract. The batch model's punctuation shifts
                     // with how much trailing silence it hears (the full pass itself
                     // gains/drops a final period between a 1s and a 2s pause), so a
-                    // punctuation-only difference is reported, not failed. So is word
-                    // spacing: decoding the tail on its own can split a compound the
-                    // full pass joins ("river bank" / "riverbank", measured for #95),
-                    // which loses nothing. A dropped or changed word still fails.
+                    // punctuation-only difference is reported, not failed.
                     let sameWords = words(text) == words(full)
-                    let sameLetters = words(text).joined() == words(full).joined()
                     let finalDecoded = d.lastStop.hasPrefix("final pass") || d.lastStop.hasPrefix("final segment")
                     if !finalDecoded { failures += 1; print("FAILED: ending was not decoded") }
-                    if !sameLetters { failures += 1 }
-                    let verdict = text == full ? "identical" : sameWords ? "same words (punctuation differs)"
-                        : sameLetters ? "same words (spacing differs)" : "WORDS DIFFER"
+                    if !sameWords { failures += 1 }
+                    let verdict = text == full ? "identical" : sameWords ? "same words (punctuation differs)" : "WORDS DIFFER"
                     let ph = d.lastStopPhases
                     print(String(format: "  pause %.1fs: stop %5.0f ms  %-16@ %@  [window %.0f, preview wait %.0f, decode %.0f]",
                                  gap, stopMs, d.lastStop.components(separatedBy: " in ").first ?? "", verdict,
                                  ph.window, ph.previewWait, ph.decode))
-                    if !sameLetters { print("     pasted: …\(text.suffix(90))\n     full:   …\(full.suffix(90))") }
+                    if !sameWords { print("     pasted: …\(text.suffix(90))\n     full:   …\(full.suffix(90))") }
                     try await Task.sleep(nanoseconds: 300_000_000)
                 }
                 // #95: do two FULL passes of the same speech already disagree when
