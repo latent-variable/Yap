@@ -99,6 +99,7 @@ enum ReadButtonProbe {
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
                            styleMask: [.titled], backing: .buffered, defer: false)
         win.title = "Yap probe"
+        win.isReleasedWhenClosed = false   // ARC owns it; the AppKit default over-releases on close and crashes at exit
         win.level = .floating
         // On the primary display, the one CG coordinates are measured from; center()
         // picks the display with keyboard focus, which may be another one.
@@ -130,7 +131,8 @@ enum ReadButtonProbe {
             print("  \(cond ? "PASS" : "FAIL") \(name) \(detail)")
             if !cond { failures += 1 }
         }
-        ok("Yap is frontmost before the capture, as after a menu click", yapFront)
+        ok("Yap is frontmost before the capture, as after a menu click", yapFront,
+           yapFront ? "" : "(front: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"))")
         let before = NSPasteboard.general.string(forType: .string)
         let got = yapFront ? (await TextCapture.capture(mode: .clipboard)).text : ""
         ok("the clipboard capture read TextEdit's selection", got.contains(marker), "(got \(got.count) chars)")
