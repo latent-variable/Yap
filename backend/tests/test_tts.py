@@ -64,6 +64,71 @@ def _seg_texts(text):
     return [s for s, _g in segment_text(text)]
 
 
+class TestEspeakDataPath:
+    """espeak-ng drops a data path of 160+ chars and the backend dies loading
+    Kokoro; a long one is swapped for a short copy (server.espeak_data_path)."""
+
+    def _real(self, tmp_path, tag="d", content=b"x"):
+        real = tmp_path / (tag * 170) / "espeak-ng-data"
+        (real / "voices").mkdir(parents=True)
+        (real / "phontab").write_bytes(content)
+        (real / "voices" / "en").write_bytes(b"v")
+        return str(real)
+
+    def test_a_short_path_is_used_as_is(self, tmp_path):
+        from server import espeak_data_path
+        assert espeak_data_path("/Applications/Yap.app/x/espeak-ng-data", str(tmp_path), "0.2.4") is None
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_long_path_gets_a_short_real_copy(self, tmp_path):
+        from server import espeak_data_path, ESPEAK_PATH_LIMIT
+        real = self._real(tmp_path)
+        base = tmp_path / "s"; base.mkdir()
+        got = espeak_data_path(real, str(base), "0.2.4")
+        assert got and len(got) < ESPEAK_PATH_LIMIT <= len(real)
+        # phonemizer resolve()s the path, so it must stay short after resolving
+        assert len(str(Path(got).resolve())) < ESPEAK_PATH_LIMIT
+        assert (Path(got) / "phontab").read_bytes() == b"x"
+        assert (Path(got) / "voices" / "en").read_bytes() == b"v"
+
+    def test_the_copy_is_made_once_per_version(self, tmp_path):
+        from server import espeak_data_path
+        real = self._real(tmp_path)
+        base = tmp_path / "s"; base.mkdir()
+        first = espeak_data_path(real, str(base), "0.2.4")
+        (Path(real) / "phontab").write_bytes(b"changed")   # same version: not recopied
+        assert espeak_data_path(real, str(base), "0.2.4") == first
+        assert (Path(first) / "phontab").read_bytes() == b"x"
+        newer = espeak_data_path(real, str(base), "0.2.5")
+        assert newer != first and (Path(newer) / "phontab").read_bytes() == b"changed"
+        assert sorted(p.name for p in base.iterdir()) == ["espeak-ng-data-0.2.4", "espeak-ng-data-0.2.5"]
+
+    def test_a_half_finished_copy_is_never_used(self, tmp_path):
+        from server import espeak_data_path
+        real = self._real(tmp_path)
+        base = tmp_path / "s"
+        (base / "espeak-ng-data-0.2.4").mkdir(parents=True)   # no .complete marker
+        got = espeak_data_path(real, str(base), "0.2.4")
+        assert got is None or (Path(got) / ".complete").exists()
+
+    def test_the_limit_counts_bytes_not_characters(self, tmp_path):
+        from server import espeak_data_path, ESPEAK_PATH_LIMIT
+        tail = len("/") + len("/espeak-ng-data")
+        room = ESPEAK_PATH_LIMIT - 1 - len(str(tmp_path)) - tail   # characters still under the limit
+        if room < 2 or len(str(tmp_path / "s" / "espeak-ng-data-0.2.4")) >= ESPEAK_PATH_LIMIT:
+            pytest.skip("temp dir too long to build a short-in-characters, long-in-bytes path")
+        real = tmp_path / ("é" * room) / "espeak-ng-data"   # few characters, many bytes
+        real.mkdir(parents=True)
+        (real / "phontab").write_bytes(b"x")
+        assert len(str(real)) < ESPEAK_PATH_LIMIT <= len(str(real).encode())
+        base = tmp_path / "s"; base.mkdir()
+        assert espeak_data_path(str(real), str(base), "0.2.4") is not None
+
+    def test_no_base_means_the_long_path(self, tmp_path):
+        from server import espeak_data_path
+        assert espeak_data_path(self._real(tmp_path), None, "0.2.4") is None
+
+
 class TestSoftWrapReflow:
     """A hard-wrapped sentence must read as one unit, not get sliced (with a
     pause) at every newline."""
