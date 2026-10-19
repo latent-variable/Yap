@@ -916,7 +916,7 @@ class TestPocketPadding:
 
     @pytest.mark.slow
     def test_synthesized_pocket_lines_are_not_front_loaded_with_silence(self):
-        from pocket_engine import PocketEngine, LEAD_PAD, TRAIL_PAD
+        from pocket_engine import PocketEngine
         eng = PocketEngine()
         if not eng.available() or not eng.load():
             pytest.skip("Pocket engine not installed")
