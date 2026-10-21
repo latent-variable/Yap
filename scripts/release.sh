@@ -8,17 +8,22 @@
 #       open one reviewable PR in each. Publishes nothing. Review and merge both
 #       PRs through the normal review cycle.
 #
-#   scripts/release.sh publish 0.9.5 [--notes-file F | --notes TEXT] [--yes] [--dry-run]
+#   scripts/release.sh publish 0.9.5 [--notes-file F | --notes TEXT] [--yes] [--no-install] [--dry-run]
 #       The explicit, separate step. Runs only after the Yap version PR is merged.
 #       Refuses unless main's head carries the version AND has the exact tree the
 #       DMG was built from, and the tap PR's cask carries the DMG's checksum. Then
 #       tags that verified main commit, uploads the DMG, and merges the tap PR.
+#       Last, it reinstalls /Applications/Yap.app from the released tree with
+#       install_local.sh, so this Mac runs the version it just published and the
+#       update check stops offering it (--no-install skips that).
 #       Without --yes it prints the plan and stops.
 #
 # --dry-run on either subcommand validates and prints the plan, touching nothing.
 # Both repos may be plain clones or managed worktrees (a worktree's .git is a FILE).
 # The tap is expected at ../homebrew-tap (override with YAP_TAP_DIR).
-# This script deletes nothing (no rm, no trash), so there is no path to validate.
+# This script deletes nothing itself (no rm, no trash), so there is no path to
+# validate. The local reinstall at the end of publish trashes the old app bundle,
+# through install_local.sh and its fixed paths.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,25 +34,26 @@ CASK_REL="Casks/yap.rb"
 
 say() { printf '\n\033[1m[release] %s\033[0m\n' "$1"; }
 die() { echo "release: $*" >&2; exit 1; }
-usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1; }
 
 [ $# -ge 2 ] || usage
 CMD="$1"; VERSION="$2"; shift 2
 case "$CMD" in prepare|publish) ;; *) usage;; esac
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid version: $VERSION"
 
-NOTES_FILE=""; NOTES=""; DRY=0; YES=0
+NOTES_FILE=""; NOTES=""; DRY=0; YES=0; INSTALL=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --notes-file) NOTES_FILE="${2:?}"; shift 2;;
     --notes)      NOTES="${2:?}"; shift 2;;
     --dry-run)    DRY=1; shift;;
     --yes)        YES=1; shift;;
+    --no-install) INSTALL=0; shift;;
     *) die "unknown arg: $1";;
   esac
 done
-if [ "$CMD" = prepare ] && { [ -n "$NOTES_FILE" ] || [ -n "$NOTES" ] || [ "$YES" = 1 ]; }; then
-  die "--notes/--notes-file/--yes belong to 'publish'"
+if [ "$CMD" = prepare ] && { [ -n "$NOTES_FILE" ] || [ -n "$NOTES" ] || [ "$YES" = 1 ] || [ "$INSTALL" = 0 ]; }; then
+  die "--notes/--notes-file/--yes/--no-install belong to 'publish'"
 fi
 if [ -n "$NOTES_FILE" ] && [ ! -f "$NOTES_FILE" ]; then die "no notes file: $NOTES_FILE"; fi
 
@@ -223,6 +229,11 @@ say "publish plan (verified)"
 echo "  tag     $TAG at $MAIN_SHA (origin/main, tree $MAIN_TREE)"
 echo "  asset   $DMG  sha256=$SHA"
 echo "  tap     merge PR $TAP_PR in $TAP_SLUG via pr merge (review gate passed; cask $VERSION, same sha256)"
+if [ "$INSTALL" = 1 ]; then
+  echo "  local   reinstall /Applications/Yap.app from $YAP_WT (install_local.sh; quits and relaunches Yap)"
+else
+  echo "  local   skipped (--no-install)"
+fi
 if [ "$DRY" = 1 ]; then say "DRY RUN: nothing published."; exit 0; fi
 [ "$YES" = 1 ] || { echo "re-run with --yes to publish (release is owner-gated)"; exit 0; }
 
@@ -233,3 +244,20 @@ say "merging tap PR $TAP_PR"
 (cd "$TAP_DIR" && "$PR_TOOL" merge "$TAP_PR_NUM" --repo "$TAP_SLUG" ${TAP_GATE[@]+"${TAP_GATE[@]}"})
 say "done: $TAG published at $MAIN_SHA, cask points at it."
 gh release view "$TAG" -R "$(stamp_get "$STAMP" yap_slug)" --json url -q .url
+
+# The local test build never carries the new version (only this release bumps
+# it), so without a reinstall this Mac keeps running the old number and the
+# update check offers the release it just shipped. Build from the release
+# worktree only when it holds exactly the published tree. The release is already
+# out, so a failure here warns instead of failing the publish.
+if [ "$INSTALL" = 1 ]; then
+  WT_TREE="$(git -C "$YAP_WT" rev-parse 'HEAD^{tree}')"
+  if [ "$WT_TREE" != "$TREE" ] || [ -n "$(git -C "$YAP_WT" status --porcelain --untracked-files=no)" ]; then
+    echo "release: WARNING: $YAP_WT is not the published tree $TREE; skipped the local reinstall. Run scripts/install_local.sh from an up-to-date main." >&2
+  else
+    say "reinstalling the local app at $VERSION"
+    if ! bash "$YAP_WT/scripts/install_local.sh"; then
+      echo "release: WARNING: local reinstall failed; $TAG is published regardless. Rerun scripts/install_local.sh from an up-to-date main." >&2
+    fi
+  fi
+fi

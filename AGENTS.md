@@ -384,7 +384,7 @@ build-from-source.
 
 ```bash
 scripts/release.sh prepare X.Y.Z [--dry-run]   # branch release/vX.Y.Z in Yap AND the tap
-scripts/release.sh publish X.Y.Z [--yes] [--dry-run]
+scripts/release.sh publish X.Y.Z [--yes] [--no-install] [--dry-run]
 ```
 
 - **prepare** creates both branches with `worktree.sh`, bumps the version,
@@ -394,7 +394,11 @@ scripts/release.sh publish X.Y.Z [--yes] [--dry-run]
 - **publish** is the separate, owner-gated step. It refuses unless `origin/main`
   carries the version with the exact tree the DMG was built from, the Yap PR is
   merged, the tap PR's cask has the DMG's sha256, and the tap PR passes `pr merge --dry-run` (as `--self-reviewed`, since the tap is outside the reviewer's coverage). Then it tags that verified
-  commit, uploads the DMG, and merges the tap PR with `pr merge`. Without `--yes` it only prints
+  commit, uploads the DMG, and merges the tap PR with `pr merge`. Last, it runs
+  `install_local.sh` from the release worktree, so this Mac runs the version it
+  just published; a local test build never carries the new number, and the update
+  check would otherwise offer the release it just shipped (`--no-install` skips
+  it; a failed reinstall only warns). Without `--yes` it only prints
   the plan. If main moved after prepare, rerun prepare.
 
 Refresh an existing release's binary in place:
