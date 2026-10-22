@@ -21,6 +21,7 @@ let package = Package(
         ),
         .testTarget(
             name: "YapTests",
+            dependencies: ["Yap"],
             path: "Tests/YapTests"
         )
     ]

@@ -784,7 +784,15 @@ final class AppState: ObservableObject {
     /// An agent gave up waiting (its connection closed): stop its read if it is
     /// the one playing, or take it out of the line.
     func cancelSpeak(_ id: Int) {
-        if activeSpeakID == id { stop(); return }
+        if activeSpeakID == id {
+            bumpGeneration(keepQueue: true)
+            audio.stop()
+            playingText = ""
+            preparing = false
+            status = .idle
+            startNextQueued()
+            return
+        }
         if let i = speakQueue.firstIndex(where: { $0.id == id }) {
             speakQueue.remove(at: i)
             recordOutcome(id, .stopped)
