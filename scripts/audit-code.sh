@@ -88,7 +88,8 @@ done
 
 status=0
 rules=(--config p/javascript --config p/typescript --config p/nodejs --config p/react
-       --config p/expressjs --config p/jwt --config p/python)
+       --config p/expressjs --config p/jwt --config p/python
+       --config p/swift)   # Yap: the app is Swift (only 2 rules in that pack, 2026-10)
 if [[ "$mode" == "--full" ]]; then
   echo "▶ semgrep (every tracked file)"
   semgrep scan --metrics=off --error --quiet "${rules[@]}" . || status=1
