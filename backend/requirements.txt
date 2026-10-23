@@ -14,3 +14,5 @@ jsonschema>=4.0
 # Security minimums for transitive runtime dependencies.
 anyio>=4.14.2
 urllib3>=2.8.0
+h11>=0.16.0
+idna>=3.15

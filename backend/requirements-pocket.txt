@@ -9,3 +9,13 @@
 # CLONING_WEIGHTS_URL in pocket_engine.py). Kyutai's acceptable-use terms travel
 # with the file: clone only voices you have the right to use.
 pocket-tts>=2.1.0
+
+# Security minimums for transitive dependencies (OSV-Scanner, 2026-10-23). The
+# install runs `pip install --upgrade -r` into an existing hd-packages, and pip
+# upgrades a dependency only when it no longer satisfies a requirement, so an
+# older Pocket install keeps a vulnerable one until a floor is named here.
+certifi>=2026.10.19
+httpx2>=2.12.0
+httpcore2>=2.10.0
+scipy>=1.10.0
+torch>=2.13.0
