@@ -15,13 +15,13 @@ enum Notice {
     private(set) static var panel: NSPanel?
     private static var shown = 0
 
-    static func show(_ title: String, detail: String? = nil, seconds: Double = 3) {
+    static func show(_ title: String, seconds: Double = 3) {
         // VoiceOver hears it even if the panel is never looked at.
         NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
-                             userInfo: [.announcement: [title, detail].compactMap { $0 }.joined(separator: ". "),
+                             userInfo: [.announcement: title,
                                         .priority: NSAccessibilityPriorityLevel.high.rawValue])
 
-        let view = NoticeView(title: title, detail: detail)
+        let view = NoticeView(title: title)
         // Measured here, then fixed: with sizingOptions off (we size and place the
         // panel ourselves, see the HUD's note) the host's fittingSize reads 0x0.
         let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 2000, height: 2000))
@@ -69,29 +69,23 @@ enum Notice {
     }
 }
 
+/// One line, the reason only: the notice is up for a few seconds, read at a
+/// glance, so anything longer is not read (Lino, 2026-10-23).
 struct NoticeView: View {
     let title: String
-    let detail: String?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(spacing: 8) {
             Image(systemName: "exclamationmark.bubble.fill")
-                .font(.system(size: 16))
+                .font(.system(size: 15))
                 .foregroundStyle(Brand.violet)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .semibold))
-                if let detail {
-                    Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(width: 280, alignment: .leading)
+            Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.12)))
     }
 }

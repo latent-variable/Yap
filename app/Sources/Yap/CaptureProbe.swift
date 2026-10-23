@@ -147,11 +147,11 @@ enum CaptureProbe {
 
         // A refused press shows a notice next to the pointer, and focus stays
         // in the user's app, or the next press would copy from Yap.
-        Notice.show("Same text as last read", detail: "Press again to replay it.", seconds: 2)
+        Notice.show("Same text as last read", seconds: 2)
         try? await Task.sleep(for: .milliseconds(300))
         let f = Notice.panel?.frame ?? .zero
         let onAScreen = NSScreen.screens.contains { $0.frame.contains(f) }
-        ok("the notice is on screen at a real size", Notice.panel?.isVisible == true && f.width > 100 && f.height > 30 && onAScreen,
+        ok("the notice is on screen at a real size", Notice.panel?.isVisible == true && f.width > 60 && f.height > 20 && onAScreen,
            "(\(Int(f.width))x\(Int(f.height)) at \(Int(f.minX)),\(Int(f.minY)))")
         ok("and the app behind keeps focus", NSWorkspace.shared.frontmostApplication?.processIdentifier == edit.processIdentifier,
            "(front: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"))")

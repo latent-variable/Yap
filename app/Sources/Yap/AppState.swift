@@ -571,8 +571,7 @@ final class AppState: ObservableObject {
                 stop()
                 // Shown even for a stop the user meant: it is how a highlight
                 // that never reached Yap tells apart from "stop".
-                Notice.show("Stopped", detail: "No new text to switch to. To read something else, highlight it and press again.",
-                            seconds: 2)
+                Notice.show("Stopped", seconds: 2)
                 return
             }
             Log.write("trigger while playing, new text -> switch")
@@ -594,9 +593,7 @@ final class AppState: ObservableObject {
            lastWarningTime == 0 || now - lastWarningTime >= 4 {
             lastWarningTime = now
             Log.write("read guard: capture identical to last read -> warn (possible wrong window)")
-            refusePress("Same text as last read",
-                        detail: "Press again to replay it. If you highlighted something new, Yap did not get it: click into that window and highlight it again.",
-                        idleAfter: 4)
+            refusePress("Same text as last read", idleAfter: 4)
             return
         }
         lastWarningTime = 0
@@ -606,13 +603,11 @@ final class AppState: ObservableObject {
             // Distinguish "nothing selected" from "can't capture because no permission".
             if prefs.readSource != .clipboard && !Permissions.axTrusted {
                 Log.write("read aborted: no capture and Accessibility not granted")
-                refusePress("Grant Accessibility to capture",
-                            detail: "Allow Yap in System Settings, Privacy & Security, Accessibility.", idleAfter: 3)
+                refusePress("Grant Accessibility to capture", idleAfter: 3)
                 Permissions.requestAX()
             } else {
                 Log.write("read aborted: no text captured (source=\(prefs.readSource.rawValue))")
-                refusePress("No text captured", detail: "Highlight the text, then press the shortcut again.",
-                            idleAfter: 3)
+                refusePress("No text captured", idleAfter: 3)
             }
             return
         }
@@ -953,10 +948,10 @@ final class AppState: ObservableObject {
     /// A read press that will not start a read: say so in the menu bar, with the
     /// fail chime, and next to the pointer (`Notice`), which still shows with
     /// sounds muted.
-    private func refusePress(_ title: String, detail: String? = nil, idleAfter: Double) {
+    private func refusePress(_ title: String, idleAfter: Double) {
         status = .error(title)
         playFailCue()
-        Notice.show(title, detail: detail)
+        Notice.show(title)
         resetToIdle(after: idleAfter)
     }
 
