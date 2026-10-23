@@ -284,6 +284,11 @@ bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/hudtest.txt -
 # runs the clipboard capture. Signed bundle through `open`, needs an unlocked
 # screen, takes the keyboard for a few seconds. --legacy is the control.
 bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/readbutton.txt --args --readbuttontest [--legacy]; cat /tmp/readbutton.txt
+# In an app where ⌘C copies nothing (Claude Code fullscreen; TextEdit stands in),
+# is a fresh clipboard read without the doomed ⌘C, does one working ⌘C clear the
+# app's record, and does the refusal notice show without taking focus? Same
+# launch rules as above. --legacy is the control.
+bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/capturetest.txt --args --capturetest [--legacy]; cat /tmp/capturetest.txt
 
 # backend robustness suite — fast set (every code path, one cheap case each)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q
@@ -443,6 +448,11 @@ lands), but iTerm's copy-on-select means the selection is already on the
 clipboard, so the fallback reads it. Tradeoff, documented in the UI + PRIVACY:
 in Auto, a read with nothing selected can speak a stale clipboard. `auto` and
 `selection` both need Accessibility; only `clipboard` needs none.
+
+**In Auto, a ⌘C that never works in an app is skipped, only on a fresh
+clipboard** (Claude Code fullscreen), and **a refused read press shows a
+`Notice` that must never take focus.** Rules and why: `docs/ARCHITECTURE.md`,
+*Read pipeline*. Test: `--capturetest`.
 
 ## Services menu ("Read with Yap")
 

@@ -50,6 +50,11 @@ enum UIShotProbe {
                     if await shoot(view, width: MenuContent.width, height: nil, look: look,
                                    to: out.appending(path: "menu-\(tab.rawValue)-\(suffix).png")) { written += 1 }
                 }
+                let notice = NoticeView(title: "Same text as last read",
+                                        detail: "Press again to replay it. If you highlighted something new, Yap did not get it: click into that window and highlight it again.")
+                    .padding(20).background(Color(nsColor: .windowBackgroundColor))
+                if await shoot(notice, width: 380, height: nil, look: look,
+                               to: out.appending(path: "notice-\(suffix).png")) { written += 1 }
                 let sheet = CloneVoiceSheet().environmentObject(state).environmentObject(prefs)
                     .background(Color(nsColor: .windowBackgroundColor))
                 if await shoot(sheet, width: 480, height: nil, look: look,

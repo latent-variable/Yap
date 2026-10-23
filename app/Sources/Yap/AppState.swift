@@ -518,11 +518,9 @@ final class AppState: ObservableObject {
         if !wasPlaying, !backend.kokoroFilesOnDisk, !backend.hdInstalledOnDisk {
             Log.write("read aborted: no voice model installed (Settings ▸ Models)")
             // A launch download that failed (offline, say) gets another try here.
-            status = .error(downloadVoiceIfMissing("read pressed")
+            refusePress(downloadVoiceIfMissing("read pressed")
                 ? "Voice still downloading. Try again when it finishes"
-                : "Voice not downloaded. Open the Yap menu ▸ Set up")
-            playFailCue()
-            resetToIdle(after: 5)
+                : "Voice not downloaded. Open the Yap menu ▸ Set up", idleAfter: 5)
             return
         }
 
@@ -534,6 +532,7 @@ final class AppState: ObservableObject {
         switch prefs.readSource {
         case .clipboard:
             let pb = NSPasteboard.general.string(forType: .string) ?? ""
+            TextCapture.noteClipboardRead()
             capture = Capture(text: pb, method: .clipboard)
         case .selection:
             capture = await TextCapture.capture(mode: prefs.captureMode)
@@ -544,11 +543,12 @@ final class AppState: ObservableObject {
             // for copy-on-select terminals, where selecting already put the text
             // there; the tradeoff is that with nothing selected it may read a
             // stale clipboard (use "Selected text" for strict selection-only).
-            let grabbed = await TextCapture.capture(mode: prefs.captureMode)
+            let grabbed = await TextCapture.capture(mode: prefs.captureMode, allowCopySkip: true)
             if !grabbed.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 capture = grabbed
             } else {
                 let pb = NSPasteboard.general.string(forType: .string) ?? ""
+                Log.write("auto: no live selection, reading the clipboard (\(pb.count) chars)")
                 capture = Capture(text: pb, method: .clipboard)
             }
         }
@@ -569,6 +569,10 @@ final class AppState: ObservableObject {
             if trimmed.isEmpty || cleaned == playingText {
                 Log.write("trigger while playing, no new text -> stop")
                 stop()
+                // Shown even for a stop the user meant: it is how a highlight
+                // that never reached Yap tells apart from "stop".
+                Notice.show("Stopped", detail: "No new text to switch to. To read something else, highlight it and press again.",
+                            seconds: 2)
                 return
             }
             Log.write("trigger while playing, new text -> switch")
@@ -590,9 +594,9 @@ final class AppState: ObservableObject {
            lastWarningTime == 0 || now - lastWarningTime >= 4 {
             lastWarningTime = now
             Log.write("read guard: capture identical to last read -> warn (possible wrong window)")
-            status = .error("Same text as last read — click the window, then press again to read anyway")
-            playFailCue()
-            resetToIdle(after: 4)
+            refusePress("Same text as last read",
+                        detail: "Press again to replay it. If you highlighted something new, Yap did not get it: click into that window and highlight it again.",
+                        idleAfter: 4)
             return
         }
         lastWarningTime = 0
@@ -602,14 +606,14 @@ final class AppState: ObservableObject {
             // Distinguish "nothing selected" from "can't capture because no permission".
             if prefs.readSource != .clipboard && !Permissions.axTrusted {
                 Log.write("read aborted: no capture and Accessibility not granted")
-                status = .error("Grant Accessibility to capture")
+                refusePress("Grant Accessibility to capture",
+                            detail: "Allow Yap in System Settings, Privacy & Security, Accessibility.", idleAfter: 3)
                 Permissions.requestAX()
             } else {
                 Log.write("read aborted: no text captured (source=\(prefs.readSource.rawValue))")
-                status = .error("No text captured")
+                refusePress("No text captured", detail: "Highlight the text, then press the shortcut again.",
+                            idleAfter: 3)
             }
-            playFailCue()
-            resetToIdle(after: 3)
             return
         }
 
@@ -944,6 +948,16 @@ final class AppState: ObservableObject {
     private func playFailCue() {
         guard !prefs.muteAllSounds, prefs.failChime else { return }
         NSSound(named: "Funk")?.play()
+    }
+
+    /// A read press that will not start a read: say so in the menu bar, with the
+    /// fail chime, and next to the pointer (`Notice`), which still shows with
+    /// sounds muted.
+    private func refusePress(_ title: String, detail: String? = nil, idleAfter: Double) {
+        status = .error(title)
+        playFailCue()
+        Notice.show(title, detail: detail)
+        resetToIdle(after: idleAfter)
     }
 
     /// What to show while waiting for first audio — flags the Pocket cold-load.

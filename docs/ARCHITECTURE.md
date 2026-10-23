@@ -17,6 +17,7 @@ behind one int16-PCM contract.
 | History log (spoken + dictated, JSON-backed) | `History.swift` + `Views/SettingsView.swift` (History tab) |
 | Global hotkey (Carbon) | `HotKey.swift` |
 | Text capture (AX + clipboard) | `TextCapture.swift` |
+| Refused-read notice next to the pointer (shows with sounds muted, never takes focus) | `Notice.swift` |
 | Accessibility permission | `Permissions.swift` |
 | Preprocessing / cleanup | `Preprocess.swift` |
 | Backend HTTP client | `BackendClient.swift` |
@@ -42,6 +43,7 @@ behind one int16-PCM contract.
 | Headless dictation probes (`--dictbench`, `--dictstop`, `--dictending`) | `DictationProbe.swift` |
 | HUD drag probe (`--hudtest`, real mouse events against the real panel) | `HUDProbe.swift` |
 | Read-button capture probe (`--readbuttontest`, Clipboard capture while Yap is frontmost, against TextEdit) | `ReadButtonProbe.swift` |
+| Copy-skip probe (`--capturetest`, Auto capture in an app where ⌘C copies nothing, against TextEdit; plus the notice) | `CaptureProbe.swift` |
 | Fresh-install probe (`--firstrun`, empty fake home, real Kokoro download and reload) | `FirstRunProbe.swift` |
 | Paste transcript at cursor | `TextInsert.swift` |
 | Optional speech-filler cleanup | `Fillers.swift` |
@@ -63,13 +65,30 @@ behind one int16-PCM contract.
 
 ```
 hotkey ⌘⇧R
-  → capture (AX selected-text → clipboard fallback, clipboard restored)
+  → capture (AX selected-text → ⌘C, clipboard restored; Auto then reads the clipboard)
   → preprocess (profile options + custom regex rules)
   → ensure backend warm
   → POST /synthesize (stream)
   → backend: chunk (paragraph → sentence, abbrev-aware) → Kokoro / Pocket → int16 PCM
   → AudioPlayer: int16 → float buffers → AVAudioPlayerNode → TimePitch → mixer
 ```
+
+**Why a ⌘C is sometimes skipped.** The read log (Oct 2026) showed every press
+from Claude Code's fullscreen view failing the ⌘C: it draws its own highlight,
+so neither AX nor iTerm sees a selection, and three ⌘C attempts cost ~650 ms
+before Auto fell back to the clipboard, where Claude Code had already copied the
+highlight. `TextCapture` now keeps a per-app record for the run and, in Auto
+only, skips the ⌘C when an app has never once copied (3+ misses) and the
+clipboard changed since the last press. Requiring a fresh clipboard means a
+wrongly learned app still gets its ⌘C whenever there is nothing new to read,
+and one success takes it off the list. Each capture logs the target app,
+whether the clipboard changed, and its duration in ms.
+
+A refused press (same text as last read, nothing captured, a press that stopped
+instead of switching) used to show only in the menu-bar status and the fail
+chime; with sounds muted it looked like nothing happened, and the log showed
+the user re-highlighting and pressing again. `Notice` puts the reason next to
+the pointer in a panel that never takes focus.
 
 A generation counter in `AppState` cancels a stale stream when a new read starts (configurable via "stop on new trigger").
 
