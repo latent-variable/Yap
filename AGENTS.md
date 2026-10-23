@@ -272,6 +272,9 @@ CFFIXED_USER_HOME=$(mktemp -d) "$(swift build --show-bin-path)/Yap" --firstrun
 # Render the menu (both halves) and every Settings pane, light + dark, to PNGs.
 # Uses sample history, never yours; titled windows need Screen Recording for the
 # terminal, else they fall back to an offscreen draw without window chrome.
+# It opens every Settings pane ON SCREEN and takes focus from whatever Lino is
+# doing: run it only when the change touches the menu or a Settings pane, never
+# to look at one small view (Lino, 2026-10-23).
 "$(swift build --show-bin-path)/Yap" --uishot /tmp/yap-ui
 # Can the dictation HUD be dragged, including while the transcript grows, and
 # does it come back where it was left without ever resting off screen? Posts
