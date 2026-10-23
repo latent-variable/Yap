@@ -1,0 +1,9 @@
+# Known vulnerabilities we have decided to carry, read by the dependency gate
+# (osv-scanner scan source -r --config osv-scanner.toml .).
+# Every entry names WHY it does not reach us, and expires: when ignoreUntil passes,
+# the gate fails again and someone looks at it fresh. Fixing beats ignoring.
+#
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# ignoreUntil = 2027-01-15T00:00:00Z   # at most 90 days out
+# reason = "which package pulls it, why the vulnerable path is unreachable here, what removes it"

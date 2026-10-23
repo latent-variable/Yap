@@ -293,6 +293,9 @@ bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/readbutton.tx
 # launch rules as above. --legacy is the control.
 bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/capturetest.txt --args --capturetest [--legacy]; cat /tmp/capturetest.txt
 
+# security gate (CI runs it on every PR: .github/workflows/security.yml)
+bash scripts/audit-deps.sh && bash scripts/audit-code.sh
+
 # backend robustness suite — fast set (every code path, one cheap case each)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q
 # ...and the full net, incl. scale synthesis + Pocket/torch + CoreML (~17 min, pegs the CPU)

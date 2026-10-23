@@ -1,0 +1,6 @@
+# Paths the code gate (scripts/audit-code.sh) does not scan: what is not our code.
+# Semgrep also skips everything .gitignore names. One reason per line group.
+node_modules/
+dist/
+build/
+.venv/

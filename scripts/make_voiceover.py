@@ -185,6 +185,7 @@ def main() -> int:
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw),
                "-filter:a", ",".join(chain), str(OUT_WAV)]
         try:
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args -- argv list, no shell; the env is the developer's own, running this local script
             subprocess.run(cmd, check=True)
         except (OSError, subprocess.CalledProcessError) as e:
             print(f"[voiceover] speed pass failed ({e}); ffmpeg is required for "
