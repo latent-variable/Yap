@@ -532,6 +532,7 @@ final class AppState: ObservableObject {
         switch prefs.readSource {
         case .clipboard:
             let pb = NSPasteboard.general.string(forType: .string) ?? ""
+            TextCapture.noteClipboardRead()
             capture = Capture(text: pb, method: .clipboard)
         case .selection:
             capture = await TextCapture.capture(mode: prefs.captureMode)

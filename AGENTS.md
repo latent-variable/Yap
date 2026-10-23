@@ -449,17 +449,10 @@ clipboard, so the fallback reads it. Tradeoff, documented in the UI + PRIVACY:
 in Auto, a read with nothing selected can speak a stale clipboard. `auto` and
 `selection` both need Accessibility; only `clipboard` needs none.
 
-**In Auto, a ⌘C that never works in an app is skipped, but only on a fresh
-clipboard** (`TextCapture.shouldSkipCopy`). Claude Code's fullscreen view draws
-its own highlight, so AX and ⌘C never see it (~650 ms wasted per press), while
-it copies the highlight to the clipboard itself. Skip only when the app has 3+
-misses and no success this run **and** the clipboard changed since the last
-press; an unchanged clipboard still gets the ⌘C, which is how a wrongly learned
-app recovers. Never in `selection`. Test: `--capturetest` (`--legacy` control).
-
-**A read press that does not start a read says so next to the pointer**
-(`Notice`, via `AppState.refusePress`), sounds muted or not. The panel must never
-take focus or the mouse, or the next press copies from Yap.
+**In Auto, a ⌘C that never works in an app is skipped, only on a fresh
+clipboard** (Claude Code fullscreen), and **a refused read press shows a
+`Notice` that must never take focus.** Rules and why: `docs/ARCHITECTURE.md`,
+*Read pipeline*. Test: `--capturetest`.
 
 ## Services menu ("Read with Yap")
 

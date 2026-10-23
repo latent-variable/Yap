@@ -72,6 +72,13 @@ enum TextCapture {
         var worked = false
     }
 
+    /// A read that takes the clipboard without a capture (the Clipboard read
+    /// source) still moves the freshness baseline, so a copy it already read is
+    /// not taken for a fresh one after switching back to Auto.
+    @MainActor static func noteClipboardRead() {
+        lastSeenChangeCount = NSPasteboard.general.changeCount
+    }
+
     /// Per app (bundle id), this run only. A restart starts every app fresh.
     @MainActor private static var copyRecords: [String: CopyRecord] = [:]
 
