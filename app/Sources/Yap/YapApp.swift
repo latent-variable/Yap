@@ -80,6 +80,9 @@ enum YapMain {
         if CommandLine.arguments.contains("--readbuttontest") {
             ReadButtonProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
         }
+        if CommandLine.arguments.contains("--capturetest") {
+            CaptureProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
+        }
         if CommandLine.arguments.contains("--hudtest") {
             HUDProbe.run(legacy: CommandLine.arguments.contains("--legacy"))
         }

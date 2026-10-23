@@ -212,3 +212,8 @@ persists through every future update.
 # runtime log of every capture attempt:
 cat ~/Library/Application\ Support/Yap/yap.log
 ```
+
+The log stays on this Mac. Per capture it records which app was in front (its
+bundle id, e.g. `com.googlecode.iterm2`), whether the clipboard changed since the
+last press, how long the capture took and how many characters it got. Never the
+text itself.

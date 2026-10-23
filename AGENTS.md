@@ -284,6 +284,11 @@ bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/hudtest.txt -
 # runs the clipboard capture. Signed bundle through `open`, needs an unlocked
 # screen, takes the keyboard for a few seconds. --legacy is the control.
 bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/readbutton.txt --args --readbuttontest [--legacy]; cat /tmp/readbutton.txt
+# In an app where ⌘C copies nothing (Claude Code fullscreen; TextEdit stands in),
+# is a fresh clipboard read without the doomed ⌘C, does one working ⌘C clear the
+# app's record, and does the refusal notice show without taking focus? Same
+# launch rules as above. --legacy is the control.
+bash scripts/build_app.sh && open -n -W dist/Yap.app --stdout /tmp/capturetest.txt --args --capturetest [--legacy]; cat /tmp/capturetest.txt
 
 # backend robustness suite — fast set (every code path, one cheap case each)
 cd backend && "$HOME/Library/Application Support/Yap/venv/bin/python" -m pytest tests/ -q
@@ -443,6 +448,18 @@ lands), but iTerm's copy-on-select means the selection is already on the
 clipboard, so the fallback reads it. Tradeoff, documented in the UI + PRIVACY:
 in Auto, a read with nothing selected can speak a stale clipboard. `auto` and
 `selection` both need Accessibility; only `clipboard` needs none.
+
+**In Auto, a ⌘C that never works in an app is skipped, but only on a fresh
+clipboard** (`TextCapture.shouldSkipCopy`). Claude Code's fullscreen view draws
+its own highlight, so AX and ⌘C never see it (~650 ms wasted per press), while
+it copies the highlight to the clipboard itself. Skip only when the app has 3+
+misses and no success this run **and** the clipboard changed since the last
+press; an unchanged clipboard still gets the ⌘C, which is how a wrongly learned
+app recovers. Never in `selection`. Test: `--capturetest` (`--legacy` control).
+
+**A read press that does not start a read says so next to the pointer**
+(`Notice`, via `AppState.refusePress`), sounds muted or not. The panel must never
+take focus or the mouse, or the next press copies from Yap.
 
 ## Services menu ("Read with Yap")
 

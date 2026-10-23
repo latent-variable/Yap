@@ -180,6 +180,24 @@ enum Selftest {
                 TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
                 "one two . three")
 
+        print("Capture — skip a ⌘C that never works in an app")
+        do {
+            typealias R = TextCapture.CopyRecord
+            func skip(_ r: R?, _ changed: Bool?) -> String { TextCapture.shouldSkipCopy(r, clipboardChanged: changed) ? "skip" : "copy" }
+            var claude: R? = nil
+            for _ in 0..<2 { claude = TextCapture.noting(claude, worked: false) }
+            checkEq("two misses are not enough", skip(claude, true), "copy")
+            claude = TextCapture.noting(claude, worked: false)
+            checkEq("three misses and a fresh clipboard skip", skip(claude, true), "skip")
+            checkEq("an unchanged clipboard still tries ⌘C", skip(claude, false), "copy")
+            checkEq("an unknown clipboard still tries ⌘C", skip(claude, nil), "copy")
+            checkEq("an app never tried is not skipped", skip(nil, true), "copy")
+            var learnedWrong = claude
+            learnedWrong = TextCapture.noting(learnedWrong, worked: true)
+            for _ in 0..<10 { learnedWrong = TextCapture.noting(learnedWrong, worked: false) }
+            checkEq("one success keeps an app off the skip list", skip(learnedWrong, true), "copy")
+        }
+
         print("HUD placement — a remembered spot never leaves the screen")
         let mainScreen = CGRect(x: 0, y: 0, width: 2560, height: 1400)
         let sideScreen = CGRect(x: -1080, y: 0, width: 1080, height: 1900)

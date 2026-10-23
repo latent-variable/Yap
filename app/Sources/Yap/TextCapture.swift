@@ -17,28 +17,97 @@ enum TextCapture {
     /// pasteboard access stays on the main thread; the clipboard fallback's
     /// up-to-0.8s wait yields the actor between polls (Task.sleep) instead of
     /// blocking it, so a slow or failed ⌘C never freezes the UI.
+    ///
+    /// `allowCopySkip`: the caller reads the clipboard itself when this comes
+    /// back empty (the Auto read source), so a ⌘C that cannot work in this app
+    /// may be skipped. See `shouldSkipCopy`.
     @MainActor
-    static func capture(mode: CaptureMode) async -> Capture {
+    static func capture(mode: CaptureMode, allowCopySkip: Bool = false) async -> Capture {
+        let started = ProcessInfo.processInfo.systemUptime
         let trusted = Permissions.axTrusted
-        Log.write("capture start mode=\(mode.rawValue) axTrusted=\(trusted)")
+        let app = targetAppID()
+        let pb = NSPasteboard.general
+        let clipboardChanged = lastSeenChangeCount.map { pb.changeCount != $0 }
+        Log.write("capture start mode=\(mode.rawValue) axTrusted=\(trusted) app=\(app ?? "unknown")"
+                  + " clipboardChanged=\(clipboardChanged.map { String($0) } ?? "unknown")")
+        let skipCopy = allowCopySkip
+            && shouldSkipCopy(app.flatMap { copyRecords[$0] }, clipboardChanged: clipboardChanged)
+        func viaCopy() async -> String? {
+            if skipCopy {
+                Log.write("clipboard: skipped ⌘C, it has never worked in \(app ?? "this app") this run"
+                          + " and the clipboard has a new copy")
+                return nil
+            }
+            return await viaClipboardAsync()
+        }
         let result: Capture
         switch mode {
         case .accessibility:
             result = viaAccessibility().map { Capture(text: $0, method: .accessibility) }
                 ?? Capture(text: "", method: .none)
         case .clipboard:
-            result = await viaClipboardAsync().map { Capture(text: $0, method: .clipboard) }
+            result = await viaCopy().map { Capture(text: $0, method: .clipboard) }
                 ?? Capture(text: "", method: .none)
         case .auto:
             if let t = viaAccessibility(), !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result = Capture(text: t, method: .accessibility)
             } else {
-                result = await viaClipboardAsync().map { Capture(text: $0, method: .clipboard) }
+                result = await viaCopy().map { Capture(text: $0, method: .clipboard) }
                     ?? Capture(text: "", method: .none)
             }
         }
-        Log.write("capture done method=\(result.method.rawValue) chars=\(result.text.count)")
+        // After the clipboard restore, which itself advances the count: the next
+        // press compares against this, so only a copy made since counts as new.
+        lastSeenChangeCount = pb.changeCount
+        let ms = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
+        Log.write("capture done method=\(result.method.rawValue) chars=\(result.text.count) ms=\(ms)")
         return result
+    }
+
+    // MARK: - apps where ⌘C never works
+
+    /// How a synthetic ⌘C has done in one app this run.
+    struct CopyRecord: Equatable {
+        var fails = 0
+        var worked = false
+    }
+
+    /// Per app (bundle id), this run only. A restart starts every app fresh.
+    @MainActor private static var copyRecords: [String: CopyRecord] = [:]
+
+    /// The pasteboard's change count when the last capture finished.
+    @MainActor private static var lastSeenChangeCount: Int?
+
+    /// Skip the ⌘C only when BOTH hold:
+    /// - it has failed in this app at least 3 times and never once worked this
+    ///   run (Claude Code's fullscreen view, which draws its own highlight, so
+    ///   neither macOS nor iTerm ever sees a selection to copy), and
+    /// - the clipboard changed since the last press, so a fresh copy is waiting
+    ///   (that view copies a highlight to the clipboard by itself).
+    /// An unchanged or unknown clipboard still gets the ⌘C: there is nothing
+    /// fresh to read instead, and an app learned wrongly gets its chance to
+    /// work again, which clears its record for good.
+    nonisolated static func shouldSkipCopy(_ record: CopyRecord?, clipboardChanged: Bool?) -> Bool {
+        guard let record, !record.worked, record.fails >= 3 else { return false }
+        return clipboardChanged == true
+    }
+
+    /// Pure update so `--selftest` can drive it.
+    nonisolated static func noting(_ record: CopyRecord?, worked: Bool) -> CopyRecord {
+        var r = record ?? CopyRecord()
+        if worked { r.worked = true } else { r.fails += 1 }
+        return r
+    }
+
+    @MainActor private static func noteCopy(worked: Bool) {
+        guard let app = targetAppID() else { return }
+        copyRecords[app] = noting(copyRecords[app], worked: worked)
+    }
+
+    /// Bundle id of the app whose selection a capture reads.
+    @MainActor private static func targetAppID() -> String? {
+        guard let pid = targetPID() else { return nil }
+        return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? "pid:\(pid)"
     }
 
     /// Full state dump for the `--diag` CLI and the Diagnostics tab.
@@ -277,6 +346,7 @@ enum TextCapture {
             }
         }
 
+        noteCopy(worked: changed)
         let text = changed ? pb.string(forType: .string) : nil
         if !changed {
             Log.write(Permissions.axTrusted
