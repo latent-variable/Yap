@@ -180,6 +180,25 @@ enum Selftest {
                 TranscriptStitch.merge(refined: "one two .", partial: "one two . three"),
                 "one two . three")
 
+        print("Read press — the menu button reads the clipboard, again and again")
+        do {
+            func fb(_ src: ReadSource, _ forced: Bool) -> String { AppState.fallsBackToClipboard(src, forced: forced) ? "clipboard" : "nothing" }
+            checkEq("menu press, Selected text, nothing selected", fb(.selection, true), "clipboard")
+            checkEq("hotkey, Selected text, nothing selected", fb(.selection, false), "nothing")
+            checkEq("hotkey, Auto, nothing selected", fb(.auto, false), "clipboard")
+            checkEq("menu press, Auto, nothing selected", fb(.auto, true), "clipboard")
+            func rep(_ forced: Bool, _ playing: Bool, _ same: Bool, _ since: Double?) -> String {
+                AppState.refusesRepeat(forced: forced, wasPlaying: playing, sameAsLast: same, secondsSinceWarning: since) ? "refuse" : "read"
+            }
+            checkEq("menu press reads the same text again", rep(true, false, true, nil), "read")
+            checkEq("menu press right after a warning reads", rep(true, false, true, 10), "read")
+            checkEq("hotkey repeat is refused", rep(false, false, true, nil), "refuse")
+            checkEq("hotkey repeat within 4s of the warning reads", rep(false, false, true, 1), "read")
+            checkEq("hotkey repeat 4s after the warning is refused again", rep(false, false, true, 4), "refuse")
+            checkEq("hotkey with new text reads", rep(false, false, false, nil), "read")
+            checkEq("hotkey while playing is not refused here", rep(false, true, true, nil), "read")
+        }
+
         print("Capture — skip a ⌘C that never works in an app")
         do {
             typealias R = TextCapture.CopyRecord
