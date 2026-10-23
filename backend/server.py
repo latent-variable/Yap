@@ -507,6 +507,7 @@ def _load_or_create_token() -> Optional[str]:
             # pre-created it (e.g. a custom YAP_AUTH_TOKEN_FILE in a shared dir)
             # to read or fix the secret. Recreate it 0600 instead of trusting it.
             if p.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- logs the file's path, never its contents
                 log.warning("auth: token file %s has loose perms; recreating 0600", p)
                 p.unlink()
             else:
@@ -524,6 +525,7 @@ def _load_or_create_token() -> Optional[str]:
     except OSError as e:
         # Fail open on the Bearer check rather than bricking TTS, but the Origin
         # guard below still runs, so CSRF stays closed even here.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- an OSError carries errno and path, never the file's contents
         log.warning("auth: could not load/create token (%s); Bearer auth disabled", e)
         return None
 
