@@ -497,9 +497,33 @@ final class AppState: ObservableObject {
 
     // MARK: - read pipeline
 
-    func triggerRead() { Task { await runRead() } }
+    /// `forced` is the menu's play button: a press made on purpose, with Yap in
+    /// front. It reads the selection if there is one, else the clipboard, in any
+    /// read source, and reads the same text again as often as it is pressed. The
+    /// hotkey keeps both guards: it can fire at a window that never got focus.
+    func triggerRead(forced: Bool = false) { Task { await runRead(forced: forced) } }
 
-    private func runRead() async {
+    /// Whether a press tries the live selection first. The Clipboard source
+    /// skips it, except on a menu press with Accessibility granted: the
+    /// selection gets priority there too.
+    nonisolated static func capturesSelection(_ source: ReadSource, forced: Bool, axTrusted: Bool) -> Bool {
+        source != .clipboard || (forced && axTrusted)
+    }
+
+    /// Whether an empty capture falls back to reading the clipboard.
+    nonisolated static func fallsBackToClipboard(_ source: ReadSource, forced: Bool) -> Bool {
+        source == .auto || forced
+    }
+
+    /// Whether a capture identical to the last read is refused with a warning
+    /// instead of read. A second press within 4s overrides it.
+    nonisolated static func refusesRepeat(forced: Bool, wasPlaying: Bool, sameAsLast: Bool,
+                                          secondsSinceWarning: Double?) -> Bool {
+        guard !forced, !wasPlaying, sameAsLast else { return false }
+        return secondsSinceWarning.map { $0 >= 4 } ?? true
+    }
+
+    private func runRead(forced: Bool = false) async {
         // Ignore a re-trigger fired during the (now async) capture window — the
         // first capture is still in flight; a second would just race it. Checks
         // TextCapture.isCapturing too: a trigger while already reading keeps
@@ -529,14 +553,14 @@ final class AppState: ObservableObject {
         if !wasPlaying { status = .capturing }
 
         let capture: Capture
-        switch prefs.readSource {
-        case .clipboard:
+        let source = prefs.readSource
+        if !Self.capturesSelection(source, forced: forced, axTrusted: Permissions.axTrusted) {
             let pb = NSPasteboard.general.string(forType: .string) ?? ""
             TextCapture.noteClipboardRead()
             capture = Capture(text: pb, method: .clipboard)
-        case .selection:
+        } else if !Self.fallsBackToClipboard(source, forced: forced) {
             capture = await TextCapture.capture(mode: prefs.captureMode)
-        case .auto:
+        } else {
             // Grab the live selection (AX / synthetic ⌘C). If the app won't hand
             // it over — iTerm exposes no AX selection and drops/blocks a synthetic
             // ⌘C — fall back to whatever's on the clipboard. That's exactly right
@@ -548,7 +572,7 @@ final class AppState: ObservableObject {
                 capture = grabbed
             } else {
                 let pb = NSPasteboard.general.string(forType: .string) ?? ""
-                Log.write("auto: no live selection, reading the clipboard (\(pb.count) chars)")
+                Log.write("\(forced ? "menu" : "auto"): no live selection, reading the clipboard (\(pb.count) chars)")
                 capture = Capture(text: pb, method: .clipboard)
             }
         }
@@ -587,10 +611,12 @@ final class AppState: ObservableObject {
         // flag: synchronous and immune to overlapping triggers.
         // lastWarningTime == 0 means "never warned" — check it explicitly rather
         // than rely on now - 0 >= 4, which would be false in the first 4s of
-        // uptime (just-booted edge).
+        // uptime (just-booted edge). A menu press is never guarded: Yap is in
+        // front, and reading the same thing again is what the press asks for.
         let now = ProcessInfo.processInfo.systemUptime
-        if !wasPlaying, !trimmed.isEmpty, cleaned == lastReadCleaned,
-           lastWarningTime == 0 || now - lastWarningTime >= 4 {
+        if !trimmed.isEmpty,
+           Self.refusesRepeat(forced: forced, wasPlaying: wasPlaying, sameAsLast: cleaned == lastReadCleaned,
+                              secondsSinceWarning: lastWarningTime == 0 ? nil : now - lastWarningTime) {
             lastWarningTime = now
             Log.write("read guard: capture identical to last read -> warn (possible wrong window)")
             refusePress("Same text as last read", idleAfter: 4)

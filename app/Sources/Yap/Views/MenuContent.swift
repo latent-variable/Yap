@@ -178,7 +178,7 @@ struct MenuContent: View {
             // Who is speaking, and the big button.
             HStack(spacing: 12) {
                 Button {
-                    if reading { state.togglePlayPause() } else { state.triggerRead() }
+                    if reading { state.togglePlayPause() } else { state.triggerRead(forced: true) }
                 } label: {
                     Image(systemName: state.status == .reading ? "pause.fill" : "play.fill")
                         .offset(x: state.status == .reading ? 0 : 2)
@@ -187,7 +187,7 @@ struct MenuContent: View {
                 .buttonStyle(OrbButtonStyle(gradient: Brand.voiceGradient, glow: Brand.violet))
                 .accessibilityLabel(state.status == .reading ? "Pause"
                                     : state.status == .paused ? "Resume" : "Read selection")
-                .help(reading ? "Pause or resume" : "Read the selected text aloud")
+                .help(reading ? "Pause or resume" : "Read the selected text, or the clipboard if nothing is selected")
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(voiceHeadline).font(Brand.title(15)).lineLimit(1)

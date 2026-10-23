@@ -453,7 +453,10 @@ Auto exists for apps that expose **no** AX selection **and** block the synthetic
 lands), but iTerm's copy-on-select means the selection is already on the
 clipboard, so the fallback reads it. Tradeoff, documented in the UI + PRIVACY:
 in Auto, a read with nothing selected can speak a stale clipboard. `auto` and
-`selection` both need Accessibility; only `clipboard` needs none.
+`selection` both need Accessibility; only `clipboard` needs none. These modes
+govern the **hotkey**. The menu's play button is a deliberate press, so it reads
+the selection (when Accessibility allows), else the clipboard, in every mode, and never refuses a repeat
+(`triggerRead(forced:)`; Lino, 2026-10-23).
 
 **In Auto, a ⌘C that never works in an app is skipped, only on a fresh
 clipboard** (Claude Code fullscreen), and **a refused read press shows a

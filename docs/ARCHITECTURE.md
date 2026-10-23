@@ -90,6 +90,13 @@ chime; with sounds muted it looked like nothing happened, and the log showed
 the user re-highlighting and pressing again. `Notice` puts the reason next to
 the pointer in a panel that never takes focus.
 
+The "same text as last read" refusal exists for the hotkey, which can fire at a
+window that never received focus and recapture the previous selection. The
+menu's play button skips it: Yap is in front and the press is deliberate, so it
+reads the selection, else the clipboard, in every read source, and reads
+the same text again on every press. That makes it the one-click way to replay
+whatever was last copied from anywhere.
+
 A generation counter in `AppState` cancels a stale stream when a new read starts (configurable via "stop on new trigger").
 
 The **Services menu** ("Read with Yap") is a second entry point: macOS hands the selected text straight to `ServiceProvider`, which calls `AppState.readAloud(_:)` — skipping capture, joining the pipeline at preprocess.
