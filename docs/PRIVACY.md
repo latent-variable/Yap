@@ -175,7 +175,9 @@ It's a small quirk you get used to.
 
 **The menu's play button reads your clipboard in every mode.** Pressing it with
 nothing selected reads whatever you last copied, again on every press. That is
-the point of the button. The shortcut keeps the mode you chose.
+the point of the button. With Accessibility granted it tries your selection
+first, even in Clipboard mode (the same ⌘C round-trip, clipboard restored). The
+shortcut keeps the mode you chose.
 
 ## The no-permission option
 

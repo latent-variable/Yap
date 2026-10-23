@@ -187,6 +187,12 @@ enum Selftest {
             checkEq("hotkey, Selected text, nothing selected", fb(.selection, false), "nothing")
             checkEq("hotkey, Auto, nothing selected", fb(.auto, false), "clipboard")
             checkEq("menu press, Auto, nothing selected", fb(.auto, true), "clipboard")
+            func sel(_ src: ReadSource, _ forced: Bool, _ ax: Bool) -> String { AppState.capturesSelection(src, forced: forced, axTrusted: ax) ? "selection" : "clipboard" }
+            checkEq("menu press, Clipboard source, Accessibility on: selection first", sel(.clipboard, true, true), "selection")
+            checkEq("menu press, Clipboard source, no Accessibility: clipboard", sel(.clipboard, true, false), "clipboard")
+            checkEq("hotkey, Clipboard source: clipboard only", sel(.clipboard, false, true), "clipboard")
+            checkEq("hotkey, Selected text: selection", sel(.selection, false, true), "selection")
+            checkEq("menu press, Clipboard source falls back", fb(.clipboard, true), "clipboard")
             func rep(_ forced: Bool, _ playing: Bool, _ same: Bool, _ since: Double?) -> String {
                 AppState.refusesRepeat(forced: forced, wasPlaying: playing, sameAsLast: same, secondsSinceWarning: since) ? "refuse" : "read"
             }

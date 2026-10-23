@@ -503,9 +503,16 @@ final class AppState: ObservableObject {
     /// hotkey keeps both guards: it can fire at a window that never got focus.
     func triggerRead(forced: Bool = false) { Task { await runRead(forced: forced) } }
 
+    /// Whether a press tries the live selection first. The Clipboard source
+    /// skips it, except on a menu press with Accessibility granted: the
+    /// selection gets priority there too.
+    nonisolated static func capturesSelection(_ source: ReadSource, forced: Bool, axTrusted: Bool) -> Bool {
+        source != .clipboard || (forced && axTrusted)
+    }
+
     /// Whether an empty capture falls back to reading the clipboard.
     nonisolated static func fallsBackToClipboard(_ source: ReadSource, forced: Bool) -> Bool {
-        source == .auto || (forced && source == .selection)
+        source == .auto || forced
     }
 
     /// Whether a capture identical to the last read is refused with a warning
@@ -546,14 +553,14 @@ final class AppState: ObservableObject {
         if !wasPlaying { status = .capturing }
 
         let capture: Capture
-        switch prefs.readSource {
-        case .clipboard:
+        let source = prefs.readSource
+        if !Self.capturesSelection(source, forced: forced, axTrusted: Permissions.axTrusted) {
             let pb = NSPasteboard.general.string(forType: .string) ?? ""
             TextCapture.noteClipboardRead()
             capture = Capture(text: pb, method: .clipboard)
-        case .selection where !Self.fallsBackToClipboard(.selection, forced: forced):
+        } else if !Self.fallsBackToClipboard(source, forced: forced) {
             capture = await TextCapture.capture(mode: prefs.captureMode)
-        case .selection, .auto:
+        } else {
             // Grab the live selection (AX / synthetic ⌘C). If the app won't hand
             // it over — iTerm exposes no AX selection and drops/blocks a synthetic
             // ⌘C — fall back to whatever's on the clipboard. That's exactly right

@@ -93,7 +93,7 @@ the pointer in a panel that never takes focus.
 The "same text as last read" refusal exists for the hotkey, which can fire at a
 window that never received focus and recapture the previous selection. The
 menu's play button skips it: Yap is in front and the press is deliberate, so it
-reads the selection, else the clipboard (even in Selected text mode), and reads
+reads the selection, else the clipboard, in every read source, and reads
 the same text again on every press. That makes it the one-click way to replay
 whatever was last copied from anywhere.
 
