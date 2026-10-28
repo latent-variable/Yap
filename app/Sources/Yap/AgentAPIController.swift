@@ -20,8 +20,6 @@ final class AgentAPIController {
     private let socketPath: String
     private var server: AgentServer?
     private var cancellable: AnyCancellable?
-    /// Why the server is not running, when the pref says it should be.
-    private(set) var startError: String?
 
     init(state: AppState, dictation: DictationController, prefs: Prefs,
          socketPath: String = AgentAPI.socketPath()) {
@@ -30,9 +28,6 @@ final class AgentAPIController {
         self.prefs = prefs
         self.socketPath = socketPath
     }
-
-    var isRunning: Bool { server?.isRunning ?? false }
-    var path: String { socketPath }
 
     /// Follow the pref: `$agentAPIEnabled` emits its current value on subscribe,
     /// so this also starts the server at launch.
@@ -56,10 +51,8 @@ final class AgentAPIController {
         do {
             try s.start()
             server = s
-            startError = nil
             Log.write("agent API listening on \(socketPath)")
         } catch {
-            startError = "\(error)"
             Log.write("agent API did not start: \(error)")
         }
     }

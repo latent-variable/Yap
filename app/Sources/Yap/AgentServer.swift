@@ -55,8 +55,6 @@ final class AgentServer: @unchecked Sendable {
         self.handler = handler
     }
 
-    var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return listenFD >= 0 }
-
     // MARK: start / stop
 
     func start() throws {
