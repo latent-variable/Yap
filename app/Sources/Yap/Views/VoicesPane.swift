@@ -259,7 +259,7 @@ struct CloneVoiceSheet: View {
                     state.fetchStarterVoices { l in if l.contains("[refreshed]") { fetching = false } }
                 } label: { Label("Get free starter voices", systemImage: "person.3") }
                     .disabled(fetching || !state.cloningInstalled)
-                    .help("Six CMU ARCTIC speakers, free to use")
+                    .help("CMU ARCTIC speakers, free to use")
                 if fetching { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
