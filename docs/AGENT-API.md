@@ -73,7 +73,7 @@ curl -s --unix-socket ~/Library/Application\ Support/Yap/yap.sock http://yap/sta
 ```
 
 ```json
-{"api_version":1,"app":"Yap","version":"0.9.4","listen_allowed":false,
+{"api_version":1,"app":"Yap","version":"<app-version>","listen_allowed":false,
  "voice":{"state":"idle","engine":"kokoro","voice":"am_puck","id":"kokoro:am_puck",
           "speed":1,"queued":0,"enabled":true,"backend_ready":true},
  "dictation":{"state":"idle","enabled":true,"model_ready":true,"api_session":false}}
