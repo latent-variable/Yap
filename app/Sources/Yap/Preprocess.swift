@@ -10,19 +10,13 @@ struct CleanRule: Codable, Identifiable, Equatable {
     var caseInsensitive: Bool = false
 }
 
-/// Toggleable preprocessing options layered on top of regex rules.
+/// Profile-specific preprocessing options layered on top of regex rules.
 struct CleanOptions: Equatable {
-    var collapseWhitespace = true
-    var normalizeQuotes = true
-    var stripSymbols = true            // emoji + decorative box-drawing/symbol glyphs
-    var stripMarkdown = true
-    var bulletsToPauses = true
     var skipCodeBlocks = false
     var skipURLs = false
     var spaceOutIdentifiers = false   // snake_case / camelCase
     var stripPrompts = false          // $ % > PS> C:>
     var dropCitations = false         // [1] [2]
-    var symbolsToWords = false
 }
 
 /// The cleanup engine. Pure functions so the UI can preview instantly.
@@ -32,22 +26,18 @@ enum Preprocess {
     static func builtinRules(_ opt: CleanOptions) -> [(String, String, Bool)] {
         // (pattern, replacement, caseInsensitive)
         var r: [(String, String, Bool)] = []
-        if opt.stripMarkdown {
-            r += [
-                (#"!\[[^\]]*\]\([^)]*\)"#, "", false),          // images
-                (#"\[([^\]]+)\]\([^)]*\)"#, "$1", false),       // links -> text
-                (#"^#{1,6}\s*"#, "", false),                     // headings
-                (#"(\*\*|__)(.*?)\1"#, "$2", false),            // bold
-                (#"(\*|_)(.*?)\1"#, "$2", false),               // italic
-                (#"`{1,3}"#, "", false),                         // backticks
-                (#"^\s*\|.*\|\s*$"#, "", false),                // table rows
-                (#"^\s*[-:|]{3,}\s*$"#, "", false),             // table sep / hr
-                (#"~~(.*?)~~"#, "$1", false),                   // strikethrough
-            ]
-        }
-        if opt.bulletsToPauses {
-            r.append((#"^\s*([-*+•]|\d+[.)])\s+"#, "", false))
-        }
+        r += [
+            (#"!\[[^\]]*\]\([^)]*\)"#, "", false),          // images
+            (#"\[([^\]]+)\]\([^)]*\)"#, "$1", false),       // links -> text
+            (#"^#{1,6}\s*"#, "", false),                     // headings
+            (#"(\*\*|__)(.*?)\1"#, "$2", false),            // bold
+            (#"(\*|_)(.*?)\1"#, "$2", false),               // italic
+            (#"`{1,3}"#, "", false),                         // backticks
+            (#"^\s*\|.*\|\s*$"#, "", false),                // table rows
+            (#"^\s*[-:|]{3,}\s*$"#, "", false),             // table sep / hr
+            (#"~~(.*?)~~"#, "$1", false),                   // strikethrough
+            (#"^\s*([-*+•]|\d+[.)])\s+"#, "", false),
+        ]
         if opt.stripPrompts {
             r.append((#"^\s*(PS [A-Z]:\\[^>]*>|[A-Z]:\\>|[\$%>])\s+"#, "", false))
         }
@@ -81,9 +71,7 @@ enum Preprocess {
         if options.skipURLs {
             text = regexReplace(text, #"https?://\S+"#, "", true)
         }
-        if options.stripSymbols {
-            text = stripSymbols(text)
-        }
+        text = stripSymbols(text)
 
         // line-anchored rules need multiline mode -> prepend (?m)
         for (pat, rep, ci) in builtinRules(options) {
@@ -98,20 +86,11 @@ enum Preprocess {
             text = regexReplace(text, #"([a-z0-9])([A-Z])"#, "$1 $2", false)   // camelCase
             text = regexReplace(text, #"_+"#, " ", false)                       // snake_case
         }
-        if options.symbolsToWords {
-            let map = ["&": " and ", "@": " at ", "%": " percent ", "#": " number ",
-                       "+": " plus ", "=": " equals ", "/": " slash "]
-            for (k, v) in map { text = text.replacingOccurrences(of: k, with: v) }
-        }
-        if options.normalizeQuotes {
-            let map = ["“": "\"", "”": "\"", "‘": "'", "’": "'", "—": ", ", "–": "-", "…": "..."]
-            for (k, v) in map { text = text.replacingOccurrences(of: k, with: v) }
-        }
-        if options.collapseWhitespace {
-            text = regexReplace(text, #"[ \t]+"#, " ", false)
-            text = regexReplace(text, #"\n{3,}"#, "\n\n", false)
-            text = regexReplace(text, #"(?m)^[ \t]+|[ \t]+$"#, "", false)
-        }
+        let quoteMap = ["“": "\"", "”": "\"", "‘": "'", "’": "'", "—": ", ", "–": "-", "…": "..."]
+        for (k, v) in quoteMap { text = text.replacingOccurrences(of: k, with: v) }
+        text = regexReplace(text, #"[ \t]+"#, " ", false)
+        text = regexReplace(text, #"\n{3,}"#, "\n\n", false)
+        text = regexReplace(text, #"(?m)^[ \t]+|[ \t]+$"#, "", false)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -197,14 +176,13 @@ enum Preprocess {
             // no spoken meaning). Non-numeric brackets are left intact.
             o.dropCitations = true
         case .markdown:
-            o.stripMarkdown = true; o.bulletsToPauses = true
+            break
         case .code:
             o.skipCodeBlocks = false; o.stripPrompts = true
-            o.spaceOutIdentifiers = true; o.symbolsToWords = false
+            o.spaceOutIdentifiers = true
         case .blog:
-            o.stripMarkdown = true; o.dropCitations = true; o.skipURLs = true
+            o.dropCitations = true; o.skipURLs = true
         case .llm:
-            o.stripMarkdown = true; o.bulletsToPauses = true
             o.dropCitations = true; o.skipCodeBlocks = true
         }
         return o
