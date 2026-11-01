@@ -105,6 +105,16 @@ and the only network use is downloading its models
 ([`Dictation.swift`](../app/Sources/Yap/Dictation.swift)). Don't dictate? Don't
 grant it. The read-aloud half works without it.
 
+## Full-text history (opt-in)
+
+Yap can keep up to 500 spoken and 500 dictated entries in
+`~/Library/Application Support/Yap/history.json`, including full text.
+**New entries are not saved by default.** Enable "Save full dictated and
+spoken text" under Settings ▸ History if you want transcript recovery.
+Existing history from older versions is **not automatically deleted**;
+clear spoken and dictated entries separately in Settings ▸ History.
+History is local plaintext JSON, not encrypted.
+
 ## The agent API (a local socket)
 
 Other programs on your Mac can ask Yap to speak, or to listen, through a Unix
