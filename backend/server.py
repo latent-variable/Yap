@@ -502,7 +502,12 @@ def _load_or_create_token() -> Optional[str]:
         return inline.strip() or None
     p = Path(path)
     try:
+        # Refuse symlink paths and non-regular token files.
+        if p.is_symlink():
+            raise OSError("auth token path must not be a symlink")
         if p.exists():
+            if not stat.S_ISREG(p.stat().st_mode):
+                raise OSError("auth token path must be a regular file")
             # Refuse a token file any group/other can access — someone may have
             # pre-created it (e.g. a custom YAP_AUTH_TOKEN_FILE in a shared dir)
             # to read or fix the secret. Recreate it 0600 instead of trusting it.
@@ -517,20 +522,23 @@ def _load_or_create_token() -> Optional[str]:
         p.parent.mkdir(parents=True, exist_ok=True)
         tok = secrets.token_urlsafe(32)
         # Write 0600 atomically: create with restrictive mode, then write.
-        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+        # Exclusive creation prevents silently truncating an injected file.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(str(p), flags, stat.S_IRUSR | stat.S_IWUSR)
         with os.fdopen(fd, "w") as f:
             f.write(tok)
         os.chmod(str(p), stat.S_IRUSR | stat.S_IWUSR)
         return tok
     except OSError as e:
-        # Fail open on the Bearer check rather than bricking TTS, but the Origin
-        # guard below still runs, so CSRF stays closed even here.
-        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- an OSError carries errno and path, never the file's contents
-        log.warning("auth: could not load/create token (%s); Bearer auth disabled", e)
+        log.error("auth: could not load/create token (%s); backend refusing startup", e)
         return None
 
 
 AUTH_TOKEN = _load_or_create_token()
+if AUTH_TOKEN is None:
+    raise RuntimeError("Yap backend auth unavailable: refusing to start without a token")
 
 
 def _is_browser_request(request: Request) -> bool:
@@ -556,20 +564,17 @@ async def auth_guard(request: Request, call_next):
     # probe to /verify. The native Swift client sets no Origin/Sec-Fetch-Site.
     if _is_browser_request(request):
         return JSONResponse({"detail": "cross-origin requests are not allowed"}, status_code=403)
-    # /verify self-authenticates (it returns an HMAC over a caller nonce and
-    # leaks nothing), so the app can probe an unknown listener without first
-    # handing it the token.
+    # Defense in depth if a test/future refactor bypasses the startup guard.
+    if AUTH_TOKEN is None:
+        return JSONResponse({"detail": "authorization unavailable"}, status_code=503)
+    # The unauthenticated /verify challenge returns an HMAC, never the secret.
     if request.url.path == "/verify":
         return await call_next(request)
-    if AUTH_TOKEN is not None:
-        header = request.headers.get("authorization", "")
-        prefix = "Bearer "
-        presented = header[len(prefix):] if header.startswith(prefix) else ""
-        # Compare as bytes: compare_digest raises ValueError on non-ASCII str
-        # (Starlette decodes the header latin-1), which would 500 instead of a
-        # clean 401 if a client sent non-ASCII in Authorization.
-        if not presented or not hmac.compare_digest(presented.encode(), AUTH_TOKEN.encode()):
-            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    header = request.headers.get("authorization", "")
+    prefix = "Bearer "
+    presented = header[len(prefix):] if header.startswith(prefix) else ""
+    if not presented or not hmac.compare_digest(presented.encode(), AUTH_TOKEN.encode()):
+        return JSONResponse({"detail": "unauthorized"}, status_code=401)
     return await call_next(request)
 
 
