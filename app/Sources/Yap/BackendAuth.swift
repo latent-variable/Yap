@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Darwin
 
 /// Shared secret between the app and its local backend (server.py). The sidecar
 /// binds 127.0.0.1, reachable by every local process and by `fetch()` from any
@@ -26,46 +27,91 @@ enum BackendAuth {
     private static func loadOrCreate() -> String? {
         let url = tokenFileURL
         let fm = FileManager.default
-        if fm.fileExists(atPath: url.path) {
-            // Refuse a token file any group/other can read or write — someone
-            // may have pre-created it (e.g. a custom path in a shared dir) to
-            // learn or fix the secret. Recreate it 0600 below.
-            let perms = ((try? fm.attributesOfItem(atPath: url.path))?[.posixPermissions] as? NSNumber)?.uint16Value
-            if let perms, perms & 0o077 != 0 {
-                Log.write("auth: token file has loose perms (\(String(perms, radix: 8))); recreating 0600")
-                try? fm.removeItem(at: url)
-            } else if let data = try? Data(contentsOf: url),
-                      let tok = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !tok.isEmpty {
-                return tok
-            }
+        let parent = url.deletingLastPathComponent()
+        do {
+            try fm.createDirectory(at: parent, withIntermediateDirectories: true,
+                                   attributes: [.posixPermissions: 0o700])
+        } catch {
+            Log.write("auth: could not create token directory: \(error.localizedDescription)")
+            return nil
         }
-        // Generate 32 random bytes, base64url (no padding) — matches the
-        // backend's secrets.token_urlsafe shape closely enough; only equality
-        // across the two readers of the file matters.
-        var bytes = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
-        let tok = Data(bytes).base64EncodedString()
+        // Both the directory and file are private and owned by this user.
+        // Do not follow an injected symlink, even if its target has mode 0600.
+        var dirInfo = stat()
+        guard lstat(parent.path, &dirInfo) == 0,
+              (dirInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+              dirInfo.st_uid == geteuid() else {
+            Log.write("auth: token directory must be a real directory owned by the user")
+            return nil
+        }
+        do {
+            try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parent.path)
+        } catch {
+            Log.write("auth: could not secure token directory: \(error.localizedDescription)")
+            return nil
+        }
+
+        func readExisting() -> String? {
+            var info = stat()
+            guard lstat(url.path, &info) == 0,
+                  (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  info.st_uid == geteuid(), (info.st_mode & 0o077) == 0 else {
+                Log.write("auth: token file is not a private regular file owned by this user")
+                return nil
+            }
+            let fd = open(url.path, O_RDONLY | O_NOFOLLOW)
+            guard fd >= 0 else { return nil }
+            let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            guard let data = try? file.readToEnd(),
+                  let token = String(data: data, encoding: .utf8)?
+                      .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !token.isEmpty else { return nil }
+            return token
+        }
+
+        var info = stat()
+        if lstat(url.path, &info) == 0 { return readExisting() }
+        guard errno == ENOENT else {
+            Log.write("auth: could not inspect token file")
+            return nil
+        }
+        // Generate a 32-byte random token, encoded as base64url without padding.
+        var random = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, random.count, &random) == errSecSuccess else {
+            return nil
+        }
+        let token = Data(random).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-        do {
-            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        } catch {
-            Log.write("auth: could not create token dir: \(error.localizedDescription)")
+
+        // O_EXCL ensures that an intervening file or symlink cannot be
+        // truncated. The Python side also creates its token with O_EXCL.
+        let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(0o600))
+        guard fd >= 0 else {
+            if errno == EEXIST { return readExisting() }  // competing Yap instance
+            Log.write("auth: could not create token file")
             return nil
         }
-        // Create the file at 0600 from the very first syscall: passing the perms
-        // to createFile means it's never world-readable, not even briefly. An
-        // atomic write+chmod would leave a window where the renamed temp sits at
-        // the default umask (0644) before chmod lands — exactly the race the
-        // Python side avoids with os.open(mode=0600).
-        guard fm.createFile(atPath: url.path, contents: Data(tok.utf8),
-                            attributes: [.posixPermissions: 0o600]) else {
-            Log.write("auth: could not create token file at \(url.path)")
+        let bytes = [UInt8](token.utf8)
+        let complete = bytes.withUnsafeBytes { buf -> Bool in
+            guard let base = buf.baseAddress else { return false }
+            var offset = 0
+            while offset < buf.count {
+                let n = Darwin.write(fd, base.advanced(by: offset), buf.count - offset)
+                if n > 0 { offset += n; continue }
+                if n == -1 && errno == EINTR { continue }
+                return false
+            }
+            return true
+        }
+        _ = close(fd)
+        if !complete {
+            try? fm.removeItem(at: url)
+            Log.write("auth: token creation was incomplete")
             return nil
         }
-        return tok
+        return token
     }
 
     /// HMAC-SHA256(token, nonce) as lowercase hex — must match the backend's
