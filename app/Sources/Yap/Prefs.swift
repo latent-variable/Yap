@@ -120,7 +120,7 @@ final class Prefs: ObservableObject {
     @Published var autoUpdateCheck: Bool { didSet { d.set(autoUpdateCheck, forKey: "autoUpdateCheck") } }
     // The agent API (docs/AGENT-API.md): a Unix-domain socket other programs on
     // this Mac use to speak through Yap and, separately, to listen. The API is on
-    // by default; turning it off stops the socket server live. LISTENING is a
+    // off by default; turning it off stops the socket server live. LISTENING is a
     // second, off-by-default switch: through the API any process running as you
     // can use Yap's Microphone grant, which skips macOS's own prompt for that
     // process, so the user opts in on purpose. No Settings control yet; the Agents
@@ -180,7 +180,7 @@ final class Prefs: ObservableObject {
         dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true
         removeFillers = d.object(forKey: "removeFillers") as? Bool ?? true
         autoUpdateCheck = d.object(forKey: "autoUpdateCheck") as? Bool ?? true
-        agentAPIEnabled = d.object(forKey: "agentAPIEnabled") as? Bool ?? true
+        agentAPIEnabled = d.object(forKey: "agentAPIEnabled") as? Bool ?? false
         agentListenEnabled = d.object(forKey: "agentListenEnabled") as? Bool ?? false
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false
         if let data = d.data(forKey: "customRules"),
