@@ -36,19 +36,32 @@ struct BackendClient {
         return URLSession(configuration: cfg)
     }()
 
-    /// Build a request already carrying the shared-secret Bearer token. Every
-    /// call to the backend goes through this — the sidecar rejects anything
-    /// without the token (so a website's cross-origin POST can't drive it).
-    private func authed(_ url: URL) -> URLRequest {
+    private enum AuthError: LocalizedError {
+        case unverifiedBackend
+
+        var errorDescription: String? {
+            "Yap could not authenticate its local speech server. No text or bearer token was sent."
+        }
+    }
+
+    /// Never send the bearer secret to a listener on a predictable loopback port
+    /// until it proves possession of the secret via the unauthenticated /verify.
+    /// Verify on each request: a previously verified backend may have exited.
+    /// Same-user malware remains outside this protection's trust boundary.
+    private func authed(_ url: URL) async throws -> URLRequest {
+        guard await verifyAuthentic(), let token = BackendAuth.token else {
+            throw AuthError.unverifiedBackend
+        }
         var req = URLRequest(url: url)
-        if let t = BackendAuth.token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return req
     }
 
     func health() async -> HealthInfo? {
-        var req = authed(base.appending(path: "health"))
+        guard var req = try? await authed(base.appending(path: "health")) else { return nil }
         req.timeoutInterval = 2
-        guard let (data, _) = try? await session.data(for: req) else { return nil }
+        guard let (data, response) = try? await session.data(for: req),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return try? JSONDecoder().decode(HealthInfo.self, from: data)
     }
 
@@ -87,7 +100,8 @@ struct BackendClient {
         struct Resp: Decodable { let voices: [VoiceInfo] }
         var url = base.appending(path: "voices")
         url.append(queryItems: [URLQueryItem(name: "engine", value: engine)])
-        guard let (data, _) = try? await session.data(for: authed(url)),
+        guard let req = try? await authed(url),
+              let (data, _) = try? await session.data(for: req),
               let r = try? JSONDecoder().decode(Resp.self, from: data) else { return [] }
         return r.voices
     }
@@ -102,15 +116,15 @@ struct BackendClient {
     }
     func engines() async -> (kokoro: EngineInfo?, pocket: EngineInfo?) {
         struct Resp: Decodable { let kokoro: EngineInfo; let pocket: EngineInfo }
-        let req = authed(base.appending(path: "engines"))
-        guard let (data, _) = try? await session.data(for: req),
+        guard let req = try? await authed(base.appending(path: "engines")),
+              let (data, _) = try? await session.data(for: req),
               let r = try? JSONDecoder().decode(Resp.self, from: data) else { return (nil, nil) }
         return (r.kokoro, r.pocket)
     }
 
     /// Stream the Pocket-deps install, line by line, for a progress view.
     func installPocket(onLine: @escaping (String) -> Void) async throws {
-        var req = authed(base.appending(path: "engines/pocket/install"))
+        var req = try await authed(base.appending(path: "engines/pocket/install"))
         req.httpMethod = "POST"
         req.timeoutInterval = 1800
         let (bytes, _) = try await session.bytes(for: req)
@@ -121,10 +135,10 @@ struct BackendClient {
     /// failed fetch must leave the catalog voices working rather than surface as an
     /// engine error. The caller checks `cloning_installed` for the verdict.
     func installCloningWeights(onLine: @escaping (String) -> Void) async {
-        var req = authed(base.appending(path: "engines/pocket/cloning/install"))
-        req.httpMethod = "POST"
-        req.timeoutInterval = 1800
         do {
+            var req = try await authed(base.appending(path: "engines/pocket/cloning/install"))
+            req.httpMethod = "POST"
+            req.timeoutInterval = 1800
             let (bytes, _) = try await session.bytes(for: req)
             for try await line in bytes.lines { onLine(line) }
         } catch {
@@ -139,7 +153,7 @@ struct BackendClient {
     func warmPocket(voice: String) async -> Bool {
         var url = base.appending(path: "engines/pocket/warm")
         url.append(queryItems: [URLQueryItem(name: "voice", value: voice)])
-        var req = authed(url)
+        guard var req = try? await authed(url) else { return false }
         req.httpMethod = "POST"
         req.timeoutInterval = 60
         struct R: Decodable { let loaded: Bool? }
@@ -151,7 +165,7 @@ struct BackendClient {
     /// Offload an engine's model to reclaim memory (only the active engine need
     /// stay resident). No-op if already unloaded; the next read lazily reloads.
     func unloadEngine(_ name: String) async {
-        var req = authed(base.appending(path: "engines/\(name)/unload"))
+        guard var req = try? await authed(base.appending(path: "engines/\(name)/unload")) else { return }
         req.httpMethod = "POST"
         req.timeoutInterval = 15
         _ = try? await session.data(for: req)
@@ -159,7 +173,7 @@ struct BackendClient {
 
     /// Download the curated starter reference voices.
     func fetchStarterVoices(onLine: @escaping (String) -> Void) async throws {
-        var req = authed(base.appending(path: "voices/hd/starters"))
+        var req = try await authed(base.appending(path: "voices/hd/starters"))
         req.httpMethod = "POST"
         req.timeoutInterval = 300
         let (bytes, _) = try await session.bytes(for: req)
@@ -167,10 +181,10 @@ struct BackendClient {
     }
 
     private func synthRequest(_ text: String, voice: String, speed: Double,
-                              pauseScale: Double, engine: String, wav: Bool) -> URLRequest {
+                              pauseScale: Double, engine: String, wav: Bool) async throws -> URLRequest {
         var url = base.appending(path: "synthesize")
         if wav { url.append(queryItems: [URLQueryItem(name: "format", value: "wav")]) }
-        var req = authed(url)
+        var req = try await authed(url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = ["text": text, "voice": voice, "speed": speed,
@@ -191,8 +205,8 @@ struct BackendClient {
                    engine: String = "kokoro",
                    awaitCapacity: (@Sendable () async -> Bool)? = nil,
                    onChunk: @escaping (Data) -> Void) async throws {
-        let req = synthRequest(text, voice: voice, speed: speed, pauseScale: pauseScale,
-                               engine: engine, wav: false)
+        let req = try await synthRequest(text, voice: voice, speed: speed, pauseScale: pauseScale,
+                                         engine: engine, wav: false)
         let (bytes, response) = try await session.bytes(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw NSError(domain: "Yap", code: http.statusCode,
@@ -249,8 +263,8 @@ struct BackendClient {
     /// Fetch a complete WAV (for export).
     func wav(text: String, voice: String, speed: Double, pauseScale: Double = 1.0,
              engine: String = "kokoro") async throws -> Data {
-        let req = synthRequest(text, voice: voice, speed: speed, pauseScale: pauseScale,
-                               engine: engine, wav: true)
+        let req = try await synthRequest(text, voice: voice, speed: speed, pauseScale: pauseScale,
+                                         engine: engine, wav: true)
         let (data, response) = try await session.data(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw NSError(domain: "Yap", code: http.statusCode,
