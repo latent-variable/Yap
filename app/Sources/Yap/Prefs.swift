@@ -123,8 +123,7 @@ final class Prefs: ObservableObject {
     // off by default; turning it off stops the socket server live. LISTENING is a
     // second, off-by-default switch: through the API any process running as you
     // can use Yap's Microphone grant, which skips macOS's own prompt for that
-    // process, so the user opts in on purpose. No Settings control yet; the Agents
-    // pane binds to these two keys.
+    // process. Both controls live in Settings ▸ Agents and require deliberate opt-in.
     @Published var agentAPIEnabled: Bool { didSet { d.set(agentAPIEnabled, forKey: "agentAPIEnabled") } }
     @Published var agentListenEnabled: Bool { didSet { d.set(agentListenEnabled, forKey: "agentListenEnabled") } }
 
