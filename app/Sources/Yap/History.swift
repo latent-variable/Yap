@@ -85,6 +85,10 @@ final class HistoryStore: ObservableObject {
     func recordDictated(_ text: String, detail: String = "") { add(kind: .dictated, text: text, detail: detail) }
 
     private func add(kind: HistoryEntry.Kind, text: String, detail: String) {
+        // Test probes isolate their history file and must still validate recovery.
+        let isProbe = Self.probeFileURL != nil ||
+            ProcessInfo.processInfo.environment["YAP_HISTORY_FILE"] != nil
+        guard Prefs.shared.historyEnabled || isProbe else { return }
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         let entry = HistoryEntry(kind: kind, text: t, detail: detail)
