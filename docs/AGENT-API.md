@@ -37,7 +37,7 @@ reports it as `api_version`. A breaking change to a route or field bumps it.
     discarded then.
   - The text goes back to the caller. It is pasted at the cursor only when the
     request says `"insert": true`.
-- **Two preferences control it.** `agentAPIEnabled` (default on) runs the
+- **Two preferences control it.** `agentAPIEnabled` (default off; opt-in) runs the
   server at all; switching it off removes the socket immediately.
   `agentListenEnabled` (default off) allows `/listen`. Both are switches in
   **Settings ▸ Agents** (*Let agents use Yap*, *Allow agents to listen*).
