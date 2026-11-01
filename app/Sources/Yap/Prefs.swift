@@ -125,6 +125,8 @@ final class Prefs: ObservableObject {
     // can use Yap's Microphone grant, which skips macOS's own prompt for that
     // process, so the user opts in on purpose. No Settings control yet; the Agents
     // pane binds to these two keys.
+    // Full transcriptions may contain secrets. Collection is opt-in.
+    @Published var historyEnabled: Bool { didSet { d.set(historyEnabled, forKey: "historyEnabled") } }
     @Published var agentAPIEnabled: Bool { didSet { d.set(agentAPIEnabled, forKey: "agentAPIEnabled") } }
     @Published var agentListenEnabled: Bool { didSet { d.set(agentListenEnabled, forKey: "agentListenEnabled") } }
 
@@ -180,6 +182,7 @@ final class Prefs: ObservableObject {
         dictationChime = d.object(forKey: "dictationChime") as? Bool ?? true
         removeFillers = d.object(forKey: "removeFillers") as? Bool ?? true
         autoUpdateCheck = d.object(forKey: "autoUpdateCheck") as? Bool ?? true
+        historyEnabled = d.object(forKey: "historyEnabled") as? Bool ?? false
         agentAPIEnabled = d.object(forKey: "agentAPIEnabled") as? Bool ?? true
         agentListenEnabled = d.object(forKey: "agentListenEnabled") as? Bool ?? false
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? false
