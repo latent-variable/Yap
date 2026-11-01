@@ -525,6 +525,7 @@ private struct HotKeyRecorder: View {
 // MARK: - History
 
 private struct HistoryTab: View {
+    @EnvironmentObject private var prefs: Prefs
     @ObservedObject private var history = HistoryStore.shared
     // Dictation is the more-used half, so it leads and is the default view.
     @State private var kind: HistoryEntry.Kind = .dictated
@@ -541,6 +542,9 @@ private struct HistoryTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Toggle("Save full dictated and spoken text", isOn: $prefs.historyEnabled)
+            Text("Off by default. New transcripts aren't saved unless enabled. Existing entries remain until you clear them.")
+                .font(.caption).foregroundStyle(.secondary)
             Picker("", selection: $kind) {
                 Text("Dictated (\(history.dictated.count))").tag(HistoryEntry.Kind.dictated)
                 Text("Spoken (\(history.spoken.count))").tag(HistoryEntry.Kind.spoken)
