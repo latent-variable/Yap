@@ -532,7 +532,7 @@ def _load_or_create_token() -> Optional[str]:
         os.chmod(str(p), stat.S_IRUSR | stat.S_IWUSR)
         return tok
     except OSError as e:
-        log.error("auth: could not load/create token (%s); backend refusing startup", e)
+        log.error("backend initialization failed; service will not start")
         return None
 
 
