@@ -84,6 +84,32 @@ def test_install_endpoint_csrf_blocked_without_token():
     assert _run_guard(_request(path="/engines/pocket/install")).status_code == 401
 
 
+def test_missing_token_fails_closed_for_all_routes(monkeypatch):
+    monkeypatch.setattr(server, "AUTH_TOKEN", None)
+    assert _run_guard(_request(path="/health", headers=_auth())).status_code == 503
+    assert _run_guard(_request(path="/engines/pocket/install", headers=_auth())).status_code == 503
+    assert _run_guard(_request(path="/verify")).status_code == 503
+
+
+def test_unwritable_token_path_never_creates_a_public_server(monkeypatch, tmp_path):
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("blocker")
+    monkeypatch.delenv("YAP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YAP_AUTH_TOKEN_FILE", str(blocker / "auth-token"))
+    assert server._load_or_create_token() is None
+
+
+def test_auth_token_file_refuses_symlink(monkeypatch, tmp_path):
+    target = tmp_path / "target"
+    target.write_text("sensitive")
+    link = tmp_path / "auth-token"
+    link.symlink_to(target)
+    monkeypatch.delenv("YAP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YAP_AUTH_TOKEN_FILE", str(link))
+    assert server._load_or_create_token() is None
+    assert target.read_text() == "sensitive"
+
+
 def test_verify_is_auth_exempt():
     # /verify must pass the guard WITHOUT a token (the app probes an untrusted
     # listener with no Authorization header).
