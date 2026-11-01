@@ -129,51 +129,34 @@ final class BackendManager: NSObject, ObservableObject {
         lastError = (h.files_present || hdInstalledOnDisk) ? nil : "Model files not installed."
     }
 
-    /// Ensure the backend is up: reuse a running one, else launch it.
+    /// Ensure the backend is up without contacting an unverified listener
+    /// with an Authorization header or selected text.
     func start() async {
         discardExitedProcess()
+        guard BackendAuth.token != nil else {
+            ready = false
+            lastError = "Yap could not create its local authorization token. Check Application Support permissions."
+            return
+        }
         if let h = await client.health() {
-            // A server we didn't spawn answers on our port. Don't trust it with
-            // captured text until it proves it's a genuine Yap backend (knows the
-            // shared secret via /verify) — an impostor that squatted :8766 can't
-            // read the 0600 token file, so it can't produce a valid proof.
-            if process == nil, adoptedPID == nil, !(await client.verifyAuthentic()) {
-                // Verification failed. Distinguish two cases:
-                //  • Identifiably a Yap server.py orphan (ppid==1) → almost always
-                //    a STALE pre-auth backend left running across an app upgrade
-                //    (no /verify endpoint yet). Reclaim it: kill and relaunch a
-                //    fresh, authenticated backend so the upgrade "just works".
-                //  • Otherwise it's a foreign listener / impostor → never hand it
-                //    captured text; bail with a clear error.
-                if let pid = await Self.orphanBackendPID(port: port) {
-                    adoptedPID = pid
-                    await stopAndWait()          // SIGTERM + wait, frees the port
-                    await launchProcess()
-                    await waitForHealth()
-                } else {
-                    lastError = "Another process is using port \(port); it's not a Yap backend. Quit it and relaunch."
-                    ready = false
-                }
-                return
-            }
+            // health() proves /verify before sending Authorization.
             apply(h)
-            // Reusing a verified live backend. If it's an orphaned Yap backend
-            // (its spawner died → reparented to launchd), adopt it so model
-            // management isn't blocked. A backend started by hand in a terminal
-            // (ppid != 1) is left external on purpose.
-            if process == nil, adoptedPID == nil, let pid = await Self.orphanBackendPID(port: port) {
+            if process == nil, adoptedPID == nil,
+               let pid = await Self.orphanBackendPID(port: port) {
                 adoptedPID = pid
                 ownsProcess = true
             }
             if ready { return }
-            // Responsive but nothing installable (no Kokoro files, no HD) — don't
-            // launch/spin waiting for a model that was deleted.
             if !h.files_present && !hdInstalledOnDisk { return }
-            // A live backend is holding the port but isn't ready. Don't spawn a
-            // second process onto the same port (it would fail to bind / crash):
-            //  • adopted orphan → we own it, so free the port, then relaunch fresh.
-            //  • not ours (e.g. a hand-started dev backend) → leave it; bail.
             if adoptedPID != nil { await stopAndWait() } else { return }
+        } else if process == nil && adoptedPID == nil {
+            // Do not launch into an occupied port or signal a listener based
+            // merely on its command line: identity has not been verified.
+            if await Self.portHasListener(port: port) {
+                ready = false
+                lastError = "An unverified process is using port \(port). Quit it before relaunching Yap."
+                return
+            }
         }
         await launchProcess()
         await waitForHealth()
@@ -330,6 +313,14 @@ final class BackendManager: NSObject, ObservableObject {
     }
 
     // MARK: Orphan detection (lsof + ps, off the main actor)
+
+    private nonisolated static func portHasListener(port: Int) async -> Bool {
+        await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                cont.resume(returning: listenerPID(port: port) != nil)
+            }
+        }
+    }
 
     /// PID of an orphaned Yap backend listening on `port`: the process must be
     /// running `server.py` AND have been reparented to launchd (ppid == 1), the
