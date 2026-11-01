@@ -19,9 +19,8 @@ enum BackendAuth {
     /// Cached so repeated requests don't hit disk; the file is stable per machine.
     private static let cached: String? = loadOrCreate()
 
-    /// The shared token, or nil if the file couldn't be read/created. nil means
-    /// requests go out without a Bearer header (the backend fails open on auth
-    /// in that case too), so TTS still works rather than bricking.
+    /// The shared token, or nil if the file couldn't be read/created.
+    /// Both the client and backend fail closed when the token is unavailable.
     static var token: String? { cached }
 
     private static func loadOrCreate() -> String? {
