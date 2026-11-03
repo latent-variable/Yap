@@ -35,7 +35,7 @@ def test_download_verifies_hash_before_publishing_file(monkeypatch, tmp_path):
     download_models.download("https://example.invalid/model", dest, expected)
 
     assert dest.read_bytes() == payload
-    assert not dest.with_suffix(".bin.part").exists()
+    assert not list(tmp_path.glob(".model.bin.*.part"))
 
 
 def test_hash_mismatch_never_publishes_partial_model(monkeypatch, tmp_path):
@@ -66,6 +66,47 @@ def test_main_replaces_invalid_existing_model_and_verifies_download(monkeypatch,
     )
 
     assert download_models.main() == 0
+    assert dest.read_bytes() == payload
+
+
+def test_download_does_not_follow_precreated_part_symlink(monkeypatch, tmp_path):
+    payload = b"verified model bytes"
+    expected = hashlib.sha256(payload).hexdigest()
+    victim = tmp_path / "unrelated.txt"
+    victim.write_bytes(b"must remain unchanged")
+    predictable_part = tmp_path / "model.bin.part"
+    predictable_part.symlink_to(victim)
+    dest = tmp_path / "model.bin"
+    monkeypatch.setattr(
+        download_models.urllib.request, "urlopen",
+        lambda *_args, **_kwargs: FakeResponse(payload),
+    )
+
+    download_models.download("https://example.invalid/model", dest, expected)
+
+    assert victim.read_bytes() == b"must remain unchanged"
+    assert predictable_part.is_symlink()
+    assert dest.read_bytes() == payload
+    assert not list(tmp_path.glob(".model.bin.*.part"))
+
+
+def test_main_replaces_existing_symlink_without_touching_target(monkeypatch, tmp_path):
+    payload = b"correct model bytes"
+    expected = hashlib.sha256(payload).hexdigest()
+    victim = tmp_path / "unrelated.txt"
+    victim.write_bytes(b"must remain unchanged")
+    dest = tmp_path / "model.bin"
+    dest.symlink_to(victim)
+    monkeypatch.setattr(download_models, "FILES", {"model.bin": ("https://example.invalid/model", expected)})
+    monkeypatch.setattr(sys, "argv", ["download_models.py", "--models-dir", str(tmp_path)])
+    monkeypatch.setattr(
+        download_models.urllib.request, "urlopen",
+        lambda *_args, **_kwargs: FakeResponse(payload),
+    )
+
+    assert download_models.main() == 0
+    assert victim.read_bytes() == b"must remain unchanged"
+    assert not dest.is_symlink()
     assert dest.read_bytes() == payload
 
 
