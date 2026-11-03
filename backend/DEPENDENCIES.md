@@ -7,7 +7,7 @@ Yap ships two Python dependency environments:
   includes the Kokoro and ONNX packages needed when both engines share one
   process.
 
-The corresponding `requirements.lock` and `requirements-pocket.lock` files
+The corresponding `requirements.txt` and `requirements-pocket.txt` files
 are generated lockfiles. **Do not edit them by hand.** They pin every resolved
 package version and include SHA-256 hashes for the allowed distributions.
 
@@ -21,13 +21,13 @@ Both install paths must use:
   scripts on a user's Mac.
 - an isolated pip configuration and no pip cache.
 
-The default bundled environment is built from `requirements.lock`. Pocket is
-installed on demand from `requirements-pocket.lock`; it is not resolved from
+The default bundled environment is built from `requirements.txt`. Pocket is
+installed on demand from `requirements-pocket.txt`; it is not resolved from
 live version ranges at install time.
 
 ## Regenerating locks
 
-Push changes to either input file on the
+Push changes to either `.in` input file on the
 `security/pin-python-runtime` review branch. The
 `Lock Python dependencies` workflow:
 
