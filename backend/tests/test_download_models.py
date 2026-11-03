@@ -1,7 +1,6 @@
 import hashlib
 import io
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -50,7 +49,7 @@ def test_hash_mismatch_never_publishes_partial_model(monkeypatch, tmp_path):
         download_models.download("https://example.invalid/model", dest, "0" * 64)
 
     assert not dest.exists()
-    assert not dest.with_suffix(".bin.part").exists()
+    assert not list(tmp_path.glob(".model.bin.*.part"))
 
 
 def test_main_replaces_invalid_existing_model_and_verifies_download(monkeypatch, tmp_path):
