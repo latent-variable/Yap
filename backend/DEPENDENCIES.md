@@ -29,18 +29,29 @@ version ranges on a user's Mac.
 
 ## Regenerating locks
 
-Edit either `.in` input file and push it to the
-`security/pin-python-runtime` review branch. The
-`Lock Python dependencies` workflow:
+Use the exact CPython 3.12.16 Apple Silicon runtime pinned in
+`scripts/bundle_python.sh`, with pip-tools 7.6.2. Set
+`PIP_CONFIG_FILE=/dev/null` and `PIP_INDEX_URL=https://pypi.org/simple`, then
+run:
 
-1. Runs on an isolated GitHub-hosted Apple Silicon macOS runner.
-2. Downloads the exact CPython 3.12.16 build used by Yap and verifies its
-   published SHA-256 before running the resolver.
-3. Uses pinned pip-tools 7.6.2 and resolves binary wheels only from PyPI.
-4. Installs the default lock and the optional Pocket lock in temporary runner
-   directories to prove both environments are installable for this target.
-5. Commits the generated lockfiles back to the review branch only after both
-   environments pass.
+```bash
+pip-compile --upgrade --generate-hashes --allow-unsafe \
+  --resolver=backtracking --strip-extras --no-emit-index-url \
+  --pip-args="--only-binary=:all:" \
+  --output-file=backend/requirements.txt backend/requirements.in
+
+pip-compile --upgrade --generate-hashes --allow-unsafe \
+  --resolver=backtracking --strip-extras --no-emit-index-url \
+  --pip-args="--only-binary=:all:" \
+  --output-file=backend/requirements-pocket.txt backend/requirements-pocket.in
+```
+
+Review the entire version diff, then install both environments with
+`--require-hashes --only-binary=:all:` before committing. The
+`Python dependency lock validation` GitHub Actions workflow repeats this
+validation on an isolated Apple Silicon runner and checks that the committed
+locks still match their inputs. It has read-only repository permissions; it
+does not modify branches or commit generated files.
 
 Review every version change and run the repository's OSV security scan before
 merging. A hash lock proves the downloaded artifact matches the committed
