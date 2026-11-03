@@ -41,7 +41,7 @@ fi
 # Bundle backend sources, human-maintained requirement inputs, and generated
 # hash locks. The installer must never resolve live package ranges on a user's Mac.
 mkdir -p "$APP/Contents/Resources/repo/backend" "$APP/Contents/Resources/repo/scripts"
-for lock in requirements.lock requirements-pocket.lock; do
+for lock in requirements.txt requirements-pocket.txt; do
   if [ ! -s "$ROOT/backend/$lock" ]; then
     echo "[build] missing backend/$lock; run the dependency-lock workflow before packaging" >&2
     exit 1
