@@ -8,6 +8,7 @@ on:
       - "app/Sources/Yap/YapApp.swift"
       - "app/Tests/YapTests/ModelNetworkPolicyTests.swift"
       - "app/Package.resolved"
+      - "app/Package.swift"
 
 permissions:
   contents: read
