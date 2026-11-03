@@ -186,27 +186,9 @@ final class BackendManager: NSObject, ObservableObject {
         return FileManager.default.isExecutableFile(atPath: py.path) ? py : nil
     }
 
-    /// Strip the download-quarantine flag from our own bundle so the nested
-    /// Python binaries can be spawned. Safe no-op if not quarantined.
-    private func stripQuarantine() async {
-        let bundle = Bundle.main.bundleURL.path
-        guard bundle.hasSuffix(".app") else { return }
-        // xattr -dr walks the whole bundle (thousands of files) — run it off the
-        // main actor so app launch stays responsive.
-        await Task.detached(priority: .userInitiated) {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
-            p.arguments = ["-dr", "com.apple.quarantine", bundle]
-            // Only wait if the launch actually succeeded — waitUntilExit() on a
-            // process that never ran raises an Obj-C exception.
-            do { try p.run(); p.waitUntilExit() } catch { }
-        }.value
-    }
-
     private func launchProcess() async {
         discardExitedProcess()
         guard process == nil else { return }
-        if bundledPython != nil { await stripQuarantine() }
         let p = Process()
         var env = ProcessInfo.processInfo.environment
         env["YAP_MODELS_DIR"] = modelsDir.path
