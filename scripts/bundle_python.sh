@@ -6,8 +6,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/dist/python-runtime"
-REQ="$ROOT/backend/requirements.txt"
-LOCK="$ROOT/backend/requirements.lock"
+REQ="$ROOT/backend/requirements.in"
+LOCK="$ROOT/backend/requirements.txt"
 
 # A fixed GitHub release + pinned asset digest, published by astral-sh.
 # Update both deliberately after reviewing the new release. NEVER resolve
