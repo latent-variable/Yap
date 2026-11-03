@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import FluidAudio
 import XCTest
 @testable import Yap
