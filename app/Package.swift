@@ -21,7 +21,10 @@ let package = Package(
         ),
         .testTarget(
             name: "YapTests",
-            dependencies: ["Yap"],
+            dependencies: [
+                "Yap",
+                .product(name: "FluidAudio", package: "FluidAudio"),
+            ],
             path: "Tests/YapTests"
         )
     ]
