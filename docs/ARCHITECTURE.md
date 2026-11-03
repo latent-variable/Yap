@@ -229,7 +229,7 @@ Two mechanisms cover the two halves:
 
 The `X-Stream-Footer` response header advertises the marker. `BackendManager` reuses a backend it finds already running, so a newer app can end up talking to an older sidecar; no header means no check, i.e. the old behaviour, rather than every read failing.
 
-Covered by `TestStreamIntegrity` (live uvicorn, raw socket, plus a control that restores skip-and-continue) and end-to-end by `--tailtest` against a fault-injecting backend.
+Covered by `TestStreamIntegrity` (live uvicorn and raw socket): complete streams carry the footer, first-segment failures return 500, and mid-stream failures withhold the footer. End-to-end coverage is provided by `--tailtest` against a fault-injecting backend.
 
 ## Backend lifecycle
 
