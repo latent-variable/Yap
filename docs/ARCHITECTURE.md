@@ -28,6 +28,7 @@ behind one int16-PCM contract.
 | Cloned Pocket voice ID rules | `VoiceID.swift` |
 | Cloning reference-clip recorder | `VoiceRecorder.swift` |
 | Model download | `ModelDownloader.swift` (owned by `AppState` so a download survives closing Settings) |
+| Model network policy (official Hugging Face host, no ambient tokens or telemetry) | `ModelNetworkPolicy.swift` |
 | Model management (size on disk, delete, re-download) | `AppState.swift` + `Views/SettingsView.swift` (Models tab) |
 | Launch at login | `LoginItem.swift` |
 | Views | `Views/MenuContent.swift`, `Views/SettingsView.swift`, `Views/VoiceSelector.swift`, `Views/StableToggleStyle.swift` |
