@@ -636,7 +636,7 @@ def install_pocket():
     from pocket_engine import hd_packages_dir
     target = hd_packages_dir()
     target.mkdir(parents=True, exist_ok=True)
-    req_file = Path(__file__).parent / "requirements-pocket.lock"
+    req_file = Path(__file__).parent / "requirements-pocket.txt"
     # Install a complete, hash-verified lock into the isolated HD environment.
     # Kokoro + ONNX Runtime are in the same lock, so there is no second unpinned
     # pip invocation that can silently pull a different runtime or NumPy ABI.
