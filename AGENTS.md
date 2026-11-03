@@ -221,12 +221,13 @@ and writes `dist/python-runtime/`. `build_app.sh` embeds that at
 and spawns `server.py` directly; only a dev checkout with no embedded runtime
 falls back to `run_backend.sh` (venv from system Python).
 
-Gatekeeper reality: ad-hoc signed + downloaded-from-browser = quarantine →
-"damaged and can't be opened." The app self-strips its own quarantine on launch
-(`BackendManager.stripQuarantine`) so the nested Python can spawn, but the main
-app still needs `xattr -cr` or notarization. True double-click distribution
-requires `scripts/notarize.sh` + a paid Apple Developer ID. Don't claim
-"download and run" works frictionless until it's notarized.
+Gatekeeper policy: never remove `com.apple.quarantine` from the app or
+nested executables as a launch workaround. Runtime code and packaging scripts
+must preserve quarantine; no `xattr -cr` / `xattr -dr` bypasses. Public ad-hoc
+builds are not notarized and may be blocked by Gatekeeper. Do not tell users to
+force them open by stripping quarantine. A friction-free downloaded release
+requires `scripts/notarize.sh` and a paid Apple Developer ID. Local source builds
+are the appropriate route for development testing.
 
 ## Where state lives (not in the repo)
 
@@ -388,8 +389,9 @@ persist across rebuilds.)
 
 Versioned in `app/Resources/Info.plist` (`CFBundleShortVersionString`).
 `make_dmg.sh` reads it for the DMG name. App is ad-hoc signed, not notarized.
-Three install paths exist (see README): Homebrew cask, DMG + `xattr -cr`,
-build-from-source.
+Three install paths exist (see README): Homebrew cask, DMG, and build-from-source.
+The cask and DMG must preserve quarantine; only a notarized release is intended
+for friction-free download/install.
 
 `scripts/release.sh` never writes to `main` of either repo. Two steps:
 
@@ -413,10 +415,8 @@ scripts/release.sh publish X.Y.Z [--yes] [--no-install] [--dry-run]
   the plan. If main moved after prepare, rerun prepare.
 
 Refresh an existing release's binary in place:
-`gh release upload vX.Y.Z dist/Yap-X.Y.Z.dmg --clobber`. The cask's
-`postflight` runs `xattr -cr`, so `brew install --cask latent-variable/tap/yap`
-installs with no Gatekeeper prompt; skipping the tap PR leaves brew users on
-the old version.
+`gh release upload vX.Y.Z dist/Yap-X.Y.Z.dmg --clobber`. The cask must not remove quarantine in `postflight`. Keep its SHA-256 in sync
+with the reviewed release; a non-notarized cask may still be blocked by Gatekeeper.
 
 ## Acceleration (measured, not assumed)
 
