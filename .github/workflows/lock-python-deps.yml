@@ -12,7 +12,9 @@ on:
       - "backend/requirements.txt"
       - "backend/requirements-pocket.txt"
       - "backend/server.py"
+      - "backend/download_models.py"
       - "backend/tests/test_install_security.py"
+      - "backend/tests/test_download_models.py"
       - "scripts/bundle_python.sh"
       - "scripts/build_app.sh"
   workflow_dispatch:
@@ -82,7 +84,8 @@ jobs:
           "$RUNNER_TEMP/yap-default/bin/python" -m pip install --isolated \
             --disable-pip-version-check pytest==9.0.2
           cd backend
-          "$RUNNER_TEMP/yap-default/bin/python" -m pytest tests/test_install_security.py -v
+          "$RUNNER_TEMP/yap-default/bin/python" -m pytest \
+            tests/test_install_security.py tests/test_download_models.py -v
 
       - name: Install and import-check the optional Pocket runtime from hashes
         run: |
