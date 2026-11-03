@@ -51,11 +51,11 @@ jobs:
           PIP_CONFIG_FILE: /dev/null
           PIP_INDEX_URL: https://pypi.org/simple
         run: |
-          pip-compile --upgrade --generate-hashes --allow-unsafe \
+          "$RUNNER_TEMP/yap-python/bin/pip-compile" --upgrade --generate-hashes --allow-unsafe \
             --resolver=backtracking --strip-extras --no-emit-index-url \
             --pip-args="--only-binary=:all:" \
             --output-file=backend/requirements.lock backend/requirements.txt
-          pip-compile --upgrade --generate-hashes --allow-unsafe \
+          "$RUNNER_TEMP/yap-python/bin/pip-compile" --upgrade --generate-hashes --allow-unsafe \
             --resolver=backtracking --strip-extras --no-emit-index-url \
             --pip-args="--only-binary=:all:" \
             --output-file=backend/requirements-pocket.lock backend/requirements-pocket.txt
