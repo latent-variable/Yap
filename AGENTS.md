@@ -6,6 +6,19 @@ highlight text anywhere, press a hotkey, hear it in a local Kokoro or Pocket TTS
 voice. Ears: press a shortcut, speak, and local Parakeet STT types the text
 at your cursor in any app. No cloud, no account, no telemetry.
 
+## Input-event security invariant
+
+- Never add a global key-down/character monitor, a CGEvent tap, or an IOHID
+  keyboard listener. Yap must not collect ordinary typed input.
+- The only global event monitor is the modifier-only hotkey path in
+  `HotKey.swift`; it listens to `.flagsChanged` only and is installed only
+  when the user chooses a modifier-only chord.
+- The only local key-down monitor is `HotKeyRecorder` in Settings, while the
+  user explicitly records a shortcut. It must be removed on commit or when the
+  view disappears.
+- Reading selected text is an explicit user-triggered Accessibility operation;
+  synthetic ⌘C/⌘V events are generated only for that capture/insert flow.
+
 ## What it is, and where the source lives
 
 Two processes. Neither works without the other.
