@@ -122,8 +122,13 @@ switched off, which removes the socket.
 
 ## What Yap does NOT do
 
-- No keylogging. It reads a selection only when you press the shortcut — it does
-  not observe what you type.
+- No keylogging. Yap does not install a global key-down or character-input
+  monitor. Its only global event monitor watches modifier-state changes
+  (`flagsChanged`) for a modifier-only hotkey, and is installed only when you
+  choose that kind of shortcut. While you explicitly record a shortcut in
+  Settings, a local key-down monitor captures that one chord and removes itself
+  immediately after the recording or when Settings closes. It does not observe
+  ordinary typing in other apps.
 - No always-on listening. The mic records only during a dictation session,
   including the 0.6-second finishing window after you press stop. A program using
   the [agent API](AGENT-API.md) starts the same session, with the same HUD, and
