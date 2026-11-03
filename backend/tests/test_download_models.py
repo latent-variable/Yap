@@ -75,7 +75,7 @@ def test_main_skips_only_an_existing_model_with_the_expected_hash(monkeypatch, t
     dest = tmp_path / "model.bin"
     dest.write_bytes(payload)
     monkeypatch.setattr(download_models, "FILES", {"model.bin": ("https://example.invalid/model", expected)})
-    monkeypatch.setattr(sys, "argv", ["download_models.py", "--models-dir", str(tmp_path)})
+    monkeypatch.setattr(sys, "argv", ["download_models.py", "--models-dir", str(tmp_path)])
 
     def unexpected_download(*_args, **_kwargs):
         pytest.fail("verified existing model should not be downloaded again")
