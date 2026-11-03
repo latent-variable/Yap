@@ -9,8 +9,8 @@ on:
       - security/pin-python-runtime
     paths:
       - ".github/workflows/lock-python-deps.yml"
-      - "backend/requirements.txt"
-      - "backend/requirements-pocket.txt"
+      - "backend/requirements.in"
+      - "backend/requirements-pocket.in"
       - "scripts/bundle_python.sh"
 
 permissions:
@@ -54,11 +54,11 @@ jobs:
           "$RUNNER_TEMP/yap-python/bin/pip-compile" --upgrade --generate-hashes --allow-unsafe \
             --resolver=backtracking --strip-extras --no-emit-index-url \
             --pip-args="--only-binary=:all:" \
-            --output-file=backend/requirements.lock backend/requirements.txt
+            --output-file=backend/requirements.txt backend/requirements.txt
           "$RUNNER_TEMP/yap-python/bin/pip-compile" --upgrade --generate-hashes --allow-unsafe \
             --resolver=backtracking --strip-extras --no-emit-index-url \
             --pip-args="--only-binary=:all:" \
-            --output-file=backend/requirements-pocket.lock backend/requirements-pocket.txt
+            --output-file=backend/requirements-pocket.txt backend/requirements-pocket.txt
 
       - name: Verify every default runtime dependency from its lock
         env:
@@ -67,7 +67,7 @@ jobs:
           "$YAP_PYTHON" -m venv "$RUNNER_TEMP/yap-default"
           "$RUNNER_TEMP/yap-default/bin/python" -m pip install --isolated \
             --disable-pip-version-check --require-hashes --only-binary=:all: \
-            --no-cache-dir -r backend/requirements.lock
+            --no-cache-dir -r backend/requirements.txt
           "$RUNNER_TEMP/yap-default/bin/python" -I -c \
             "import kokoro_onnx, onnxruntime, fastapi, soundfile; print('default runtime imports OK')"
 
@@ -79,7 +79,7 @@ jobs:
           "$YAP_PYTHON" -m pip install --isolated --disable-pip-version-check \
             --require-hashes --only-binary=:all: --no-cache-dir \
             --target "$RUNNER_TEMP/yap-pocket" \
-            -r backend/requirements-pocket.lock
+            -r backend/requirements-pocket.txt
           PYTHONPATH="$RUNNER_TEMP/yap-pocket" "$YAP_PYTHON" -c \
             "import torch, pocket_tts, kokoro_onnx, onnxruntime; print('Pocket runtime imports OK', torch.__version__)"
 
@@ -88,8 +88,8 @@ jobs:
         with:
           name: yap-python-lockfiles
           path: |
-            backend/requirements.lock
-            backend/requirements-pocket.lock
+            backend/requirements.txt
+            backend/requirements-pocket.txt
           if-no-files-found: error
           retention-days: 3
 
@@ -112,7 +112,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/requirements.lock backend/requirements-pocket.lock
+          git add backend/requirements.txt backend/requirements-pocket.txt
           if git diff --cached --quiet; then
             echo "Lockfiles are already current."
             exit 0
