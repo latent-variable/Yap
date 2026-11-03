@@ -1,15 +1,17 @@
 # Python runtime dependencies
 
-Yap ships two Python dependency environments:
+Yap ships two Python dependency environments. Each has a human-maintained input
+and a generated, fully pinned lock:
 
-- `requirements.txt` describes the default Kokoro sidecar.
-- `requirements-pocket.txt` describes the optional Pocket environment. It also
-  includes the Kokoro and ONNX packages needed when both engines share one
-  process.
+| Input (edit this) | Generated lock (never edit by hand) | Purpose |
+|---|---|---|
+| `requirements.in` | `requirements.txt` | Default Kokoro sidecar |
+| `requirements-pocket.in` | `requirements-pocket.txt` | Optional Pocket engine, plus Kokoro and ONNX for the shared process |
 
-The corresponding `requirements.txt` and `requirements-pocket.txt` files
-are generated lockfiles. **Do not edit them by hand.** They pin every resolved
-package version and include SHA-256 hashes for the allowed distributions.
+The generated `.txt` files pin every resolved package version and include
+SHA-256 hashes for the allowed distributions. Their conventional
+`requirements*.txt` names also make them visible to the repository's OSV
+dependency scanner.
 
 ## Runtime installation policy
 
@@ -19,28 +21,28 @@ Both install paths must use:
   committed lockfile.
 - `--only-binary=:all:`: do not execute unreviewed source-distribution build
   scripts on a user's Mac.
-- an isolated pip configuration and no pip cache.
+- isolated pip configuration and no pip cache.
 
 The default bundled environment is built from `requirements.txt`. Pocket is
-installed on demand from `requirements-pocket.txt`; it is not resolved from
-live version ranges at install time.
+installed on demand from `requirements-pocket.txt`; neither resolves live
+version ranges on a user's Mac.
 
 ## Regenerating locks
 
-Push changes to either `.in` input file on the
+Edit either `.in` input file and push it to the
 `security/pin-python-runtime` review branch. The
 `Lock Python dependencies` workflow:
 
 1. Runs on an isolated GitHub-hosted Apple Silicon macOS runner.
 2. Downloads the exact CPython 3.12.16 build used by Yap and verifies its
    published SHA-256 before running the resolver.
-3. Uses pinned pip-tools 7.6.2 and resolves wheels only from PyPI.
+3. Uses pinned pip-tools 7.6.2 and resolves binary wheels only from PyPI.
 4. Installs the default lock and the optional Pocket lock in temporary runner
-   directories to prove the locks are installable for this target.
+   directories to prove both environments are installable for this target.
 5. Commits the generated lockfiles back to the review branch only after both
    environments pass.
 
 Review every version change and run the repository's OSV security scan before
-merging. A hash lock proves the downloaded artifact matches the reviewed
+merging. A hash lock proves the downloaded artifact matches the committed
 digest; it does **not** prove that the package itself is benign. Keep the
 dependency list minimal and review new direct/transitive packages.
