@@ -45,6 +45,18 @@ pieces an agent must keep in sync if touching either side:
   outright. `ownsProcess` means "we may end this process", not "we started it".
   The full decision table: `docs/ARCHITECTURE.md`.
 
+## Model-download network invariant
+
+- Before any model load or sidecar launch, `ModelNetworkPolicy.apply()` must
+  pin FluidAudio to `https://huggingface.co`, remove ambient Hugging Face
+  credentials and custom endpoint overrides, and disable implicit token use
+  and Hugging Face telemetry.
+- Yap uses public model assets; never forward a user's HF token or allow
+  `REGISTRY_URL`, `MODEL_REGISTRY_URL`, or `HF_ENDPOINT` to redirect a request.
+- Model files must be hash-verified before use. Model downloads may fetch
+  public weights; audio, transcripts, selected text, and clipboard contents
+  must never be uploaded to model hosts.
+
 ## Two engines (Kokoro + Pocket TTS)
 
 `/synthesize` takes an `engine` param: `kokoro` (default) or `pocket`. Both emit
