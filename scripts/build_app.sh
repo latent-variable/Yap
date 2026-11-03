@@ -38,10 +38,16 @@ if [ -d "$ROOT/app/Resources/hd-voices" ]; then
   cp "$ROOT/app/Resources/hd-voices/"*.wav "$APP/Contents/Resources/hd-voices/" 2>/dev/null || true
 fi
 
-# Bundle backend sources + launcher so a packaged app can run self-contained.
-# Copy every .py + requirements so new modules (e.g. pocket_engine) ship too.
+# Bundle backend sources, human-maintained requirement inputs, and generated
+# hash locks. The installer must never resolve live package ranges on a user's Mac.
 mkdir -p "$APP/Contents/Resources/repo/backend" "$APP/Contents/Resources/repo/scripts"
-cp "$ROOT/backend/"*.py "$ROOT/backend/"requirements*.txt "$APP/Contents/Resources/repo/backend/"
+for lock in requirements.lock requirements-pocket.lock; do
+  if [ ! -s "$ROOT/backend/$lock" ]; then
+    echo "[build] missing backend/$lock; run the dependency-lock workflow before packaging" >&2
+    exit 1
+  fi
+done
+cp "$ROOT/backend/"*.py "$ROOT/backend/"requirements*.txt "$ROOT/backend/"requirements*.lock "$APP/Contents/Resources/repo/backend/"
 cp "$ROOT/scripts/run_backend.sh" "$APP/Contents/Resources/repo/scripts/"
 chmod +x "$APP/Contents/Resources/repo/scripts/run_backend.sh"
 
