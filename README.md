@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/8fae0d41-6e23-4b7c-8de5-03618614a30b
 brew install --cask latent-variable/tap/yap
 ```
 
-Or grab `Yap-*.dmg` from [Releases](https://github.com/latent-variable/Yap/releases), drag it to Applications, and run `xattr -cr /Applications/Yap.app` once (it's open source, not notarized). Or build it: `git clone https://github.com/latent-variable/Yap.git && cd Yap && bash scripts/build_app.sh && open dist/Yap.app`.
+Or grab `Yap-*.dmg` from [Releases](https://github.com/latent-variable/Yap/releases). **Current public builds are not notarized. Do not run `xattr -cr` or otherwise remove Gatekeeper quarantine to force them open.** For local testing, build from source on your own Mac; friction-free downloaded distribution requires a Developer ID–signed and notarized release.
 
 First launch: Yap downloads the Kokoro voice (~340 MB) on its own; grant Microphone and Accessibility when asked. The app bundles its own Python, so there is nothing else to install.
 
