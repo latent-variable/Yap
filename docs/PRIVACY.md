@@ -24,8 +24,13 @@ it touches, and why — so you don't have to take "private" on faith.
 
 ## What goes over the network
 
-Every network call Yap makes is a download or the update check. None of them
-sends your audio, your text, or anything that identifies you.
+Every network call Yap makes is a public model download or the update check.
+Model downloads are pinned to the official Hugging Face service. Before any
+model load, Yap removes inherited Hugging Face tokens and custom endpoint
+overrides from its own process and Python sidecar, disables implicit token use
+and disables Hugging Face telemetry. Public models do not require your personal
+Hugging Face account. No audio, transcript, selected text, or clipboard content
+is uploaded.
 
 **At launch, without a click:**
 
