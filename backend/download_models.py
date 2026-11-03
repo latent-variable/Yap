@@ -100,8 +100,8 @@ def main() -> int:
                 if sha256_file(dest) == expected_sha256:
                     emit(file=name, skipped=True, verified=True)
                     continue
-            except OSError:
-                # An unreadable or replaced file is not a verified model.
+            except (OSError, ValueError):
+                # An unreadable, replaced, or non-regular file is not verified.
                 pass
             # Never trust a partial, stale, or modified pre-existing model.
             dest.unlink()
