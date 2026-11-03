@@ -9,7 +9,9 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -31,21 +33,32 @@ def emit(**kw):
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    # O_NOFOLLOW prevents an existing model symlink from redirecting the read.
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f"{path.name} is not a regular file")
+        digest = hashlib.sha256()
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
 
 
 def download(url: str, dest: Path, expected_sha256: str) -> None:
-    tmp = dest.with_suffix(dest.suffix + ".part")
+    # mkstemp uses exclusive creation and a private mode; never open a
+    # predictable .part path that another local process could pre-create as
+    # a symlink to an unrelated file.
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".part", dir=dest.parent)
+    tmp = Path(tmp_name)
     digest = hashlib.sha256()
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
-            total = int(response.headers.get("Content-Length", 0))
-            done = 0
-            with tmp.open("wb") as f:
+        with os.fdopen(fd, "wb") as f:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                total = int(response.headers.get("Content-Length", 0))
+                done = 0
                 while True:
                     buf = response.read(1 << 20)
                     if not buf:
@@ -57,7 +70,8 @@ def download(url: str, dest: Path, expected_sha256: str) -> None:
         actual = digest.hexdigest()
         if actual != expected_sha256:
             raise ValueError(f"SHA-256 mismatch for {dest.name}: {actual}")
-        tmp.replace(dest)
+        # os.replace replaces a destination symlink itself; it never follows it.
+        os.replace(tmp, dest)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
@@ -74,10 +88,21 @@ def main() -> int:
 
     for name, (url, expected_sha256) in FILES.items():
         dest = mdir / name
-        if dest.exists():
-            if dest.is_file() and sha256_file(dest) == expected_sha256:
-                emit(file=name, skipped=True, verified=True)
-                continue
+        if dest.is_symlink():
+            # Remove the link itself, never follow it into another location.
+            dest.unlink()
+            emit(file=name, discarded_invalid_existing=True)
+        elif dest.exists():
+            if not dest.is_file():
+                emit(file=name, error="existing model path is not a regular file")
+                return 1
+            try:
+                if sha256_file(dest) == expected_sha256:
+                    emit(file=name, skipped=True, verified=True)
+                    continue
+            except OSError:
+                # An unreadable or replaced file is not a verified model.
+                pass
             # Never trust a partial, stale, or modified pre-existing model.
             dest.unlink()
             emit(file=name, discarded_invalid_existing=True)
