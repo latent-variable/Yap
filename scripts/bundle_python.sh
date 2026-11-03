@@ -7,6 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/dist/python-runtime"
 REQ="$ROOT/backend/requirements.txt"
+LOCK="$ROOT/backend/requirements.lock"
 
 # A fixed GitHub release + pinned asset digest, published by astral-sh.
 # Update both deliberately after reviewing the new release. NEVER resolve
@@ -22,7 +23,8 @@ if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
 fi
 
 REQ_SHA256="$(shasum -a 256 "$REQ" | awk '{print $1}')"
-STAMP="source=$PYTHON_ASSET sha256=$PYTHON_SHA256 requirements=$REQ_SHA256"
+LOCK_SHA256="$(shasum -a 256 "$LOCK" | awk '{print $1}')"
+STAMP="source=$PYTHON_ASSET sha256=$PYTHON_SHA256 requirements=$REQ_SHA256 lock=$LOCK_SHA256"
 if [ -x "$OUT/bin/python3" ] && [ "${1:-}" != "--force" ] && \
    [ -f "$OUT/.yap-runtime-source" ] && \
    [ "$(cat "$OUT/.yap-runtime-source")" = "$STAMP" ]; then
@@ -51,7 +53,7 @@ mv "$TMP/x/python" "$OUT"
 echo "[py] installing backend dependencies"
 # Keep pip detached from the builder's user/system package context.
 "$OUT/bin/python3" -I -m pip install -q --disable-pip-version-check --isolated \
-    -r "$REQ"
+    --require-hashes --only-binary=:all: -r "$LOCK"
 
 # Trim build fat.
 find "$OUT/lib" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
