@@ -71,6 +71,13 @@ jobs:
           "$RUNNER_TEMP/yap-default/bin/python" -I -c \
             "import kokoro_onnx, onnxruntime, fastapi, soundfile; print('default runtime imports OK')"
 
+      - name: Test Pocket installer security contract
+        run: |
+          "$RUNNER_TEMP/yap-default/bin/python" -m pip install --isolated \
+            --disable-pip-version-check pytest==9.0.2
+          cd backend
+          "$RUNNER_TEMP/yap-default/bin/python" -m pytest tests/test_install_security.py -v
+
       - name: Verify optional Pocket lock can install as the app does
         env:
           PIP_CONFIG_FILE: /dev/null
