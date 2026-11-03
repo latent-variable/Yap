@@ -628,6 +628,16 @@ def unload_engine(name: str):
     raise HTTPException(404, f"unknown engine {name!r}")
 
 
+def _pocket_install_command(target: Path) -> list[str]:
+    """Install the committed Pocket lock, never resolve live package ranges."""
+    req_file = Path(__file__).parent / "requirements-pocket.txt"
+    return [
+        sys.executable, "-I", "-m", "pip", "--isolated", "install",
+        "--target", str(target), "--upgrade", "--require-hashes",
+        "--only-binary=:all:", "--no-cache-dir", "-r", str(req_file),
+    ]
+
+
 @app.post("/engines/pocket/install")
 def install_pocket():
     """Install the Pocket TTS deps into app-support hd-packages (not the bundle).
@@ -636,16 +646,9 @@ def install_pocket():
     from pocket_engine import hd_packages_dir
     target = hd_packages_dir()
     target.mkdir(parents=True, exist_ok=True)
-    req_file = Path(__file__).parent / "requirements-pocket.txt"
-    # Install a complete, hash-verified lock into the isolated HD environment.
-    # Kokoro + ONNX Runtime are in the same lock, so there is no second unpinned
-    # pip invocation that can silently pull a different runtime or NumPy ABI.
-    pip = [
-        sys.executable, "-I", "-m", "pip", "--isolated", "install",
-        "--target", str(target), "--upgrade", "--require-hashes",
-        "--only-binary=:all:", "--no-cache-dir", "-r", str(req_file),
-    ]
-    steps = [pip]
+    # Kokoro + ONNX Runtime are in the same lock, so there is no second
+    # unpinned pip invocation that can silently pull a different runtime or ABI.
+    steps = [_pocket_install_command(target)]
 
     def gen() -> Iterator[bytes]:
         yield f"installing Pocket engine into {target}\n".encode()
