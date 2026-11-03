@@ -37,10 +37,8 @@ echo "[notarize] packaging DMG"
 # signature applied above and guaranteeing a notarization rejection.
 bash "$ROOT/scripts/make_dmg.sh" "$VERSION" --no-build >/dev/null
 
-# Verify the bundle INSIDE the DMG, not $APP. Apple judges the copy that was
-# staged, xattr-stripped and compressed, and that copy is the whole reason this
-# step exists: make_dmg.sh used to rebuild over the signed bundle, and the only
-# symptom was an opaque rejection minutes later. Check the artifact, not a proxy.
+# Verify the bundle INSIDE the DMG, not $APP. Check the exact artifact
+# submitted to Apple; make_dmg.sh must preserve its attributes and signature.
 MNT="$(mktemp -d)"
 hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null
 # Detach on any exit, or a failed check leaves the volume mounted.
