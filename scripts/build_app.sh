@@ -47,7 +47,7 @@ for lock in requirements.txt requirements-pocket.txt; do
     exit 1
   fi
 done
-cp "$ROOT/backend/"*.py "$ROOT/backend/"requirements*.txt "$ROOT/backend/"requirements*.lock "$APP/Contents/Resources/repo/backend/"
+cp "$ROOT/backend/"*.py "$ROOT/backend/"requirements*.txt "$APP/Contents/Resources/repo/backend/"
 cp "$ROOT/scripts/run_backend.sh" "$APP/Contents/Resources/repo/scripts/"
 chmod +x "$APP/Contents/Resources/repo/scripts/run_backend.sh"
 
