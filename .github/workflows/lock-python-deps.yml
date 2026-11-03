@@ -1,37 +1,41 @@
-name: Lock Python dependencies
+name: Python dependency lock validation
 
-# Resolve on the same Apple Silicon / CPython target used by Yap's bundled
-# runtime. The resolver job has read-only repository access; only the separate
-# commit job receives contents:write, and it only commits generated lockfiles.
+# Validate the committed dependency locks on the exact Apple Silicon / CPython
+# target used by Yap. This workflow is read-only: dependency updates are reviewed
+# as source changes and the generated lockfiles are committed with the PR.
 on:
-  push:
-    branches:
-      - security/pin-python-runtime
+  pull_request:
     paths:
       - ".github/workflows/lock-python-deps.yml"
       - "backend/requirements.in"
       - "backend/requirements-pocket.in"
+      - "backend/requirements.txt"
+      - "backend/requirements-pocket.txt"
+      - "backend/server.py"
+      - "backend/tests/test_install_security.py"
       - "scripts/bundle_python.sh"
+      - "scripts/build_app.sh"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: yap-python-lock-${{ github.ref }}
+  group: yap-python-lock-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  resolve:
-    name: Resolve and verify macOS arm64 Python locks
+  verify:
+    name: Verify hash-locked Python environments (macOS arm64)
     runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Download the exact pinned CPython runtime and install resolver
+
+      - name: Download exact pinned CPython runtime and install resolver
         run: |
           set -euo pipefail
           test "$(uname -m)" = "arm64"
-          asset="cpython-3.12.16+20261026-aarch64-apple-darwin-install_only.tar.gz"
           url="https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-aarch64-apple-darwin-install_only.tar.gz"
           expected="fbf4afef53c2a6b72bb741bc06d5671a9dfaf87bd84e5aa73ac9b3d0d589f14e"
           tmp="$(mktemp -d)"
@@ -46,23 +50,25 @@ jobs:
           "$RUNNER_TEMP/yap-python/bin/python3" -I -m pip install --isolated \
             --disable-pip-version-check pip-tools==7.6.2
 
-      - name: Compile complete hash-locked dependency sets
+      - name: Verify committed locks match their input requirements
         env:
           PIP_CONFIG_FILE: /dev/null
           PIP_INDEX_URL: https://pypi.org/simple
         run: |
-          "$RUNNER_TEMP/yap-python/bin/pip-compile" --upgrade --generate-hashes --allow-unsafe \
+          cp backend/requirements.txt "$RUNNER_TEMP/requirements.before"
+          cp backend/requirements-pocket.txt "$RUNNER_TEMP/requirements-pocket.before"
+          "$RUNNER_TEMP/yap-python/bin/pip-compile" --generate-hashes --allow-unsafe \
             --resolver=backtracking --strip-extras --no-emit-index-url \
             --pip-args="--only-binary=:all:" \
             --output-file=backend/requirements.txt backend/requirements.in
-          "$RUNNER_TEMP/yap-python/bin/pip-compile" --upgrade --generate-hashes --allow-unsafe \
+          "$RUNNER_TEMP/yap-python/bin/pip-compile" --generate-hashes --allow-unsafe \
             --resolver=backtracking --strip-extras --no-emit-index-url \
             --pip-args="--only-binary=:all:" \
             --output-file=backend/requirements-pocket.txt backend/requirements-pocket.in
+          cmp backend/requirements.txt "$RUNNER_TEMP/requirements.before"
+          cmp backend/requirements-pocket.txt "$RUNNER_TEMP/requirements-pocket.before"
 
-      - name: Verify every default runtime dependency from its lock
-        env:
-          PIP_CONFIG_FILE: /dev/null
+      - name: Install and import-check the default runtime from hashes
         run: |
           "$YAP_PYTHON" -m venv "$RUNNER_TEMP/yap-default"
           "$RUNNER_TEMP/yap-default/bin/python" -m pip install --isolated \
@@ -78,9 +84,7 @@ jobs:
           cd backend
           "$RUNNER_TEMP/yap-default/bin/python" -m pytest tests/test_install_security.py -v
 
-      - name: Verify optional Pocket lock can install as the app does
-        env:
-          PIP_CONFIG_FILE: /dev/null
+      - name: Install and import-check the optional Pocket runtime from hashes
         run: |
           mkdir -p "$RUNNER_TEMP/yap-pocket"
           "$YAP_PYTHON" -m pip install --isolated --disable-pip-version-check \
@@ -89,41 +93,3 @@ jobs:
             -r backend/requirements-pocket.txt
           PYTHONPATH="$RUNNER_TEMP/yap-pocket" "$YAP_PYTHON" -c \
             "import torch, pocket_tts, kokoro_onnx, onnxruntime; print('Pocket runtime imports OK', torch.__version__)"
-
-      - name: Upload generated lockfiles
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: yap-python-lockfiles
-          path: |
-            backend/requirements.txt
-            backend/requirements-pocket.txt
-          if-no-files-found: error
-          retention-days: 3
-
-  commit-locks:
-    name: Commit generated lockfiles
-    needs: resolve
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: ${{ github.ref_name }}
-          fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: yap-python-lockfiles
-          path: backend
-      - name: Commit lockfiles to the review branch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/requirements.txt backend/requirements-pocket.txt
-          if git diff --cached --quiet; then
-            echo "Lockfiles are already current."
-            exit 0
-          fi
-          git diff --cached --check
-          git commit -m "build: lock Python runtime dependencies with hashes"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
