@@ -54,11 +54,11 @@ jobs:
           "$RUNNER_TEMP/yap-python/bin/pip-compile" --upgrade --generate-hashes --allow-unsafe \
             --resolver=backtracking --strip-extras --no-emit-index-url \
             --pip-args="--only-binary=:all:" \
-            --output-file=backend/requirements.txt backend/requirements.txt
+            --output-file=backend/requirements.txt backend/requirements.in
           "$RUNNER_TEMP/yap-python/bin/pip-compile" --upgrade --generate-hashes --allow-unsafe \
             --resolver=backtracking --strip-extras --no-emit-index-url \
             --pip-args="--only-binary=:all:" \
-            --output-file=backend/requirements-pocket.txt backend/requirements-pocket.txt
+            --output-file=backend/requirements-pocket.txt backend/requirements-pocket.in
 
       - name: Verify every default runtime dependency from its lock
         env:
