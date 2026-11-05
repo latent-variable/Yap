@@ -1,4 +1,35 @@
 import Foundation
+import Security
+
+/// Certificate-pinned transport. TLS proves the listener's identity on the
+/// SAME connection that carries headers and payload. A squatter which takes
+/// the port between /verify and /synthesize has no private TLS key and never
+/// receives an HTTP Bearer token or user text.
+private final class PinnedYapTLSDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              challenge.protectionSpace.host == "127.0.0.1",
+              challenge.protectionSpace.protocol == "https",
+              let trust = challenge.protectionSpace.serverTrust,
+              let leaf = SecTrustGetCertificateAtIndex(trust, 0),
+              let expected = BackendAuth.pinnedTLSCertificateDER,
+              Data(SecCertificateCopyData(leaf) as Data) == expected else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        // No backend endpoint ever redirects. A malicious listener must not
+        // redirect an authenticated request (and selected text) to a new host.
+        completionHandler(nil)
+    }
+}
 
 struct VoiceInfo: Identifiable, Decodable, Hashable {
     let id: String
@@ -26,14 +57,17 @@ struct HealthInfo: Decodable {
 
 /// Thin HTTP client for the local Kokoro backend.
 struct BackendClient {
-    var base = URL(string: "http://127.0.0.1:8766")!
+    var base = URL(string: "https://127.0.0.1:8766")!
     // One reused session — a computed property would spin up (and leak) a fresh
     // URLSession, with its own connection pool + delegate thread, on every call.
     private let session: URLSession = {
-        let cfg = URLSessionConfiguration.default
+        let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 600
         cfg.waitsForConnectivity = false
-        return URLSession(configuration: cfg)
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
+        cfg.httpShouldSetCookies = false
+        return URLSession(configuration: cfg, delegate: PinnedYapTLSDelegate(), delegateQueue: nil)
     }()
 
     private enum AuthError: LocalizedError {
@@ -44,10 +78,10 @@ struct BackendClient {
         }
     }
 
-    /// Never send the bearer secret to a listener on a predictable loopback port
-    /// until it proves possession of the secret via the unauthenticated /verify.
-    /// Verify on each request: a previously verified backend may have exited.
-    /// Same-user malware remains outside this protection's trust boundary.
+    /// Each /verify request uses pinned TLS; so does the protected request.
+    /// Even if the listener is replaced between calls, TLS authenticates the
+    /// new connection BEFORE the secret or selected text is transmitted.
+    /// Same-user malware with read access to private key is out of scope.
     private func authed(_ url: URL) async throws -> URLRequest {
         guard await verifyAuthentic(), let token = BackendAuth.token else {
             throw AuthError.unverifiedBackend
