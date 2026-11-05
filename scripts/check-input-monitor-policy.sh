@@ -47,5 +47,16 @@ for file, source in contents.items():
     for api in ("CGEventTapCreate", "IOHIDManagerCreate", "IOHIDDeviceOpen"):
         assert api not in source, ("forbidden global keyboard capture API", file, api)
 
-print("input-monitor policy: only a modifier global monitor and scoped shortcut recorder")
+# Python sidecar code must also never gain a keyboard watcher. Keep this
+# independent of the Swift event monitor restrictions above.
+for path in Path("backend").rglob("*.py"):
+    source = path.read_text()
+    for api in (
+        "pynput", "keyboard.hook", "keyboard.on_press",
+        "keyboard.on_release", "evdev.InputDevice", "CGEventTapCreate",
+        "IOHIDManagerCreate", "IOHIDDeviceOpen",
+    ):
+        assert api not in source, ("forbidden backend keyboard hook", str(path), api)
+
+print("input-monitor policy: only modifier monitor and scoped recorder; no backend key hooks")
 PY
