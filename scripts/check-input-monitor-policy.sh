@@ -1,36 +1,51 @@
 #!/usr/bin/env bash
-# Guard against accidentally turning the hotkey implementation into a keylogger.
+# Fail closed if a code change could introduce global key capture.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-global="$(grep -RIn 'addGlobalMonitorForEvents' app/Sources || true)"
-if [ -n "$global" ]; then
-  # The one permitted global monitor is modifier-state-only in HotKey.swift.
-  if printf '%s\n' "$global" | grep -vE 'app/Sources/Yap/HotKey\.swift:.*addGlobalMonitorForEvents\(matching: \.flagsChanged\)' ; then
-    echo "input-monitor policy violation: global monitor may observe more than modifier state" >&2
-    exit 1
-  fi
-  [ "$(printf '%s\n' "$global" | wc -l | tr -d ' ')" = "1" ] || {
-    echo "input-monitor policy violation: expected exactly one global modifier monitor" >&2
-    exit 1
-  }
-fi
+python3 - <<'PY'
+from pathlib import Path
+import re
+files = list(Path("app/Sources").rglob("*.swift"))
+contents = {str(path): path.read_text() for path in files}
+recorder_file = "app/Sources/Yap/Views/SettingsView.swift"
+hotkey_file = "app/Sources/Yap/HotKey.swift"
+recorder = contents[recorder_file]
+start = recorder.index("private struct HotKeyRecorder: View {")
+end = recorder.index("// MARK: - History", start)
+body = recorder[start:end]
 
-# Key-down capture is allowed only in the Settings shortcut recorder, where it
-# is scoped to the active recording and removed immediately afterward.
-local_keydown="$(grep -RIn 'addLocalMonitorForEvents' app/Sources | grep -E 'keyDown|\.keyDown' || true)"
-if [ -n "$local_keydown" ]; then
-  if printf '%s\n' "$local_keydown" | grep -v 'app/Sources/Yap/Views/SettingsView.swift:'; then
-    echo "input-monitor policy violation: local key-down monitor outside Settings recorder" >&2
-    exit 1
-  fi
-fi
+global_calls = []
+local_key_calls = []
+for file, source in contents.items():
+    for m in re.finditer(r'addGlobalMonitorForEvents\s*\(\s*matching:\s*([^)]*)\)', source):
+        global_calls.append((file, m.group(1).strip()))
+    for m in re.finditer(r'addLocalMonitorForEvents\s*\(\s*matching:\s*([^)]*)\)', source):
+        if ".keyDown" in m.group(1):
+            local_key_calls.append((file, m.group(0)))
 
-# These APIs capture global keyboard input rather than the specific hotkey chord.
-if grep -RInE 'CGEventTapCreate|IOHIDManagerCreate|IOHIDDeviceOpen|pynput|keyboard\.hook' \
-  app/Sources backend; then
-  echo "input-monitor policy violation: low-level keyboard capture API found" >&2
-  exit 1
-fi
+assert global_calls == [(hotkey_file, ".flagsChanged")], (
+    "global keyboard event monitor expanded", global_calls
+)
+expected = "addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged])"
+assert len(local_key_calls) == 1, ("unexpected local key-down monitors", local_key_calls)
+assert local_key_calls[0][0] == recorder_file, local_key_calls
+assert recorder.count(expected) == 1 and body.count(expected) == 1, (
+    "local key-down monitor must only exist inside HotKeyRecorder"
+)
+assert "recording ? startMonitor() : stopMonitor()" in body, (
+    "recorder must only activate monitor while recording"
+)
+assert ".onDisappear { stopMonitor() }" in body, (
+    "recorder monitor must be removed when Settings closes"
+)
+assert "recording = false\n        stopMonitor()" in body, (
+    "recorder monitor must be removed after committing a chord"
+)
 
-echo "input-monitor policy: no global key-down/character capture"
+for file, source in contents.items():
+    for api in ("CGEventTapCreate", "IOHIDManagerCreate", "IOHIDDeviceOpen"):
+        assert api not in source, ("forbidden global keyboard capture API", file, api)
+
+print("input-monitor policy: only a modifier global monitor and scoped shortcut recorder")
+PY
