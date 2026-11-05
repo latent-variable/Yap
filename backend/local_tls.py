@@ -56,7 +56,13 @@ def ensure_identity(token_file: Path) -> tuple[Path, Path]:
             return False
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.load_cert_chain(certfile=str(cert), keyfile=str(key))
+        try:
+            context.load_cert_chain(certfile=str(cert), keyfile=str(key))
+        except (OSError, ssl.SSLError):
+            # During a competing first launch, the key may be published just
+            # before the cert. Never confuse an incomplete/mismatched pair with
+            # an authenticated listener, and never abort a waiting contender.
+            return False
         return True
 
     def wait_for_ready() -> tuple[Path, Path]:
