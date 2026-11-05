@@ -1,5 +1,6 @@
 """Local HTTPS listener identity: reject symlink/private-key attacks."""
 import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import ssl
@@ -78,3 +79,20 @@ def test_concurrent_first_launch_reuses_one_private_tls_identity(tmp_path):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(str(cert), str(key))
     assert stat.S_IMODE(key.stat().st_mode) == 0o600
+
+
+def test_mismatched_certificate_and_key_fails_closed(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    mixed = tmp_path / "mixed"
+    for d in (first, second, mixed):
+        d.mkdir(mode=0o700)
+    cert_a, _ = ensure_identity(first / "auth-token")
+    _, key_b = ensure_identity(second / "auth-token")
+    cert, key = identity_paths(mixed / "auth-token")
+    shutil.copyfile(cert_a, cert)
+    shutil.copyfile(key_b, key)
+    cert.chmod(0o600)
+    key.chmod(0o600)
+    with pytest.raises(RuntimeError, match="incomplete or unsafe"):
+        ensure_identity(mixed / "auth-token")
