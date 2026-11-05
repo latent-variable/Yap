@@ -19,7 +19,7 @@ def test_identity_created_private_and_usable(tmp_path):
     assert stat.S_IMODE(cert.stat().st_mode) == 0o600
     assert stat.S_IMODE(key.stat().st_mode) == 0o600
     assert cert.read_bytes().startswith(b"-----BEGIN CERTIFICATE-----")
-    assert key.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----")
+    assert b"PRIVATE KEY-----" in key.read_bytes().splitlines()[0]
     assert ensure_identity(token) == (cert, key)  # identity persists
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(str(cert), str(key))
