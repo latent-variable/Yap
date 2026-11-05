@@ -339,7 +339,8 @@ extension CLITest {
                 try fm.createDirectory(at: scripts, withIntermediateDirectories: true)
                 try fm.createDirectory(at: models, withIntermediateDirectories: true)
                 let python = #"""
-                import hashlib, hmac, http.server, json, os, sys, urllib.parse
+                import hashlib, hmac, http.server, json, os, ssl, subprocess, sys, urllib.parse
+                from pathlib import Path
 
                 port, pid_file, starts_file, models_dir = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
                 # The production backend now requires HMAC identity proof
@@ -392,7 +393,29 @@ extension CLITest {
                 class Server(http.server.ThreadingHTTPServer):
                     allow_reuse_address = True
 
-                Server(("127.0.0.1", port), Handler).serve_forever()
+                # The fake backend also speaks pinned HTTPS. Using the same
+                # private certificate path as the real server proves recovery
+                # works after authentication is bound to the TLS connection.
+                cert_dir = Path(os.environ["YAP_AUTH_TOKEN_FILE"]).parent
+                cert = cert_dir / "backend-tls-cert.pem"
+                key = cert_dir / "backend-tls-key.pem"
+                if not cert.exists() or not key.exists():
+                    subprocess.run(
+                        ["/usr/bin/openssl", "req", "-x509", "-newkey", "rsa:2048",
+                         "-nodes", "-days", "3650", "-subj", "/CN=127.0.0.1",
+                         "-addext", "subjectAltName=IP:127.0.0.1",
+                         "-addext", "extendedKeyUsage=serverAuth",
+                         "-keyout", str(key), "-out", str(cert)],
+                        check=True, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    os.chmod(key, 0o600)
+                    os.chmod(cert, 0o600)
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                context.load_cert_chain(certfile=str(cert), keyfile=str(key))
+                httpd = Server(("127.0.0.1", port), Handler)
+                httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+                httpd.serve_forever()
                 """#
                 let script = "#!/bin/bash\nexec python3 \(shellQuote(server.path)) \"$YAP_PORT\" \(shellQuote(pidFile.path)) \(shellQuote(startsFile.path)) \(shellQuote(models.path))\n"
                 try Data(python.utf8).write(to: server)
