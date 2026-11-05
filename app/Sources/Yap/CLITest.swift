@@ -339,9 +339,14 @@ extension CLITest {
                 try fm.createDirectory(at: scripts, withIntermediateDirectories: true)
                 try fm.createDirectory(at: models, withIntermediateDirectories: true)
                 let python = #"""
-                import http.server, json, os, sys
+                import hashlib, hmac, http.server, json, os, sys, urllib.parse
 
                 port, pid_file, starts_file, models_dir = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+                # The production backend now requires HMAC identity proof
+                # before /health sends any Authorization header.
+                with open(os.environ["YAP_AUTH_TOKEN_FILE"], encoding="utf-8") as f:
+                    token = f.read().strip()
+                assert token
                 try:
                     with open(starts_file) as f:
                         starts = int(f.read()) + 1
@@ -354,20 +359,33 @@ extension CLITest {
 
                 class Handler(http.server.BaseHTTPRequestHandler):
                     def do_GET(self):
-                        if self.path != "/health":
+                        parsed = urllib.parse.urlsplit(self.path)
+                        if parsed.path == "/verify":
+                            nonce = urllib.parse.parse_qs(parsed.query).get("nonce", [""])[0]
+                            if not nonce or len(nonce) > 128:
+                                self.send_error(400)
+                                return
+                            proof = hmac.new(token.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+                            body = json.dumps({"proof": proof}).encode()
+                        elif parsed.path == "/health":
+                            if self.headers.get("Authorization") != "Bearer " + token:
+                                self.send_error(401)
+                                return
+                            body = json.dumps({
+                                "status": "ok", "model_loaded": True, "files_present": True,
+                                "models_dir": models_dir, "error": None, "sample_rate": 24000,
+                                "provider_mode": "cpu", "active_providers": ["CPUExecutionProvider"],
+                                "available_providers": ["CPUExecutionProvider"]
+                            }).encode()
+                        else:
                             self.send_error(404)
                             return
-                        body = json.dumps({
-                            "status": "ok", "model_loaded": True, "files_present": True,
-                            "models_dir": models_dir, "error": None, "sample_rate": 24000,
-                            "provider_mode": "cpu", "active_providers": ["CPUExecutionProvider"],
-                            "available_providers": ["CPUExecutionProvider"]
-                        }).encode()
                         self.send_response(200)
                         self.send_header("Content-Type", "application/json")
                         self.send_header("Content-Length", str(len(body)))
                         self.end_headers()
                         self.wfile.write(body)
+
                     def log_message(self, *_):
                         pass
 
