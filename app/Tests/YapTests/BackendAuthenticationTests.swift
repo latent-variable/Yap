@@ -24,6 +24,19 @@ final class BackendAuthenticationTests: XCTestCase {
         }
     }
 
+    func testUnpinnedHTTPOriginFailsWithoutSendingSpeech() async throws {
+        var client = BackendClient()
+        client.base = try XCTUnwrap(URL(string: "http://127.0.0.1:8766"))
+        let trusted = await client.verifyAuthentic()
+        XCTAssertFalse(trusted)
+        do {
+            _ = try await client.wav(text: "HTTP-LEAK-CANARY", voice: "af_heart", speed: 1)
+            XCTFail("No speech request may be sent over cleartext HTTP")
+        } catch {
+            // Must fail before any socket request or bearer header is created.
+        }
+    }
+
     func testPortSquatterCannotReceiveBearerOrCapturedText() async throws {
         guard BackendAuth.token != nil else {
             throw XCTSkip("auth token unavailable")
