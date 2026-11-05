@@ -1,5 +1,7 @@
 """Local HTTPS listener identity: reject symlink/private-key attacks."""
 import os
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import ssl
 import stat
 import subprocess
@@ -55,3 +57,24 @@ def test_identity_refuses_preexisting_unrelated_certificate(tmp_path):
     with pytest.raises(RuntimeError, match="incomplete or unsafe"):
         ensure_identity(tmp_path / "auth-token")
     assert cert.read_text() == "not a certificate"
+
+
+def test_concurrent_first_launch_reuses_one_private_tls_identity(tmp_path):
+    tmp_path.chmod(0o700)
+    token = tmp_path / "auth-token"
+    token.write_text("test-secret")
+    barrier = threading.Barrier(2)
+
+    def launch():
+        barrier.wait(timeout=10)
+        return ensure_identity(token)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(launch) for _ in range(2)]
+        results = [future.result(timeout=25) for future in futures]
+
+    assert results[0] == results[1]
+    cert, key = results[0]
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(cert), str(key))
+    assert stat.S_IMODE(key.stat().st_mode) == 0o600
