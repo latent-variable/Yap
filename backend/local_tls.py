@@ -59,12 +59,18 @@ def ensure_identity(token_file: Path) -> tuple[Path, Path]:
         context.load_cert_chain(certfile=str(cert), keyfile=str(key))
         return True
 
-    if cert.exists() or key.exists() or cert.is_symlink() or key.is_symlink():
-        for _ in range(10):
+    def wait_for_ready() -> tuple[Path, Path]:
+        # Concurrent first launches can create the private key and
+        # certificate in separate atomic steps. Give the winner time to
+        # finish instead of making the losing startup fail spuriously.
+        for _ in range(40):
             if ready():
                 return cert, key
             time.sleep(0.1)
         raise RuntimeError("Yap TLS identity is incomplete or unsafe")
+
+    if cert.exists() or key.exists() or cert.is_symlink() or key.is_symlink():
+        return wait_for_ready()
 
     tmp = Path(tempfile.mkdtemp(prefix=".yap-tls-", dir=parent))
     try:
@@ -86,15 +92,18 @@ def ensure_identity(token_file: Path) -> tuple[Path, Path]:
             raise RuntimeError("New Yap TLS identity is not private")
         # Atomic no-overwrite publication; os.link refuses a destination that
         # already exists, including a malicious symlink.
-        os.link(tmp_key, key)
+        try:
+            os.link(tmp_key, key)
+        except FileExistsError:
+            # The other backend has already published its key; don't try to
+            # replace it. Wait until its certificate is published and valid.
+            return wait_for_ready()
         try:
             os.link(tmp_cert, cert)
         except FileExistsError:
-            # Another launch won; never overwrite its identity.
-            if not ready():
-                raise
-        if not ready():
-            raise RuntimeError("Yap TLS certificate and key do not match")
-        return cert, key
+            # No overwrite. If another launch published a matching identity,
+            # use it; otherwise refuse to start rather than mixing key pairs.
+            return wait_for_ready()
+        return wait_for_ready()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
