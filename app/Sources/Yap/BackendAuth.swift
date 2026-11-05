@@ -114,6 +114,33 @@ enum BackendAuth {
         return token
     }
 
+    /// The private TLS identity is generated once by the genuine Python
+    /// sidecar in the same user-owned 0700 directory as auth-token. The app pins
+    /// the exact certificate on EVERY TLS connection before sending a Bearer
+    /// header or selected text. This closes /verify -> request port-rebind races.
+    static var tlsCertificateURL: URL {
+        tokenFileURL.deletingLastPathComponent().appending(path: "backend-tls-cert.pem")
+    }
+
+    static var pinnedTLSCertificateDER: Data? {
+        let url = tlsCertificateURL
+        var info = stat()
+        guard lstat(url.path, &info) == 0,
+              (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              info.st_uid == geteuid(),
+              (info.st_mode & 0o077) == 0 else { return nil }
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        guard let pemData = try? handle.readToEnd(),
+              let pem = String(data: pemData, encoding: .utf8),
+              let first = pem.range(of: "-----BEGIN CERTIFICATE-----"),
+              let last = pem.range(of: "-----END CERTIFICATE-----"),
+              first.upperBound < last.lowerBound else { return nil }
+        let base64 = String(pem[first.upperBound..<last.lowerBound])
+        return Data(base64Encoded: base64, options: .ignoreUnknownCharacters)
+    }
+
     /// HMAC-SHA256(token, nonce) as lowercase hex — must match the backend's
     /// /verify computation byte-for-byte.
     static func proof(nonce: String) -> String? {
