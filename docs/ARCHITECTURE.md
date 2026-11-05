@@ -1,7 +1,7 @@
 # Architecture
 
 Voice runs across two local processes: a native SwiftUI menu-bar app talks to a
-Python TTS sidecar over loopback HTTP. Ears stay in the app: AVAudioEngine
+Python TTS sidecar over certificate-pinned HTTPS on loopback. Ears stay in the app: AVAudioEngine
 captures the microphone and FluidAudio runs local streaming and batch ASR. The
 sidecar hosts two interchangeable engines (Kokoro default, Pocket TTS opt-in)
 behind one int16-PCM contract.
@@ -231,13 +231,29 @@ The `X-Stream-Footer` response header advertises the marker. `BackendManager` re
 
 Covered by `TestStreamIntegrity` (live uvicorn, raw socket, plus a control that restores skip-and-continue) and end-to-end by `--tailtest` against a fault-injecting backend.
 
-## Backend lifecycle
+## Backend lifecycle and local TLS
 
-`BackendManager` first probes `/health`. Nothing answering means it spawns one — the bundled self-contained Python runtime directly in a shipped app, or `scripts/run_backend.sh` (venv) in a dev checkout — loads Kokoro, warms it, and serves.
+`BackendManager` first probes `/health` over HTTPS. Each TLS connection validates
+the server certificate against a private, user-owned pinned certificate file
+(`backend-tls-cert.pem`). `backend/local_tls.py` creates that certificate and
+its private key once, under the same user-only Application Support directory
+as the authorization token. This proves the identity of the actual listener
+**on the protected connection itself**, rather than relying on an earlier
+`/verify` challenge that could race a port replacement.
 
-Something already answering is not automatically reused. `start()` decides:
+Only after the TLS handshake is authenticated does the client send a Bearer
+token or speech text. HTTP redirects are refused, and an HTTP/cleartext
+backend is not compatible with this protocol. The `/verify` HMAC challenge
+remains as a secondary check. Same-user malware which can read the private
+TLS key or authorization token is not isolated by this design.
 
-- **Unverified** (`verifyAuthentic()` fails — it can't prove it knows the shared secret). An identifiable Yap orphan (a `server.py` reparented to launchd, ppid 1) is almost always a stale pre-auth backend left over from an upgrade, so it's killed and a fresh authenticated one launched. Anything else is a foreign listener squatting the port: refused with an error, never handed captured text.
+If no authenticated server answers, the manager launches the bundled
+self-contained Python runtime (or the dev `scripts/run_backend.sh`).
+Something already occupying the port is not automatically trusted:
+
+- **Unverified listener** (TLS certificate mismatch, missing certificate, or
+  HMAC failure): it is never adopted, signalled, or sent captured text. The app
+  refuses to start over that occupied port until the listener is removed.
 - **Verified and ready** — reused.
 - **Verified but not ready** (responding, no model it can serve). If it's an adopted orphan, it's stopped and relaunched; if it's external, it's left alone and `start()` bails rather than racing a second process onto the same port.
 
