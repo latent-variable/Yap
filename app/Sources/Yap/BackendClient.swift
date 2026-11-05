@@ -70,6 +70,11 @@ struct BackendClient {
         return URLSession(configuration: cfg, delegate: PinnedYapTLSDelegate(), delegateQueue: nil)
     }()
 
+    private var isPinnedLoopbackOrigin: Bool {
+        base.scheme == "https" && base.host == "127.0.0.1" &&
+        base.user == nil && base.password == nil && base.port != nil
+    }
+
     private enum AuthError: LocalizedError {
         case unverifiedBackend
 
@@ -83,7 +88,8 @@ struct BackendClient {
     /// new connection BEFORE the secret or selected text is transmitted.
     /// Same-user malware with read access to private key is out of scope.
     private func authed(_ url: URL) async throws -> URLRequest {
-        guard await verifyAuthentic(), let token = BackendAuth.token else {
+        guard isPinnedLoopbackOrigin, await verifyAuthentic(),
+              let token = BackendAuth.token else {
             throw AuthError.unverifiedBackend
         }
         var req = URLRequest(url: url)
@@ -105,6 +111,7 @@ struct BackendClient {
     /// file can't produce a matching proof. /verify is auth-exempt, so this
     /// probe never leaks the token to an unverified listener.
     func verifyAuthentic() async -> Bool {
+        guard isPinnedLoopbackOrigin else { return false }
         let nonce = Data((0..<24).map { _ in UInt8.random(in: 0...255) }).base64EncodedString()
         // No local token → can't verify. Fail closed: don't trust a backend we
         // can't authenticate.
