@@ -33,6 +33,8 @@ import wave
 from pathlib import Path
 from typing import Iterator, Optional
 
+from local_tls import ensure_identity
+
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -483,12 +485,12 @@ def hd_voice_path(voice_id: str) -> Optional[Path]:
 # process AND by `fetch()` from any website the user visits. Two holes that
 # closes: (1) a website CSRFing a no-body POST (e.g. the multi-GB pip install),
 # and (2) Yap reusing an impostor that squatted the port and then receiving
-# captured selected text. Defense: a shared secret in a 0600 file both the app
-# and this backend read-or-create. Every request must carry it as a Bearer
-# token; cross-user processes can't read the file, so they can't forge it. The
-# app proves a *reused* backend is genuine via /verify (HMAC challenge) before
-# trusting it. Same-user attackers are out of scope — they already own the
-# user's data and Accessibility grants.
+# captured selected text. Defense: a shared secret in a 0600 file both sides
+# read-or-create, plus a per-user TLS private key in the same private directory.
+# The client pins the local TLS certificate on EVERY connection, before HTTP
+# headers or user text are sent. The /verify HMAC is defense in depth, not a
+# substitute for a connection-bound identity check. Same-user attackers who
+# can read private files are outside this trust boundary.
 def _load_or_create_token() -> Optional[str]:
     # Explicit path wins (the app passes it when spawning us); else the default
     # app-support location, which the app uses too. A hand-started dev backend
@@ -1074,7 +1076,13 @@ def main() -> None:
         engine.load()
 
     import uvicorn
-    log.info("serving on http://%s:%d (models: %s)", args.host, args.port, mdir)
+    # A /verify challenge followed by a different HTTP connection has a
+    # check-to-use race. TLS authenticates the listener on *each connection*
+    # before the Bearer header or captured text can leave the app.
+    token_file = Path(os.environ.get("YAP_AUTH_TOKEN_FILE") or
+                      Path.home() / "Library/Application Support/Yap/auth-token")
+    cert_file, key_file = ensure_identity(token_file)
+    log.info("serving on https://%s:%d (models: %s)", args.host, args.port, mdir)
     # KEEP_ALIVE, not a default: /synthesize is read at PLAYBACK rate.
     #
     # The app deliberately stalls its read while more than ~10s of audio is
@@ -1089,7 +1097,8 @@ def main() -> None:
     # 5s window, which is why this survived until reads got backpressured.
     # Regression probe: `Yap --tailtest <file>`.
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning",
-                timeout_keep_alive=KEEP_ALIVE)
+                timeout_keep_alive=KEEP_ALIVE,
+                ssl_certfile=str(cert_file), ssl_keyfile=str(key_file))
 
 
 if __name__ == "__main__":
