@@ -26,7 +26,7 @@ final class BackendManager: NSObject, ObservableObject {
         self.port = port
         self.repoRootOverride = repoRootOverride
         var c = BackendClient()
-        c.base = URL(string: "http://127.0.0.1:\(port)")!
+        c.base = URL(string: "https://127.0.0.1:\(port)")!
         self.client = c
         super.init()
         // Kill our own backend when the app quits so it doesn't linger as an
@@ -139,7 +139,7 @@ final class BackendManager: NSObject, ObservableObject {
             return
         }
         if let h = await client.health() {
-            // health() proves /verify before sending Authorization.
+            // health() verifies pinned TLS on its connection and also HMAC.
             apply(h)
             if process == nil, adoptedPID == nil,
                let pid = await Self.orphanBackendPID(port: port) {
