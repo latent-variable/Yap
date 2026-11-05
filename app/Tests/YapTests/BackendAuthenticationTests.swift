@@ -10,10 +10,12 @@ final class BackendAuthenticationTests: XCTestCase {
     private final class Captures: @unchecked Sendable {
         private let lock = NSLock()
         private var storage: [Data] = []
-        func add(_ message: Data) {
+        func add(_ message: Data) -> Bool {
             lock.lock()
             storage.append(message)
+            let first = storage.count == 1
             lock.unlock()
+            return first
         }
         func snapshot() -> [Data] {
             lock.lock()
@@ -40,8 +42,7 @@ final class BackendAuthenticationTests: XCTestCase {
         listener.newConnectionHandler = { connection in
             connection.start(queue: queue)
             connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
-                if let data { captures.add(data) }
-                received.fulfill()
+                if let data, captures.add(data) { received.fulfill() }
                 // Deliberately plain HTTP. An old client leaks an HTTP /verify
                 // request here; a pinned-TLS client sends only ClientHello.
                 let reply = Data("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".utf8)
@@ -58,7 +59,8 @@ final class BackendAuthenticationTests: XCTestCase {
 
         // An unauthorized listener on this port must neither be accepted as a
         // healthy backend nor receive any privileged headers / sensitive text.
-        XCTAssertNil(await client.health())
+        let health = await client.health()
+        XCTAssertNil(health)
         await fulfillment(of: [received], timeout: 5)
 
         let raw = captures.snapshot()
