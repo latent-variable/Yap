@@ -61,9 +61,9 @@ chmod +x "$APP/Contents/Resources/bin/yap"
 # Built by scripts/bundle_python.sh (cached). Without it, the app falls back to
 # building a venv from system Python (dev machines only).
 if [ "${PARLEY_BUNDLE_PYTHON:-1}" = "1" ]; then
-  if [ ! -x "$ROOT/dist/python-runtime/bin/python3" ]; then
-    bash "$ROOT/scripts/bundle_python.sh"
-  fi
+  # Validate the runtime source stamp and dependency lock hashes even when
+  # a cached interpreter exists. bundle_python.sh owns safe cache reuse.
+  bash "$ROOT/scripts/bundle_python.sh"
   echo "[build] embedding Python runtime"
   ditto "$ROOT/dist/python-runtime" "$APP/Contents/Resources/python"
 fi
