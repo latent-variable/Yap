@@ -40,6 +40,11 @@ fi
 
 # Bundle backend sources + launcher so a packaged app can run self-contained.
 # Copy every .py + requirements so new modules (e.g. pocket_engine) ship too.
+# The Pocket installer reads requirements-pocket.txt from here, so a missing
+# lock would only surface when a user clicks Install.
+for lock in requirements.txt requirements-pocket.txt; do
+  [ -s "$ROOT/backend/$lock" ] || { echo "[build] backend/$lock missing; run scripts/lock_python_deps.sh" >&2; exit 1; }
+done
 mkdir -p "$APP/Contents/Resources/repo/backend" "$APP/Contents/Resources/repo/scripts"
 cp "$ROOT/backend/"*.py "$ROOT/backend/"requirements*.txt "$APP/Contents/Resources/repo/backend/"
 cp "$ROOT/scripts/run_backend.sh" "$APP/Contents/Resources/repo/scripts/"
@@ -55,9 +60,9 @@ chmod +x "$APP/Contents/Resources/bin/yap"
 # Built by scripts/bundle_python.sh (cached). Without it, the app falls back to
 # building a venv from system Python (dev machines only).
 if [ "${PARLEY_BUNDLE_PYTHON:-1}" = "1" ]; then
-  if [ ! -x "$ROOT/dist/python-runtime/bin/python3" ]; then
-    bash "$ROOT/scripts/bundle_python.sh"
-  fi
+  # Always call it: it reuses its cache only when the Python pin and the lock
+  # are the ones it was built from.
+  bash "$ROOT/scripts/bundle_python.sh"
   echo "[build] embedding Python runtime"
   ditto "$ROOT/dist/python-runtime" "$APP/Contents/Resources/python"
 fi

@@ -1,0 +1,25 @@
+# Pocket TTS (Kyutai) — Yap's HD / voice-cloning engine. Heavy (pulls torch).
+# NOT in the default install; fetched on demand into
+# ~/Library/Application Support/Yap/hd-packages when the user enables Pocket.
+# Kept separate so the default Kokoro app stays light.
+#
+# No account, for either half. Catalog voices ship with the model. Voice cloning
+# pulls one extra weights file, which Yap serves from its own SHA256-pinned
+# CC-BY-4.0 mirror of Kyutai's rather than the gated upstream repo (see
+# CLONING_WEIGHTS_URL in pocket_engine.py). Kyutai's acceptable-use terms travel
+# with the file: clone only voices you have the right to use.
+pocket-tts>=2.1.0
+
+# Pocket runs in the same process as Kokoro, so the Kokoro engine is locked here
+# too: one resolve, one NumPy that torch and onnxruntime both load against.
+kokoro-onnx>=0.4.9
+onnxruntime>=1.22.0
+
+# Security minimums for transitive dependencies (OSV-Scanner, 2026-10-23). The
+# lock pins above these floors; they stop a future re-lock from resolving back
+# below a fixed vulnerability.
+certifi>=2026.10.19
+httpx2>=2.12.0
+httpcore2>=2.10.0
+scipy>=1.10.0
+torch>=2.13.0
