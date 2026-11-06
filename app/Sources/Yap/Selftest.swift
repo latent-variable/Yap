@@ -69,6 +69,22 @@ enum Selftest {
               Preprocess.clean("works  [14]. next  [1, 2]!", options: Preprocess.options(for: .general), custom: []),
               contains: ["works. next!"], absent: ["works .", "works  ", "next !"])
 
+        print("Preprocess — underscores inside identifiers survive emphasis cleanup")
+        // #161: the italic rule paired the underscores of one identifier and glued
+        // its words ("user_name_field" was read as "usernamefield").
+        let idents = "call get_user_name() then set_max_len() on user_name_field"
+        check("general keeps multi-underscore identifiers",
+              Preprocess.clean(idents, options: Preprocess.options(for: .general), custom: []),
+              contains: ["get_user_name()", "set_max_len()", "user_name_field"])
+        check("code spaces multi-underscore identifiers",
+              Preprocess.clean(idents, options: Preprocess.options(for: .code), custom: []),
+              contains: ["get user name()", "set max len()", "user name field"],
+              absent: ["getusername", "usernamefield"])
+        check("emphasis still stripped at word edges",
+              Preprocess.clean("this is _really_ key, __bold__ too, *star* and **both**.",
+                               options: Preprocess.options(for: .general), custom: []),
+              contains: ["this is really key, bold too, star and both."], absent: ["_", "*"])
+
         print("Preprocess — Code profile (prompts + identifiers)")
         let code = "$ runTask\nthe user_name field"
         let codeOut = Preprocess.clean(code, options: Preprocess.options(for: .code), custom: [])
