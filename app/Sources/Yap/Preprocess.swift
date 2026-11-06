@@ -30,8 +30,13 @@ enum Preprocess {
             (#"!\[[^\]]*\]\([^)]*\)"#, "", false),          // images
             (#"\[([^\]]+)\]\([^)]*\)"#, "$1", false),       // links -> text
             (#"^#{1,6}\s*"#, "", false),                     // headings
-            (#"(\*\*|__)(.*?)\1"#, "$2", false),            // bold
-            (#"(\*|_)(.*?)\1"#, "$2", false),               // italic
+            // Bold and italic. Underscore emphasis only counts at a word edge, as in
+            // CommonMark: an underscore between letters or digits is an identifier
+            // separator (get_user_name), and pairing those glued the words together.
+            (#"\*\*(.*?)\*\*"#, "$1", false),                // bold
+            (#"(?<![\p{L}\p{N}_])__(?=\S)(.+?)(?<=\S)__(?![\p{L}\p{N}_])"#, "$1", false),
+            (#"\*(.*?)\*"#, "$1", false),                    // italic
+            (#"(?<![\p{L}\p{N}_])_(?=\S)(.+?)(?<=\S)_(?![\p{L}\p{N}_])"#, "$1", false),
             (#"`{1,3}"#, "", false),                         // backticks
             (#"^\s*\|.*\|\s*$"#, "", false),                // table rows
             (#"^\s*[-:|]{3,}\s*$"#, "", false),             // table sep / hr
