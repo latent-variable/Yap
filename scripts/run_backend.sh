@@ -3,13 +3,35 @@
 # Creates the venv + installs deps on first run, then serves.
 set -euo pipefail
 
+# Migrate only Yap's known support directory. Custom auth-token parents remain
+# subject to server.py's fail-closed checks and are never chmoded here.
+secure_support_directory() {
+  local support_path="$1"
+  if [[ -L "$support_path" || ( -e "$support_path" && ! -d "$support_path" ) ]]; then
+    printf '[yap] refusing unsafe support directory: %s\n' "$support_path" >&2
+    return 1
+  fi
+  if ! mkdir -m 700 -p "$support_path"; then
+    printf '[yap] cannot create support directory: %s\n' "$support_path" >&2
+    return 1
+  fi
+  if [[ -L "$support_path" || ! -d "$support_path" || ! -O "$support_path" ]]; then
+    printf '[yap] support directory must be a real directory owned by this user: %s\n' "$support_path" >&2
+    return 1
+  fi
+  if ! chmod 700 "$support_path"; then
+    printf '[yap] cannot make support directory private: %s\n' "$support_path" >&2
+    return 1
+  fi
+}
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$HERE/backend"
 SUPPORT="$HOME/Library/Application Support/Yap"
 VENV="${YAP_VENV:-${PARLEY_VENV:-$SUPPORT/venv}}"
 PORT="${YAP_PORT:-${PARLEY_PORT:-8766}}"
 MODELS_DIR="${YAP_MODELS_DIR:-${PARLEY_MODELS_DIR:-$SUPPORT/models}}"
-mkdir -m 700 -p "$SUPPORT"
+secure_support_directory "$SUPPORT"
 
 # Call the venv's own python, never `activate` + bare `python`: activate hardcodes
 # the path the venv was created at, so a venv moved by the Parley -> Yap rename

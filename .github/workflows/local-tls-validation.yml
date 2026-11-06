@@ -9,6 +9,8 @@ on:
       - "app/Sources/Yap/BackendManager.swift"
       - "app/Sources/Yap/CLITest.swift"
       - "app/Tests/YapTests/**"
+      - "scripts/ci/fixtures/**"
+      - "scripts/run_backend.sh"
       - "backend/server.py"
       - "backend/local_tls.py"
       - "backend/tests/test_auth.py"
