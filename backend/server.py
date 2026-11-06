@@ -504,6 +504,15 @@ def _load_or_create_token() -> Optional[str]:
         return inline.strip() or None
     p = Path(path)
     try:
+        # TLS identity files share this directory. Create a private leaf on a
+        # fresh standalone launch, and never trust or chmod an unsafe custom
+        # parent supplied through YAP_AUTH_TOKEN_FILE.
+        p.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        parent = p.parent.lstat()
+        if (not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != os.geteuid()
+                or parent.st_mode & 0o077):
+            raise OSError("auth token directory must be user-owned and private (0700)")
         # Refuse symlink paths and non-regular token files.
         if p.is_symlink():
             raise OSError("auth token path must not be a symlink")
@@ -521,7 +530,6 @@ def _load_or_create_token() -> Optional[str]:
                 tok = p.read_text().strip()
                 if tok:
                     return tok
-        p.parent.mkdir(parents=True, exist_ok=True)
         tok = secrets.token_urlsafe(32)
         # Write 0600 atomically: create with restrictive mode, then write.
         # Exclusive creation prevents silently truncating an injected file.

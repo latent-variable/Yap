@@ -286,9 +286,11 @@ final class BackendManager: NSObject, ObservableObject {
 
     private func waitForHealth() async {
         for _ in 0..<120 { // up to ~60s (covers first-run install/model load)
-            // If we own the process and it has already exited, it crashed on
-            // startup — fail fast instead of polling /health for 60s.
-            if let p = process, !p.isRunning {
+            // The termination handler may already have cleared process after
+            // a startup failure. Both a missing and an exited child must stop
+            // this owned-process wait instead of polling /health for 60s.
+            guard let p = process, p.isRunning else {
+                ready = false
                 if lastError == nil { lastError = "Backend exited unexpectedly." }
                 return
             }

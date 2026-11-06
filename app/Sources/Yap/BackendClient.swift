@@ -112,7 +112,12 @@ struct BackendClient {
     /// probe never leaks the token to an unverified listener.
     func verifyAuthentic() async -> Bool {
         guard isPinnedLoopbackOrigin else { return false }
+        // Form-style query parsers interpret an unescaped '+' as a space.
+        // Preserve all 192 random bits while using only URL-safe characters,
+        // so the backend hashes exactly the nonce that we generated.
         let nonce = Data((0..<24).map { _ in UInt8.random(in: 0...255) }).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
         // No local token → can't verify. Fail closed: don't trust a backend we
         // can't authenticate.
         guard let expected = BackendAuth.proof(nonce: nonce) else { return false }

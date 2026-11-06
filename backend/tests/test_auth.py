@@ -11,6 +11,9 @@ Run: cd backend && pytest tests/test_auth.py -v
 import asyncio
 import hashlib
 import hmac
+import os
+import ssl
+import stat
 
 import pytest
 from fastapi import HTTPException
@@ -18,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
 import server
+from local_tls import ensure_identity
 
 TOKEN = "unit-test-secret-token"
 
@@ -108,6 +112,62 @@ def test_auth_token_file_refuses_symlink(monkeypatch, tmp_path):
     monkeypatch.setenv("YAP_AUTH_TOKEN_FILE", str(link))
     assert server._load_or_create_token() is None
     assert target.read_text() == "sensitive"
+
+
+def test_fresh_standalone_auth_parent_supports_tls_under_normal_umask(monkeypatch, tmp_path):
+    token_file = tmp_path / "fresh-profile" / "auth-token"
+    monkeypatch.delenv("YAP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YAP_AUTH_TOKEN_FILE", str(token_file))
+    previous_umask = os.umask(0o022)
+    try:
+        token = server._load_or_create_token()
+    finally:
+        os.umask(previous_umask)
+    assert token
+    assert token_file.read_text() == token
+    assert stat.S_IMODE(token_file.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
+    cert, key = ensure_identity(token_file)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=str(cert), keyfile=str(key))
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o777])
+def test_existing_unsafe_auth_parent_is_refused_without_changes(monkeypatch, tmp_path, mode):
+    parent = tmp_path / "shared-parent"
+    parent.mkdir(mode=mode)
+    parent.chmod(mode)
+    token_file = parent / "auth-token"
+    token_file.write_text("existing-token")
+    token_file.chmod(0o600)
+    monkeypatch.delenv("YAP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YAP_AUTH_TOKEN_FILE", str(token_file))
+    assert server._load_or_create_token() is None
+    assert stat.S_IMODE(parent.stat().st_mode) == mode
+    assert token_file.read_text() == "existing-token"
+    assert sorted(p.name for p in parent.iterdir()) == ["auth-token"]
+
+
+def test_symlink_auth_parent_is_refused_without_creating_token(monkeypatch, tmp_path):
+    target = tmp_path / "target-parent"
+    target.mkdir(mode=0o700)
+    parent = tmp_path / "linked-parent"
+    parent.symlink_to(target, target_is_directory=True)
+    monkeypatch.delenv("YAP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YAP_AUTH_TOKEN_FILE", str(parent / "auth-token"))
+    assert server._load_or_create_token() is None
+    assert parent.is_symlink()
+    assert list(target.iterdir()) == []
+
+
+def test_foreign_owned_auth_parent_is_refused(monkeypatch, tmp_path):
+    parent = tmp_path / "foreign-parent"
+    parent.mkdir(mode=0o700)
+    monkeypatch.delenv("YAP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YAP_AUTH_TOKEN_FILE", str(parent / "auth-token"))
+    monkeypatch.setattr(server.os, "geteuid", lambda: parent.stat().st_uid + 1)
+    assert server._load_or_create_token() is None
+    assert list(parent.iterdir()) == []
 
 
 def test_verify_is_auth_exempt():

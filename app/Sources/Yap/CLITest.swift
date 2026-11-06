@@ -148,7 +148,7 @@ extension CLITest {
         print("── tail probe  chars=\(cleaned.count)  cap=\(AudioPlayer.maxQueuedSeconds)s")
         Task {
             var client = BackendClient()
-            client.base = URL(string: "http://127.0.0.1:\(port)")!
+            client.base = URL(string: "https://127.0.0.1:\(port)")!
 
             // Reference: one non-streamed render of the same text. Any shortfall
             // against this is bytes the stream never delivered.
@@ -326,6 +326,7 @@ extension CLITest {
     /// ready, then drive the same start decision the next read uses. A fake local
     /// sidecar keeps the probe independent of installed TTS models.
     static func runBackendRecovery(port: Int) -> Never {
+        setvbuf(stdout, nil, _IOLBF, 0)
         Task { @MainActor in
             let fm = FileManager.default
             let fixture = fm.temporaryDirectory.appending(path: "yap-backend-recovery-\(UUID().uuidString)")
@@ -339,7 +340,7 @@ extension CLITest {
                 try fm.createDirectory(at: scripts, withIntermediateDirectories: true)
                 try fm.createDirectory(at: models, withIntermediateDirectories: true)
                 let python = #"""
-                import hashlib, hmac, http.server, json, os, ssl, subprocess, sys, urllib.parse
+                import hashlib, hmac, http.server, json, os, socketserver, ssl, subprocess, sys, urllib.parse
                 from pathlib import Path
 
                 port, pid_file, starts_file, models_dir = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
@@ -361,6 +362,7 @@ extension CLITest {
                 class Handler(http.server.BaseHTTPRequestHandler):
                     def do_GET(self):
                         parsed = urllib.parse.urlsplit(self.path)
+                        print("recovery fixture GET", parsed.path, "pid", os.getpid(), flush=True)
                         if parsed.path == "/verify":
                             nonce = urllib.parse.parse_qs(parsed.query).get("nonce", [""])[0]
                             if not nonce or len(nonce) > 128:
@@ -392,6 +394,27 @@ extension CLITest {
 
                 class Server(http.server.ThreadingHTTPServer):
                     allow_reuse_address = True
+                    daemon_threads = True
+
+                    def server_bind(self):
+                        # HTTPServer normally calls getfqdn here. A loopback
+                        # fixture needs no DNS, which can stall hosted runners.
+                        socketserver.TCPServer.server_bind(self)
+                        self.server_name = "127.0.0.1"
+                        self.server_port = self.server_address[1]
+
+                    def get_request(self):
+                        connection, address = super().get_request()
+                        connection.settimeout(5)
+                        return context.wrap_socket(
+                            connection, server_side=True, do_handshake_on_connect=False
+                        ), address
+
+                    def finish_request(self, request, client_address):
+                        # Negotiate inside the worker: an idle TLS connection
+                        # must not block acceptance of another health request.
+                        request.do_handshake()
+                        super().finish_request(request, client_address)
 
                 # The fake backend also speaks pinned HTTPS. Using the same
                 # private certificate path as the real server proves recovery
@@ -414,7 +437,7 @@ extension CLITest {
                 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                 context.load_cert_chain(certfile=str(cert), keyfile=str(key))
                 httpd = Server(("127.0.0.1", port), Handler)
-                httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+                print("recovery fixture HTTPS ready", os.getpid(), port, flush=True)
                 httpd.serve_forever()
                 """#
                 let script = "#!/bin/bash\nexec python3 \(shellQuote(server.path)) \"$YAP_PORT\" \(shellQuote(pidFile.path)) \(shellQuote(startsFile.path)) \(shellQuote(models.path))\n"
@@ -428,7 +451,9 @@ extension CLITest {
 
             let manager = BackendManager(port: port, repoRootOverride: fixture)
             @MainActor func finish(_ message: String, _ code: Int32) async -> Never {
+                print("   stopping recovery fixture")
                 await manager.stopAndWait()
+                print("   fixture stopped; removing temporary files")
                 do { try fm.trashItem(at: fixture, resultingItemURL: nil) }
                 catch { print("   · could not trash temporary fixture: \(error.localizedDescription)") }
                 print(message)
@@ -437,6 +462,7 @@ extension CLITest {
 
             print("── backend recovery probe  port=\(port)")
             await manager.start()
+            print("   initial ready=\(manager.ready) owned=\(manager.ownsProcess) error=\(manager.lastError ?? "none")")
             guard manager.ready, manager.ownsProcess,
                   let firstPIDText = try? String(contentsOf: pidFile, encoding: .utf8),
                   let firstPID = Int32(firstPIDText.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -447,6 +473,7 @@ extension CLITest {
             if kill(firstPID, SIGKILL) != 0 {
                 await finish("   ✗ could not terminate the owned backend\n\n1 FAILURE(S)", 1)
             }
+            print("   killed initial pid=\(firstPID)")
             for _ in 0..<100 where !manager.needsStart {
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
@@ -454,7 +481,9 @@ extension CLITest {
                 await finish("   ✗ dead child still looked ready to the next read\n\n1 FAILURE(S)", 1)
             }
 
+            print("   needsStart=\(manager.needsStart); starting replacement")
             await manager.start()
+            print("   replacement ready=\(manager.ready) owned=\(manager.ownsProcess) error=\(manager.lastError ?? "none")")
             let starts = (try? String(contentsOf: startsFile, encoding: .utf8))
                 .flatMap(Int.init) ?? 0
             let secondPID = (try? String(contentsOf: pidFile, encoding: .utf8))

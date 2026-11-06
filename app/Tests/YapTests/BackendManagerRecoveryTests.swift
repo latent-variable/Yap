@@ -6,7 +6,16 @@ final class BackendManagerRecoveryTests: XCTestCase {
         let executable = try yapExecutable()
         let port = Int.random(in: 20_000...55_000)
         let child = Process()
-        let output = Pipe()
+        // Drain to a file instead of an unread pipe: verbose CFNetwork errors
+        // can fill the pipe and block a child before its termination handler runs.
+        let logURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yap-recovery-output-\(UUID().uuidString).log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let output = try FileHandle(forWritingTo: logURL)
+        defer {
+            try? output.close()
+            try? FileManager.default.removeItem(at: logURL)
+        }
         let finished = DispatchSemaphore(value: 0)
 
         child.executableURL = executable
@@ -18,11 +27,15 @@ final class BackendManagerRecoveryTests: XCTestCase {
 
         guard finished.wait(timeout: .now() + 30) == .success else {
             child.terminate()
-            XCTFail("backend recovery probe did not finish within 30 seconds")
+            _ = finished.wait(timeout: .now() + 3)
+            let probeLog = (try? String(contentsOf: logURL, encoding: .utf8)) ?? "(no child output)"
+            let backendLogURL = FileManager.default.temporaryDirectory.appendingPathComponent("yap_backend.log")
+            let backendLog = (try? String(contentsOf: backendLogURL, encoding: .utf8)) ?? "(no backend log)"
+            XCTFail("backend recovery probe did not finish within 30 seconds\nPROBE:\n\(probeLog)\nBACKEND:\n\(backendLog)")
             return
         }
 
-        let log = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? "(no child output)"
         XCTAssertEqual(child.terminationStatus, 0, log)
         XCTAssertTrue(log.contains("BACKEND RECOVERY OK"), log)
     }

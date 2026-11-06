@@ -9,7 +9,7 @@ SUPPORT="$HOME/Library/Application Support/Yap"
 VENV="${YAP_VENV:-${PARLEY_VENV:-$SUPPORT/venv}}"
 PORT="${YAP_PORT:-${PARLEY_PORT:-8766}}"
 MODELS_DIR="${YAP_MODELS_DIR:-${PARLEY_MODELS_DIR:-$SUPPORT/models}}"
-mkdir -p "$SUPPORT"
+mkdir -m 700 -p "$SUPPORT"
 
 # Call the venv's own python, never `activate` + bare `python`: activate hardcodes
 # the path the venv was created at, so a venv moved by the Parley -> Yap rename

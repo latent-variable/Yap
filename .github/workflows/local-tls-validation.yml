@@ -35,14 +35,14 @@ jobs:
         run: python -m pip install --disable-pip-version-check --no-cache-dir pytest==9.0.2 fastapi==0.128.2 numpy==2.3.5
       - name: Test token auth and TLS certificate/key creation
         env:
-          YAP_AUTH_TOKEN_FILE: ${{ runner.temp }}/yap-auth-identity-token
+          YAP_AUTH_TOKEN_FILE: ${{ runner.temp }}/yap-auth-identity/auth-token
         run: |
           python -m py_compile backend/local_tls.py backend/server.py backend/tests/test_local_tls.py
           cd backend
           python -m pytest tests/test_auth.py tests/test_local_tls.py -v
 
   macos-swift:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
