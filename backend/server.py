@@ -628,6 +628,15 @@ def unload_engine(name: str):
     raise HTTPException(404, f"unknown engine {name!r}")
 
 
+def pocket_install_command(target: Path) -> list[str]:
+    """pip command that installs the committed Pocket lock into `target`."""
+    lock = Path(__file__).parent / "requirements-pocket.txt"
+    return [sys.executable, "-I", "-m", "pip", "install", "--isolated",
+            "--disable-pip-version-check", "--no-cache-dir",
+            "--require-hashes", "--only-binary=:all:",
+            "--upgrade", "--target", str(target), "-r", str(lock)]
+
+
 @app.post("/engines/pocket/install")
 def install_pocket():
     """Install the Pocket TTS deps into app-support hd-packages (not the bundle).
@@ -636,14 +645,10 @@ def install_pocket():
     from pocket_engine import hd_packages_dir
     target = hd_packages_dir()
     target.mkdir(parents=True, exist_ok=True)
-    req_file = Path(__file__).parent / "requirements-pocket.txt"
-    pip = [sys.executable, "-m", "pip", "install", "--target", str(target)]
-    # 1) Pocket deps (pulls torch + numpy>=2). 2) kokoro into the SAME env without
-    # disturbing its deps, so one process can serve both engines.
-    steps = [
-        pip + ["--upgrade", "-r", str(req_file)],
-        pip + ["--no-deps", "--upgrade", "kokoro-onnx", "onnxruntime"],
-    ]
+    # One install from the hash lock: Pocket (torch + numpy>=2) AND Kokoro, resolved
+    # together so one process serves both engines. Nothing is resolved on the
+    # user's Mac, and a file whose bytes differ from the lock is refused.
+    steps = [pocket_install_command(target)]
 
     def gen() -> Iterator[bytes]:
         yield f"installing Pocket engine into {target}\n".encode()

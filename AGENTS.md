@@ -74,9 +74,12 @@ the same int16 PCM @ 24 kHz stream, so the app/audio path is engine-agnostic.
 
 Key facts an agent must keep straight:
 - Pocket deps are **not** in `requirements.txt` (too heavy, pulls torch ~1 GB).
-  They install on demand into `hd-packages/` via `/engines/pocket/install`, which
-  **also** installs kokoro-onnx + onnxruntime there so ONE process serves both
-  engines, and fetches the cloning weights (+209 MB) into `pocket-weights/`.
+  They install on demand into `hd-packages/` via `/engines/pocket/install`, from
+  the hash lock `requirements-pocket.txt`, which **also** carries kokoro-onnx +
+  onnxruntime so ONE process serves both engines. Both Python environments
+  install only from hash locks; edit the `.in`, never the `.txt`
+  (`backend/DEPENDENCIES.md`). The install also fetches the cloning weights
+  (+209 MB) into `pocket-weights/`.
   `/engines/pocket/cloning/install` does the weights alone, for a retry or for
   someone who installed Pocket before they existed. Pocket pulls numpy ≥2; kokoro-onnx imports fine on it (verified).
 - `BackendManager` adds `hd-packages` to the backend's `PYTHONPATH` when present
@@ -215,7 +218,8 @@ through the app and open dictation. Contract for anyone touching it:
 
 The app ships a **self-contained Python runtime** so end users need nothing
 installed. `scripts/bundle_python.sh` downloads a relocatable
-python-build-standalone CPython, pip-installs `backend/requirements.txt` into it,
+python-build-standalone CPython (pinned by SHA-256 in `scripts/python_pin.sh`),
+installs the hash lock `backend/requirements.txt` into it,
 and writes `dist/python-runtime/`. `build_app.sh` embeds that at
 `Yap.app/Contents/Resources/python`. `BackendManager.bundledPython` prefers it
 and spawns `server.py` directly; only a dev checkout with no embedded runtime
