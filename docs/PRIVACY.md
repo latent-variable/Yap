@@ -47,7 +47,8 @@ sends your audio, your text, or anything that identifies you.
   time Pocket loads. Pocket loads at launch when it is the selected engine, or
   when **Pre-load Pocket at launch** is on (the default, in Settings ▸
   Models). Turning pre-load off does not stop this while Pocket is selected.
-- **The update check**, once a day. See [below](#the-update-check-optional).
+- **Automatic update checks**, at launch when enabled and at least 24 hours have
+  passed since the last successful check. See [below](#the-update-check-optional).
 
 **When you ask for it:**
 
@@ -137,17 +138,19 @@ switched off, which removes the socket.
 
 ## The update check (optional)
 
-So you know when a new version ships, Yap checks GitHub once a day for the latest
-release. It's a single unauthenticated GET to the public releases API
+When enabled, Yap checks GitHub at launch for the latest release if at least 24
+hours have passed since its last successful check. If Yap stays open, no further
+automatic check runs until its next launch. It's a single unauthenticated GET to
+the public releases API
 (`api.github.com/repos/latent-variable/Yap/releases/latest`) — no account, no
 identifier, no usage data sent. Yap just receives the latest version number,
 compares it to the running build, and shows a banner if a newer one exists. It
 never downloads or installs anything on its own: the banner links to the release
 page, and you update via Homebrew or the DMG yourself.
 
-On by default, throttled to once per day. Turn it off in **Settings ▸ General ▸
-Updates**. That stops update checks only; the launch downloads above are
-separate. The whole thing is one file:
+On by default. Turn it off in **Settings ▸ General ▸ Updates**. That stops update
+checks only; the launch downloads above are separate. The whole thing is one
+file:
 [`UpdateChecker.swift`](../app/Sources/Yap/UpdateChecker.swift).
 
 ## Read source modes and your clipboard

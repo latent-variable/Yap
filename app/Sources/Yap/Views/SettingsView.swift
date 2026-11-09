@@ -218,7 +218,7 @@ private struct GeneralTab: View {
 
             Section("Updates") {
                 Toggle("Automatically check for updates", isOn: $prefs.autoUpdateCheck)
-                Text("Once a day, Yap asks GitHub for the latest release version. This check sends no personal data. Turning it off stops update checks only. Dictation and Pocket models can still download at launch.")
+                Text("At launch, Yap automatically checks GitHub for the latest release if at least 24 hours have passed since the last successful check. This sends no personal data. Turning it off stops update checks only. Dictation and Pocket models can still download at launch.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button(state.checkingForUpdate ? "Checking…" : "Check now") {
