@@ -463,7 +463,8 @@ the selection (when Accessibility allows), else the clipboard, in every mode, an
 (`triggerRead(forced:)`; Lino, 2026-10-23).
 
 **In Auto, a ⌘C that never works in an app is skipped, only on a fresh
-clipboard** (Claude Code fullscreen), and **a refused read press shows a
+clipboard or one a copy reaches in the 250 ms it waits first** (Claude Code
+fullscreen; Yap's own clipboard writes are never fresh), and **a refused read press shows a
 `Notice` that must never take focus.** Rules and why: `docs/ARCHITECTURE.md`,
 *Read pipeline*. Test: `--capturetest`.
 
