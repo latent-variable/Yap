@@ -237,6 +237,12 @@ enum Selftest {
             learnedWrong = TextCapture.noting(learnedWrong, worked: true)
             for _ in 0..<10 { learnedWrong = TextCapture.noting(learnedWrong, worked: false) }
             checkEq("one success keeps an app off the skip list", skip(learnedWrong, true), "copy")
+            func settles(_ r: R?, _ changed: Bool?) -> String { TextCapture.settlesFirst(r, clipboardChanged: changed) ? "wait" : "go" }
+            checkEq("an app where ⌘C never works waits for its copy", settles(claude, false), "wait")
+            checkEq("and waits for a newer one over a fresh copy", settles(claude, true), "wait")
+            checkEq("the first press of a run does not wait", settles(claude, nil), "go")
+            checkEq("an app never tried does not wait", settles(nil, false), "go")
+            checkEq("an app where ⌘C worked does not wait", settles(learnedWrong, false), "go")
         }
 
         print("HUD placement — a remembered spot never leaves the screen")

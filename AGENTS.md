@@ -445,8 +445,7 @@ inconsistent across apps. The clipboard path saves the pasteboard, sends ⌘C
 Copy is unreliable), and **only accepts text if `changeCount` actually
 advanced**, then restores the original clipboard. It must never return the
 pre-existing clipboard on a failed copy — that's what made Yap "read text I
-didn't select." The clipboard-restore invariant is covered by `--selftest`; keep
-it green.
+didn't select." `--selftest` covers the clipboard restore.
 
 **`readSource` has three modes** (`Prefs.ReadSource`): `selection` (AX + ⌘C
 only, strict — keeps the no-stale-clipboard invariant), `clipboard` (reads the
@@ -462,8 +461,8 @@ govern the **hotkey**. The menu's play button is a deliberate press, so it reads
 the selection (when Accessibility allows), else the clipboard, in every mode, and never refuses a repeat
 (`triggerRead(forced:)`; Lino, 2026-10-23).
 
-**In Auto, a ⌘C that never works in an app is skipped, only on a fresh
-clipboard** (Claude Code fullscreen), and **a refused read press shows a
+**In Auto, a ⌘C that never works in an app is skipped only for a fresh copy
+(waiting, or landing in 250 ms)** (Claude Code fullscreen), and **a refused read press shows a
 `Notice` that must never take focus.** Rules and why: `docs/ARCHITECTURE.md`,
 *Read pipeline*. Test: `--capturetest`.
 

@@ -130,11 +130,51 @@ enum CaptureProbe {
         // Three misses, and a fresh copy is waiting: read it now.
         let fresh = "Claude Code copied this \(UUID().uuidString.prefix(6))"
         let skipped = await press(copied: fresh)
-        ok("a fresh copy in an app where ⌘C never works skips the ⌘C", skipped.ms < 150, "(\(skipped.ms) ms)")
+        // Skipping saves the three ⌘C attempts (600+ ms); the settle still waits
+        // its 250 ms for a newer copy.
+        ok("a fresh copy in an app where ⌘C never works skips the ⌘C", skipped.ms < 500, "(\(skipped.ms) ms)")
         ok("and leaves that copy on the clipboard for the read", skipped.clipboard == fresh)
+        // The press beat the app's own copy of the new highlight: wait for it.
+        pb.clearContents(); pb.setString("an older copy", forType: .string)
+        let late = "the highlight, copied late \(UUID().uuidString.prefix(6))"
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
+            pb.clearContents(); pb.setString(late, forType: .string)
+        }
+        let settled = await press(copied: nil)
+        ok("a copy landing just after the press is the one read", settled.clipboard == late, "(\(settled.ms) ms)")
         // Nothing new on the clipboard: nothing fresh to read, so try ⌘C.
         let unchanged = await press(copied: nil)
         ok("an unchanged clipboard still tries ⌘C", unchanged.ms >= 200, "(\(unchanged.ms) ms)")
+        // The press beats the app's copy with nothing fresh waiting. Its ⌘C would
+        // be credited with that copy and take the app off the list for the run.
+        let beaten = "copied after the press \(UUID().uuidString.prefix(6))"
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
+            pb.clearContents(); pb.setString(beaten, forType: .string)
+        }
+        let beat = await press(copied: nil)
+        ok("a press that beats the app's copy reads it without a ⌘C", beat.clipboard == beaten && beat.ms < 500,
+           "(\(beat.ms) ms)")
+        let stillSkipped = await press(copied: "the next copy")
+        ok("and the app keeps its place on the skip list", stillSkipped.ms < 500, "(\(stillSkipped.ms) ms)")
+        // Dictation pastes by writing the clipboard and putting it back. That is
+        // no new copy: skipping the ⌘C would read the old text before the user's
+        // new highlight lands.
+        TextInsert.postsPaste = false
+        defer { TextInsert.postsPaste = true }
+        TextInsert.insertAtCursor("dictated words")
+        try? await Task.sleep(for: .milliseconds(900))   // the paste's restore runs at 0.65 s
+        let afterDictation = await press(copied: nil)
+        ok("a dictation paste is not taken for a fresh copy", afterDictation.ms >= 500, "(\(afterDictation.ms) ms)")
+        // A copy that was waiting before the dictation is still fresh after it.
+        let waiting = "copied before dictating \(UUID().uuidString.prefix(6))"
+        pb.clearContents(); pb.setString(waiting, forType: .string)
+        TextInsert.insertAtCursor("more dictated words")
+        try? await Task.sleep(for: .milliseconds(900))
+        let keptFresh = await press(copied: nil)
+        ok("a copy waiting before a dictation still skips the ⌘C", keptFresh.ms < 500 && keptFresh.clipboard == waiting,
+           "(\(keptFresh.ms) ms)")
         // The user selects text in it after all: the ⌘C works and clears its record.
         key(0)   // ⌘A
         try? await Task.sleep(for: .milliseconds(250))

@@ -30,10 +30,14 @@ enum TextCapture {
         let clipboardChanged = lastSeenChangeCount.map { pb.changeCount != $0 }
         Log.write("capture start mode=\(mode.rawValue) axTrusted=\(trusted) app=\(app ?? "unknown")"
                   + " clipboardChanged=\(clipboardChanged.map { String($0) } ?? "unknown")")
-        let skipCopy = allowCopySkip
-            && shouldSkipCopy(app.flatMap { copyRecords[$0] }, clipboardChanged: clipboardChanged)
+        let record = allowCopySkip ? app.flatMap { copyRecords[$0] } : nil
         func viaCopy() async -> String? {
-            if skipCopy {
+            // A press right after the highlight can beat the app's own copy of it
+            // to the clipboard, so wait for that copy before deciding. One that
+            // lands is read without a ⌘C, which would otherwise be credited with
+            // it and take the app off the list for the rest of the run.
+            let landed = settlesFirst(record, clipboardChanged: clipboardChanged) ? await settleClipboard() : false
+            if landed || shouldSkipCopy(record, clipboardChanged: clipboardChanged) {
                 Log.write("clipboard: skipped ⌘C, it has never worked in \(app ?? "this app") this run"
                           + " and the clipboard has a new copy")
                 return nil
@@ -79,6 +83,42 @@ enum TextCapture {
         lastSeenChangeCount = NSPasteboard.general.changeCount
     }
 
+    /// Yap wrote the clipboard itself: dictation's paste, then its restore. That
+    /// is no copy of the user's, so the next press must not take it for one and
+    /// skip the ⌘C. It did: a press read the old text back in 3 ms while the
+    /// highlight just made was still on its way (log, 2026-11-21). A copy that
+    /// was already waiting stays fresh, since the restore puts that copy back.
+    /// Take `wasFresh` before the first write.
+    @MainActor static func noteOwnClipboardWrite(wasFresh: Bool) {
+        if !wasFresh { lastSeenChangeCount = NSPasteboard.general.changeCount }
+    }
+
+    /// Whether the clipboard changed since the last press (false when unknown).
+    @MainActor static var clipboardIsFresh: Bool {
+        lastSeenChangeCount.map { NSPasteboard.general.changeCount != $0 } ?? false
+    }
+
+    /// How long a press in an app where ⌘C never works waits for the app's own
+    /// copy (Lino asked for about a quarter second, 2026-11-20).
+    static let settleSeconds = 0.25
+
+    /// Give a copy up to `settleSeconds` to land, and stop waiting the moment one
+    /// does. True when one landed.
+    @MainActor private static func settleClipboard() async -> Bool {
+        let pb = NSPasteboard.general
+        let before = pb.changeCount
+        let started = ProcessInfo.processInfo.systemUptime
+        while ProcessInfo.processInfo.systemUptime < started + settleSeconds {
+            if pb.changeCount != before {
+                let ms = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
+                Log.write("clipboard: a copy landed \(ms) ms after the press")
+                return true
+            }
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return false }
+        }
+        return false
+    }
+
     /// Per app (bundle id), this run only. A restart starts every app fresh.
     @MainActor private static var copyRecords: [String: CopyRecord] = [:]
 
@@ -93,10 +133,22 @@ enum TextCapture {
     ///   (that view copies a highlight to the clipboard by itself).
     /// An unchanged or unknown clipboard still gets the ⌘C: there is nothing
     /// fresh to read instead, and an app learned wrongly gets its chance to
-    /// work again, which clears its record for good.
+    /// work again, which clears its record for good. A copy that lands during
+    /// the settle (`settlesFirst`) skips it too.
     nonisolated static func shouldSkipCopy(_ record: CopyRecord?, clipboardChanged: Bool?) -> Bool {
-        guard let record, !record.worked, record.fails >= 3 else { return false }
-        return clipboardChanged == true
+        neverCopies(record) && clipboardChanged == true
+    }
+
+    /// Wait for the app's own copy before the ⌘C decision: in an app where ⌘C
+    /// never works, with the clipboard's state known. An unknown clipboard is
+    /// the first press of the run, which has no baseline to tell a copy by.
+    nonisolated static func settlesFirst(_ record: CopyRecord?, clipboardChanged: Bool?) -> Bool {
+        neverCopies(record) && clipboardChanged != nil
+    }
+
+    nonisolated private static func neverCopies(_ record: CopyRecord?) -> Bool {
+        guard let record else { return false }
+        return !record.worked && record.fails >= 3
     }
 
     /// Pure update so `--selftest` can drive it.

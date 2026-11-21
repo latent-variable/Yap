@@ -13,6 +13,7 @@ enum TextInsert {
         guard !trimmed.isEmpty else { return false }
 
         let pb = NSPasteboard.general
+        let wasFresh = TextCapture.clipboardIsFresh
         // Back up ALL pasteboard items (rich text, images, files) — not just the
         // plain string — so we don't clobber non-text clipboard content.
         let savedItems = pb.pasteboardItems?.map { item -> NSPasteboardItem in
@@ -24,11 +25,12 @@ enum TextInsert {
         }
         pb.clearContents()
         pb.setString(trimmed, forType: .string)
+        TextCapture.noteOwnClipboardWrite(wasFresh: wasFresh)
 
         // Let the pasteboard write propagate before synthesizing the paste — some
         // apps read a stale pasteboard if ⌘V fires the same instant we set it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            sendCmdV()
+            if postsPaste { sendCmdV() }
             // Restore the user's clipboard only AFTER the paste is delivered.
             // Too-early restore clobbers our text mid-paste, so a slow app pastes
             // the old clipboard (or nothing) and the user has to retry. 0.6s is a
@@ -39,10 +41,14 @@ enum TextInsert {
                 guard pb.string(forType: .string) == trimmed else { return }
                 pb.clearContents()
                 if let savedItems { pb.writeObjects(savedItems) }
+                TextCapture.noteOwnClipboardWrite(wasFresh: wasFresh)
             }
         }
         return true
     }
+
+    /// Probe control (`--capturetest`): the clipboard round trip without the ⌘V.
+    @MainActor static var postsPaste = true
 
     private static func sendCmdV() {
         let vKey = CGKeyCode(kVK_ANSI_V)

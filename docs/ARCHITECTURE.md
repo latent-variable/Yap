@@ -84,6 +84,19 @@ wrongly learned app still gets its ⌘C whenever there is nothing new to read,
 and one success takes it off the list. Each capture logs the target app,
 whether the clipboard changed, and its duration in ms.
 
+**A press can beat the app's copy, so such an app waits 250 ms first.** In an
+app on that list, a press right after the highlight can land before the app's
+own copy does. Two things went wrong then (log, Nov 2026). On a clipboard that
+only looked fresh, the old text was read in 3 ms. On an unchanged one, the copy
+landed during the ⌘C attempt, the ⌘C was credited with it, and the app left
+the list for the run, so every later read paid the ~650 ms again. So before
+deciding, `TextCapture.settleClipboard` waits up to 250 ms and stops as soon as
+the clipboard changes; a copy that lands there is read with no ⌘C. Yap's own
+clipboard writes (dictation's paste and its restore, `TextInsert`) call
+`noteOwnClipboardWrite`, so they never look like a fresh copy. A copy that was
+already waiting stays fresh, since the restore puts that same copy back.
+`--capturetest` checks both.
+
 A refused press (same text as last read, nothing captured, a press that stopped
 instead of switching) used to show only in the menu-bar status and the fail
 chime; with sounds muted it looked like nothing happened, and the log showed
