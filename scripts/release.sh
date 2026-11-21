@@ -172,7 +172,7 @@ Cask \`yap\` to $VERSION, sha256 \`$SHA\` (DMG from $YAP_SLUG $BRANCH, tree \`$T
   echo "stamp: $STAMP"
   # pr merge retires a merged branch's worktree by default, and with it the DMG
   # and stamp publish reads (0.10.4 had to be rebuilt).
-  echo "next: review-cycle both PRs, merge the Yap one with 'pr merge --keep-worktree' (publish needs its DMG), then: scripts/release.sh publish $VERSION"
+  echo "next: review-cycle both PRs, merge the Yap one with 'pr merge ${YAP_PR##*/} --keep-worktree' (publish needs its DMG), then: scripts/release.sh publish $VERSION"
   exit 0
 fi
 
